@@ -35,5 +35,5 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           body: |
-            See [CHANGELOG.md](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.inputs.tag || github.ref_name }}/CHANGELOG.md) for changes in this release.
+            See [CHANGELOG.md](${{ github.server_url }}/${{ github.repository }}/blob/main/CHANGELOG.md) for changes in this release.
           files: ../storygraph.koplugin.zip
