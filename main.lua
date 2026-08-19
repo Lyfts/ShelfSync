@@ -409,6 +409,17 @@ function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, up
       if result then
         self.state.book_status = result
         self:registerHighlight()
+
+        if (tonumber(result.percent_finished) or 0) >= 100 and result.status_id == HARDCOVER.STATUS.READING then
+          local book_id = self.settings:readBookSetting(filename, "book_id")
+          if book_id then
+            local finished = Api:updateUserBook(book_id, HARDCOVER.STATUS.FINISHED)
+            if finished then
+              self.state.book_status = finished
+              self:registerHighlight()
+            end
+          end
+        end
       end
       if callback then
         callback(result)
