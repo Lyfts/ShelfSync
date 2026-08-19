@@ -76,13 +76,6 @@ function Hardcover:showChangeEditionDialog(callback)
   )
 end
 
-function Hardcover:updateCurrentBookStatus(status)
-  self.cache:updateBookStatus(self.ui.document.file, status)
-  if not self.state.book_status.id then
-    self.dialog_manager:showError("Book status could not be updated")
-  end
-end
-
 function Hardcover:linkBook(book)
   local filename = self.ui.document.file
 

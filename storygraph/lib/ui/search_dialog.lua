@@ -9,7 +9,6 @@ local SearchMenu = require("storygraph/lib/ui/search_menu")
 local Size = require("ui/size")
 local UIManager = require("ui/uimanager")
 local _ = require("gettext")
-local logger = require("logger")
 local _t = require("storygraph/lib/table_util")
 
 local Screen = Device.screen

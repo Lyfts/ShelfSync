@@ -122,30 +122,12 @@ function HardcoverSettings:subscribe(cb)
   table.insert(self.subscribers, cb)
 end
 
-function HardcoverSettings:unsubscribe(cb)
-  local new_subscribers = {}
-  for _, original_cb in ipairs(self.subscribers) do
-    if original_cb ~= cb then
-      table.insert(new_subscribers, original_cb)
-    end
-  end
-  self.subscribers = new_subscribers
-end
-
 function HardcoverSettings:setSync(value)
   self:updateBookSetting(self.ui.document.file, { sync = value == true })
 end
 
 function HardcoverSettings:setTrackMethod(method)
   self:updateSetting(SETTING.TRACK_METHOD, method)
-end
-
-function HardcoverSettings:editionLinked()
-  return self:bookLinked()
-end
-
-function HardcoverSettings:readLinked()
-  return self:readBookSetting(self.ui.document.file, "read_id") ~= nil
 end
 
 function HardcoverSettings:bookLinked()

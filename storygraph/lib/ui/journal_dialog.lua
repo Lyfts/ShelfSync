@@ -6,17 +6,13 @@ local FrameContainer = require("ui/widget/container/framecontainer")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local InputDialog = require("ui/widget/inputdialog")
-local InputText = require("ui/widget/inputtext")
 local Size = require("ui/size")
 local ToggleSwitch = require("ui/widget/toggleswitch")
 local DateTimeWidget = require("ui/widget/datetimewidget")
 local UpdateDoubleSpinWidget = require("storygraph/lib/ui/update_double_spin_widget")
-local TextWidget = require("ui/widget/textwidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 local _ = require("gettext")
-local T = require("ffi/util").template
-local logger = require("logger")
 
 local JournalDialog = InputDialog:extend {
   allow_newline = true,

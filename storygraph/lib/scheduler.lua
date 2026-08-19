@@ -1,5 +1,4 @@
 local UIManager = require("ui/uimanager")
-local logger = require("logger")
 
 local Scheduler = {
   retries = {}

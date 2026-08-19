@@ -2,8 +2,6 @@ local DataStorage = require("datastorage")
 local Device = require("device")
 local _ = require("gettext")
 local math = require("math")
-local os = require("os")
-local logger = require("logger")
 
 local T = require("ffi/util").template
 
@@ -11,14 +9,12 @@ local Event = require("ui/event")
 local Font = require("ui/font")
 local UIManager = require("ui/uimanager")
 
-local UpdateDoubleSpinWidget = require("storygraph/lib/ui/update_double_spin_widget")
 local InfoMessage = require("ui/widget/infomessage")
 local Notification = require("ui/widget/notification")
 local SpinWidget = require("ui/widget/spinwidget")
 
 local Api = require("storygraph/lib/hardcover_api")
 local Github = require("storygraph/lib/github")
-local User = require("storygraph/lib/user")
 local _t = require("storygraph/lib/table_util")
 
 local HARDCOVER = require("storygraph/lib/constants/hardcover")
@@ -34,8 +30,6 @@ function HardcoverMenu:new(o)
     enabled = true
   }, self)
 end
-
--- Removed privacy_labels
 
 function HardcoverMenu:isActive()
   return self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true
@@ -185,7 +179,7 @@ v]] .. version .. new_release_str .. [[
 Updates book progress and status on thestorygraph.com
 
 Project:
-github.com/billiam/hardcoverapp.koplugin (forked for StoryGraph)
+github.com/Lyfts/storygraph.koplugin
 
 Settings:
 ]] .. settings_file,

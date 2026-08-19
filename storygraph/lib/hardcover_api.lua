@@ -2,17 +2,13 @@ local config = require("storygraph_config")
 local logger = require("logger")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
-local json = require("json")
-local _t = require("storygraph/lib/table_util")
 local T = require("ffi/util").template
 local Trapper = require("ui/trapper")
 local NetworkManager = require("ui/network/manager")
 local socketutil = require("socketutil")
 local htmlparser = require("htmlparser")
 
-local Book = require("storygraph/lib/book")
 local SETTING = require("storygraph/lib/constants/settings")
-local VERSION = require("storygraph_version")
 
 local base_url = "https://app.thestorygraph.com"
 
@@ -768,11 +764,6 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type)
   return nil
 end
 
-function HardcoverApi:createRead(book_id, value, started_at, update_type)
-  -- For StoryGraph, creating a read record is often just updating progress for the first time
-  return self:updatePage(book_id .. "_read", value, started_at, update_type)
-end
-
 function HardcoverApi:createJournalEntry(data)
   local book_id = data.book_id
   local book_url = base_url .. "/books/" .. book_id
@@ -902,7 +893,6 @@ function HardcoverApi:setFavorite(book_id, favorite)
   local code, resp = self:request(url, method, "", custom_headers)
   return code == 200 or code == 302
 end
-function HardcoverApi:updateRating(user_book_id, rating) return nil end
 function HardcoverApi:findBookByIdentifiers(identifiers, user_id)
   local isbn = identifiers and (identifiers.isbn_13 or identifiers.isbn_10)
   if not isbn then return nil end
@@ -913,7 +903,6 @@ function HardcoverApi:findBookByIdentifiers(identifiers, user_id)
   end
   return nil
 end
-function HardcoverApi:findDefaultEdition(book_id, user_id) return { id = book_id, edition_format = "StoryGraph", pages = 100 } end
 function HardcoverApi:findEditions(book_id, user_id)
   local url = base_url .. "/books/" .. book_id .. "/editions"
   local code, html = self:request(url, "GET")

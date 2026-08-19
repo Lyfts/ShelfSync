@@ -1,7 +1,6 @@
 local SETTING = require("storygraph/lib/constants/settings")
 
 local Device = require("device")
-local logger = require("logger")
 
 local NetworkMgr = require("ui/network/manager")
 
@@ -24,7 +23,6 @@ function AutoWifi:withWifi(callback)
       and not NetworkMgr.pending_connection
       and Device:hasWifiRestore()
       and G_reader_settings:nilOrFalse("airplanemode") then
-    --logger.warn("HARDCOVER enabling wifi")
 
     local original_on = NetworkMgr.wifi_was_on
 
@@ -35,7 +33,6 @@ function AutoWifi:withWifi(callback)
       G_reader_settings:saveSetting("wifi_was_on", original_on)
 
       self.connection_pending = false
-      --logger.warn("HARDCOVER wifi enabled")
 
       callback(true)
 
@@ -50,7 +47,6 @@ function AutoWifi:wifiDisableSilent()
     -- explicitly disable wifi was on
     NetworkMgr.wifi_was_on = false
     G_reader_settings:saveSetting("wifi_was_on", false)
-    --logger.warn("HARDCOVER disabling wifi")
   end)
 end
 

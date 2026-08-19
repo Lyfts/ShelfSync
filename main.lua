@@ -101,7 +101,6 @@ function HardcoverApp:init()
     book_status = {},
     page_update_pending = false
   }
-  --logger.warn("HARDCOVER app init")
   self.settings = HardcoverSettings:new(
     ("%s/%s"):format(DataStorage:getSettingsDir(), "storygraphsync_settings.lua"),
     self.ui
@@ -374,7 +373,6 @@ end
 
 function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, update_type)
   update_type = update_type or "percentage"
-  --logger.warn("HARDCOVER: Throttled progress update", value, update_type)
   self.page_update_pending = false
 
   if not self:syncFileUpdates(filename) then
@@ -447,7 +445,6 @@ function HardcoverApp:pageUpdateEvent(page)
   if not (self.state.book_status.id and self.settings:syncEnabled()) then
     return
   end
-  --logger.warn("HARDCOVER page update event pending")
   local document_pages = self.ui.document:getPageCount()
   local remote_pages = self.settings:pages()
 
@@ -672,7 +669,6 @@ function HardcoverApp:updatePageNow(callback, value, update_type)
 end
 
 function HardcoverApp:onNetworkDisconnecting()
-  --logger.warn("HARDCOVER on disconnecting")
   if self.settings:readSetting(SETTING.ENABLE_WIFI) then
     return
   end
@@ -690,7 +686,6 @@ end
 
 function HardcoverApp:onNetworkConnected()
   if self.ui.document and self.settings:syncEnabled() and not self.state.read_cache_started then
-    --logger.warn("HARDCOVER on connected", self.state.read_cache_started)
 
     self:startReadCache()
   end
@@ -798,7 +793,6 @@ function HardcoverApp:startReadCache()
   end
 
   if not self.ui.document then
-    --logger.warn("HARDCOVER read cache fired outside of document")
     return
   end
 
@@ -807,7 +801,6 @@ function HardcoverApp:startReadCache()
   local cancel
 
   local restart = function(delay)
-    --logger.warn("HARDCOVER restart cache fetch")
     delay = delay or 60
     cancel()
     self.state.read_cache_started = false
@@ -821,7 +814,6 @@ function HardcoverApp:startReadCache()
           return success()
         end
         local book_settings = self.settings:readBookSettings(self.ui.document.file) or {}
-        --logger.warn("HARDCOVER", book_settings)
         if book_settings.book_id then
           if self.state.book_status.id then
             return success()
@@ -853,7 +845,6 @@ function HardcoverApp:startReadCache()
 
     function()
       if self.settings:syncEnabled() then
-        --logger.warn("HARDCOVER enabling page turns")
 
         self.state.process_page_turns = true
       end

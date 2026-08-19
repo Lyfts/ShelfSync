@@ -1,6 +1,4 @@
-local logger = require("logger")
 local _ = require("gettext")
-local json = require("json")
 
 local UIManager = require("ui/uimanager")
 
@@ -9,10 +7,8 @@ local InfoMessage = require("ui/widget/infomessage")
 local FileSearcher = require("apps/filemanager/filemanagerfilesearcher")
 
 local Api = require("storygraph/lib/hardcover_api")
-local Book = require("storygraph/lib/book")
 local User = require("storygraph/lib/user")
 
-local HARDCOVER = require("storygraph/lib/constants/hardcover")
 local SETTING = require("storygraph/lib/constants/settings")
 
 local JournalDialog = require("storygraph/lib/ui/journal_dialog")

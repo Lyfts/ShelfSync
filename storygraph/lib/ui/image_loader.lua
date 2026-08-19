@@ -1,5 +1,3 @@
---local HTTPClient = require("httpclient")
-local logger = require("logger")
 local getUrlContent = require("storygraph/vendor/url_content")
 local UIManager = require("ui/uimanager")
 local Trapper = require("ui/trapper")
@@ -7,10 +5,6 @@ local Trapper = require("ui/trapper")
 local ImageLoader = {
   url_map = {}
 }
-
-function ImageLoader:isLoading()
-  return self.loading == true
-end
 
 function ImageLoader:clearCache()
   self.url_map = {}
@@ -26,10 +20,6 @@ Batch.__index = Batch
 
 function Batch:new(o)
   return setmetatable(o or {}, self)
-end
-
-function Batch:data(url)
-  return self.url_map[url]
 end
 
 function Batch:loadImages(urls)
