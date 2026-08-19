@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - '*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release'
+        required: true
 
 jobs:
   build:
@@ -14,6 +19,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Run Busted
         uses: lunarmodules/busted@v2.2.0
@@ -26,4 +33,5 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: ../storygraph.koplugin.zip
