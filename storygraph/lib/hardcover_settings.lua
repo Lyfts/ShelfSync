@@ -193,6 +193,10 @@ function HardcoverSettings:trackPercentageInterval()
   return self.settings:readSetting(SETTING.TRACK_PERCENTAGE) or 10
 end
 
+function HardcoverSettings:trackMethod()
+  return self.settings:readSetting(SETTING.TRACK_METHOD) or SETTING.TRACK.FREQUENCY
+end
+
 function HardcoverSettings:trackByTime()
   local setting = self.settings:readSetting(SETTING.TRACK_METHOD)
   return setting == nil or setting == SETTING.TRACK.FREQUENCY

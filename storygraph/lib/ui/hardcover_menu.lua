@@ -736,7 +736,7 @@ function HardcoverMenu:getTrackingSubMenuItems()
       text = "Update by progress",
       radio = true,
       checked_func = function()
-        return self.settings:trackByProgress()
+        return self.settings:trackMethod() == SETTING.TRACK.PROGRESS
       end,
       callback = function()
         self.settings:setTrackMethod(SETTING.TRACK.PROGRESS)
@@ -772,7 +772,7 @@ function HardcoverMenu:getTrackingSubMenuItems()
       text = "Update by edition pages",
       radio = true,
       checked_func = function()
-        return self.settings:trackByPages()
+        return self.settings:trackMethod() == SETTING.TRACK.PAGES
       end,
       callback = function()
         self.settings:setTrackMethod(SETTING.TRACK.PAGES)
@@ -780,6 +780,9 @@ function HardcoverMenu:getTrackingSubMenuItems()
     },
     {
       text_func = function()
+        if self.settings:trackMethod() == SETTING.TRACK.PAGES and not self.settings:trackByPages() then
+          return _("No page count from StoryGraph for this book — falling back to progress %")
+        end
         return "Every " .. self.settings:trackPageStep() .. " pages completed"
       end,
       enabled_func = function()
