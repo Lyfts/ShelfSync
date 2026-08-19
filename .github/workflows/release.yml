@@ -18,12 +18,12 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Run Busted
-        uses: lunarmodules/busted@v2.2.0
+        uses: lunarmodules/busted@v2.3.0
 
       - name: Zip release
         run: |
@@ -31,7 +31,9 @@ jobs:
           zip -r storygraph.koplugin.zip storygraph.koplugin -x '*/*.git*' '*/spec/*' '*/lua_modules/*' '*/.luarocks/*' '*/lua' '*/luarocks' '*/.tool-versions' '*/*.rockspec'
 
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          body: |
+            See [CHANGELOG.md](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.inputs.tag || github.ref_name }}/CHANGELOG.md) for changes in this release.
           files: ../storygraph.koplugin.zip
