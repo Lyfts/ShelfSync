@@ -3,6 +3,6 @@ return {
   name = "storygraph",
   fullname = _("StoryGraph"),
   description = _([[Synchronize reading progress to app.thestorygraph.com]]),
-  version = "0.2.4",
+  version = "0.2.5",
   api_version = 1
 }
