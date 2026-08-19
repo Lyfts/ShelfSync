@@ -12,13 +12,13 @@ function HardcoverSettings:new(path, ui)
   local o = {}
   setmetatable(o, self)
 
-  self.settings = LuaSettings:open(path)
-  self.ui = ui
-  self.subscribers = {}
+  o.settings = LuaSettings:open(path)
+  o.ui = ui
+  o.subscribers = {}
 
   if KoreaderVersion:getNormalizedCurrentVersion() < 202403010000 then
-    if self.settings:readSetting(SETTING.COMPATIBILITY_MODE) == nil then
-      self:updateSetting(SETTING.COMPATIBILITY_MODE, true)
+    if o.settings:readSetting(SETTING.COMPATIBILITY_MODE) == nil then
+      o:updateSetting(SETTING.COMPATIBILITY_MODE, true)
     end
   end
 

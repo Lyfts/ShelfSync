@@ -259,9 +259,28 @@ function HardcoverApi:request(url, method, data, custom_headers)
         self.settings:updateSetting(SETTING.SESSION_COOKIE, session_val)
       end
     end
+
+    local redirect = (headers["location"] or "") .. " " .. (headers["turbo-location"] or "")
+    if code_num == 401 or redirect:match("/users/sign_in") then
+      self:notifyAuthFailure()
+      return code_num, response, headers, "Unauthorized"
+    end
+
     return code_num, response, headers
   end
   return nil, "Request failed"
+end
+
+-- Warn (once per cooldown) that the stored session cookie is dead
+function HardcoverApi:notifyAuthFailure()
+  local now = os.time()
+  if self.last_auth_warning and now - self.last_auth_warning < 300 then
+    return
+  end
+  self.last_auth_warning = now
+  if self.on_error then
+    self.on_error("Unauthorized")
+  end
 end
 
 function HardcoverApi:me()

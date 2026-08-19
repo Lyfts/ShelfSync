@@ -900,7 +900,33 @@ end
 function HardcoverMenu:getAuthSubMenuItems()
   return {
     {
+      text = _("How to get your cookies"),
+      keep_menu_open = true,
+      callback = function()
+        UIManager:show(InfoMessage:new {
+          text = _([[StoryGraph has no login API, so this plugin reuses cookies from a real browser session.
+
+1. Log in to app.thestorygraph.com in a browser
+2. Open dev tools (F12) > Application/Storage tab > Cookies > app.thestorygraph.com
+3. Copy the value of '_storygraph_session' into "StoryGraph Session Cookie" below
+4. Copy the value of 'remember_user_token' into "StoryGraph Remember Token" below (only present if you ticked "Remember me" at login)
+
+The session cookie expires periodically (StoryGraph, not this plugin, decides when). You'll get a warning here when that happens - just repeat these steps.]]),
+        })
+      end,
+      separator = true,
+    },
+    {
       text = _("StoryGraph Session Cookie"),
+      text_func = function()
+        local set = self.settings:readSetting(SETTING.SESSION_COOKIE)
+        return _("StoryGraph Session Cookie") .. (set and set ~= "" and _(" (set)") or _(" (not set)"))
+      end,
+      hold_callback = function()
+        UIManager:show(InfoMessage:new {
+          text = _("Value of the '_storygraph_session' cookie from a logged-in browser session. See \"How to get your cookies\" above."),
+        })
+      end,
       callback = function()
         local MultiInputDialog = require("ui/widget/multiinputdialog")
         local dialog
@@ -935,6 +961,15 @@ function HardcoverMenu:getAuthSubMenuItems()
     },
     {
       text = _("StoryGraph Remember Token"),
+      text_func = function()
+        local set = self.settings:readSetting(SETTING.REMEMBER_TOKEN)
+        return _("StoryGraph Remember Token") .. (set and set ~= "" and _(" (set)") or _(" (not set)"))
+      end,
+      hold_callback = function()
+        UIManager:show(InfoMessage:new {
+          text = _("Value of the 'remember_user_token' cookie from a logged-in browser session. See \"How to get your cookies\" above."),
+        })
+      end,
       callback = function()
         local MultiInputDialog = require("ui/widget/multiinputdialog")
         local dialog

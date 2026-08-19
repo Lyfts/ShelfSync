@@ -118,7 +118,15 @@ function HardcoverApp:init()
     if err == "Unauthorized" or (err.message and string.find(err.message, "login")) then
       self:disable()
       UIManager:show(InfoMessage:new {
-        text = "Your StoryGraph session cookie is not valid or has expired. Please update it.",
+        text = _([[Your StoryGraph session has expired. Syncing is paused.
+
+To fix it:
+1. Log in to app.thestorygraph.com in a browser
+2. Open dev tools (F12) > Application/Storage > Cookies > app.thestorygraph.com
+3. Copy '_storygraph_session' and 'remember_user_token' values
+4. In KOReader: StoryGraph menu > Settings > Account (Cookies & Tokens), paste each one in
+
+Re-enable syncing afterwards from the StoryGraph menu.]]),
         icon = "notice-warning",
       })
     end
@@ -352,6 +360,15 @@ function HardcoverApp:onSettingsChanged(field, change, original_value)
     if change then
       self.hardcover:tryAutolink()
     end
+  elseif field == SETTING.SESSION_COOKIE then
+    if change and change ~= "" and not self.enabled then
+      self.enabled = true
+      self.menu.enabled = true
+      Api.last_auth_warning = nil
+      UIManager:show(Notification:new {
+        text = _("StoryGraph syncing re-enabled"),
+      })
+    end
   end
 end
 
@@ -451,12 +468,20 @@ function HardcoverApp:pageUpdateEvent(page)
 
     self:_throttledHandlePageUpdate(self.ui.document.file, value, false, nil, update_type)
     self.page_update_pending = true
-  elseif (self.settings:trackByProgress() or self.settings:trackByPages()) and self.state.last_page then
-    local previous_percent, previous_mapped_page = self.page_mapper:getRemotePagePercent(
-      self.state.last_page,
-      document_pages,
-      remote_pages
-    )
+  elseif self.settings:trackByProgress() or self.settings:trackByPages() then
+    -- No baseline yet this session: sync immediately (mirrors the periodic
+    -- throttle's leading-edge fire) instead of silently waiting for a full
+    -- interval to be crossed before ever pushing anything.
+    local is_first_check = not self.state.last_page
+
+    local previous_percent, previous_mapped_page = 0, 0
+    if not is_first_check then
+      previous_percent, previous_mapped_page = self.page_mapper:getRemotePagePercent(
+        self.state.last_page,
+        document_pages,
+        remote_pages
+      )
+    end
 
     local current_percent, current_mapped_page = self.page_mapper:getRemotePagePercent(
       self.state.page,
@@ -464,24 +489,28 @@ function HardcoverApp:pageUpdateEvent(page)
       remote_pages
     )
 
-    local should_sync = false
-    if self.settings:trackByProgress() then
+    local should_sync = is_first_check
+    if not should_sync and self.settings:trackByProgress() then
       local percent_interval = self.settings:trackPercentageInterval()
       local last_compare = math.floor(previous_percent * 100 / percent_interval)
       local current_compare = math.floor(current_percent * 100 / percent_interval)
       should_sync = (last_compare ~= current_compare)
-    elseif self.settings:trackByPages() then
+    elseif not should_sync and self.settings:trackByPages() then
       local page_step = self.settings:trackPageStep()
       local last_compare = math.floor(previous_mapped_page / page_step)
       local current_compare = math.floor(current_mapped_page / page_step)
       should_sync = (last_compare ~= current_compare)
     end
 
+    logger.info("StoryGraph: progress/pages track check - first=" .. tostring(is_first_check)
+      .. " prev%=" .. tostring(previous_percent) .. " cur%=" .. tostring(current_percent)
+      .. " should_sync=" .. tostring(should_sync))
+
     if should_sync then
       local percentage = math.floor(current_percent * 100 + 0.5)
       local last_percent = math.floor(previous_percent * 100 + 0.5)
       local remote_percent = self.state.book_status.percent_finished or 0
-      if percentage > last_percent and percentage >= remote_percent then
+      if (is_first_check or percentage > last_percent) and percentage >= remote_percent then
         if self.settings:syncByRemotePages() and current_mapped_page then
           self:_handlePageUpdate(self.ui.document.file, current_mapped_page, false, nil, "pages")
         else
@@ -604,10 +633,11 @@ function HardcoverApp:onDocumentClose()
     self:updatePageNow()
   end
 
-  self.process_page_turns = false
+  self.state.process_page_turns = false
   self.page_update_pending = false
   self.state.book_status = {}
   self.state.page_map = nil
+  self.state.last_page = nil
 end
 
 function HardcoverApp:onSuspend()
