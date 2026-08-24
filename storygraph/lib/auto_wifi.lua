@@ -39,6 +39,10 @@ function AutoWifi:withWifi(callback)
       -- TODO: schedule turn off wifi, debounce
       self:wifiDisableSilent()
     end)
+  else
+    -- Auto-connect is unavailable or disabled: don't leave callers hanging,
+    -- let them handle the "still not connected" case themselves (e.g. retry).
+    callback(false)
   end
 end
 

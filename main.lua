@@ -837,7 +837,7 @@ function HardcoverApp:startReadCache()
               local err = self.cache:cacheUserBook()
               self:registerHighlight()
               logger.info("StoryGraph: startReadCache - cacheUserBook completed, status=" .. (self.state.book_status.status_id or "nil"))
-              if err and err.completed == false then
+              if err then
                 return fail(err)
               end
 
