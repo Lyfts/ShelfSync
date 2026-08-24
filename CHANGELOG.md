@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.2
+- Add an optional "Sync immediately when opening a book" setting (off by default) that tries to push progress right when a book opens instead of waiting for the first page turn or tracking interval, while still respecting the usual "don't go backwards past StoryGraph's progress" guard.
+- Fixed a dormant bug where the "no baseline yet this session" leading-edge sync never actually triggered on the first page turn.
+- Give a book's status fetch a couple of retries before treating it as having no status, so a one-off parse hiccup on a normal "Currently Reading" book can't trigger the "not marked as reading" warning by mistake.
+
 ## 0.3.1
 - Fix the "not marked as Currently Reading" warning from 0.3.0 never actually appearing for a book with no status on StoryGraph (e.g. removed from your shelves) — a retry safeguard from 0.2.8 was unintentionally blocking the exact code path the warning depends on.
 
