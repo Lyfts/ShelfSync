@@ -382,14 +382,18 @@ end
 -- Returns true if the dialog was shown, false if already shown this session.
 function HardcoverApp:warnStatusMismatch(filename)
   if self.state.status_mismatch_warned then
+    self.settings:debugLog("StoryGraph: warnStatusMismatch - already warned this session, skipping")
     return false
   end
 
   local book_id = self.settings:readBookSetting(filename, "book_id")
   if not book_id then
+    self.settings:debugLog("StoryGraph: warnStatusMismatch - no book_id for filename, skipping")
     return false
   end
 
+  self.settings:debugLog("StoryGraph: warnStatusMismatch - showing dialog, status_id="
+    .. tostring(self.state.book_status.status_id))
   self.state.status_mismatch_warned = true
 
   local status_id = self.state.book_status.status_id
@@ -435,6 +439,7 @@ function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, up
   end
 
   if not self:syncFileUpdates(filename) then
+    self.settings:debugLog("StoryGraph: _handlePageUpdate - sync disabled for file, skipping")
     return bail(_("Sync is disabled for this book"))
   end
 
@@ -463,6 +468,7 @@ function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, up
   local reads = self.state.book_status.user_book_reads
   local current_read = reads and reads[#reads]
   if not current_read then
+    self.settings:debugLog("StoryGraph: _handlePageUpdate - no user_book_reads on book_status, skipping")
     return bail(_("No active reading session found on StoryGraph"))
   end
 
@@ -538,6 +544,7 @@ function HardcoverApp:pageUpdateEvent(page)
       update_type = "percentage"
     end
 
+    self.settings:debugLog("StoryGraph: trackByTime check - value=" .. tostring(value) .. " update_type=" .. update_type)
     self:_throttledHandlePageUpdate(self.ui.document.file, value, false, nil, update_type)
     self.page_update_pending = true
   elseif self.settings:trackByProgress() or self.settings:trackByPages() then
@@ -714,6 +721,7 @@ function HardcoverApp:onDocumentClose()
 end
 
 function HardcoverApp:onSuspend()
+  self.settings:debugLog("StoryGraph: onSuspend - cancelling pending updates, read_cache_started was " .. tostring(self.state.read_cache_started))
   self:cancelPendingUpdates()
 
   Scheduler:clear()
@@ -721,7 +729,9 @@ function HardcoverApp:onSuspend()
 end
 
 function HardcoverApp:onResume()
-  if self.settings:readSetting(SETTING.ENABLE_WIFI) and self.ui.document and self.settings:syncEnabled() then
+  local will_restart = self.settings:readSetting(SETTING.ENABLE_WIFI) and self.ui.document and self.settings:syncEnabled()
+  self.settings:debugLog("StoryGraph: onResume - will restart read cache = " .. tostring(will_restart))
+  if will_restart then
     UIManager:scheduleIn(2, self.startReadCache, self)
   end
 end
@@ -749,6 +759,7 @@ function HardcoverApp:onNetworkDisconnecting()
     return
   end
 
+  self.settings:debugLog("StoryGraph: onNetworkDisconnecting - page_update_pending=" .. tostring(self.page_update_pending))
   self:cancelPendingUpdates()
 
   Scheduler:clear()
@@ -761,8 +772,9 @@ function HardcoverApp:onNetworkDisconnecting()
 end
 
 function HardcoverApp:onNetworkConnected()
-  if self.ui.document and self.settings:syncEnabled() and not self.state.read_cache_started then
-
+  local will_start = self.ui.document and self.settings:syncEnabled() and not self.state.read_cache_started
+  self.settings:debugLog("StoryGraph: onNetworkConnected - will start read cache = " .. tostring(will_start))
+  if will_start then
     self:startReadCache()
   end
 end
@@ -877,9 +889,12 @@ function HardcoverApp:startReadCache()
   local cancel
   local nil_status_attempts = 0
   local max_nil_status_attempts = 2
+  local auto_add_attempts = 0
+  local max_auto_add_attempts = 2
 
   local restart = function(delay)
     delay = delay or 60
+    self.settings:debugLog("StoryGraph: startReadCache restart() - rescheduling in " .. delay .. "s")
     cancel()
     self.state.read_cache_started = false
     UIManager:scheduleIn(delay, self.startReadCache, self)
@@ -926,14 +941,24 @@ function HardcoverApp:startReadCache()
                 -- Still genuinely no status after retrying: mirror linkBook()'s
                 -- behavior for a freshly-linked book with no status, and add it
                 -- as Currently Reading automatically here too, rather than only
-                -- ever asking the user to fix it via warnStatusMismatch. If this
-                -- write fails, book_status stays empty and warnStatusMismatch
-                -- (from _handlePageUpdate) still catches and offers to fix it.
+                -- ever asking the user to fix it via warnStatusMismatch.
                 logger.info("StoryGraph: Already-linked book has no status, adding to Currently Reading automatically")
                 local added = Api:updateUserBook(book_settings.book_id, HARDCOVER.STATUS.READING)
                 if added and added.status_id then
                   self.state.book_status = added
+                elseif auto_add_attempts < max_auto_add_attempts then
+                  -- The write itself can fail transiently (e.g. a momentary
+                  -- network hiccup) just as easily as the read above did --
+                  -- give it the same kind of retry instead of giving up after
+                  -- a single attempt.
+                  auto_add_attempts = auto_add_attempts + 1
+                  self.state.book_status = {}
+                  return fail("Failed to auto-mark book as Currently Reading, retrying")
                 end
+                -- Still no status after retrying the write too: fall through
+                -- to success() with an empty book_status. warnStatusMismatch
+                -- (from _handlePageUpdate) remains the safety net to let the
+                -- user fix it manually.
               end
 
               success()

@@ -224,9 +224,13 @@ function Hardcover:tryAutolink()
   local props = self.ui.document:getProps()
 
   local identifiers = Book:parseIdentifiers(props.identifiers)
-  if ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.LINK_BY_ISBN))
+  local should_attempt = ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.LINK_BY_ISBN))
     or ((identifiers.book_slug or identifiers.edition_id) and self.settings:readSetting(SETTING.LINK_BY_HARDCOVER))
-    or (props.title and self.settings:readSetting(SETTING.LINK_BY_TITLE)) then
+    or (props.title and self.settings:readSetting(SETTING.LINK_BY_TITLE))
+  self.settings:debugLog("StoryGraph: tryAutolink - should_attempt=" .. tostring(should_attempt)
+    .. " isbn_10=" .. tostring(identifiers.isbn_10) .. " isbn_13=" .. tostring(identifiers.isbn_13)
+    .. " book_slug=" .. tostring(identifiers.book_slug) .. " title=" .. tostring(props.title))
+  if should_attempt then
     self.wifi:withWifi(function()
       self:_runAutolink(identifiers)
     end)
@@ -237,14 +241,21 @@ function Hardcover:_runAutolink(identifiers)
   local linked = false
   if self.settings:readSetting(SETTING.LINK_BY_ISBN) then
     linked = self:linkBookByIsbn(identifiers)
+    self.settings:debugLog("StoryGraph: _runAutolink - linkBookByIsbn linked=" .. tostring(linked))
   end
 
   if not linked and self.settings:readSetting(SETTING.LINK_BY_HARDCOVER) then
     linked = self:linkBookByHardcover(identifiers)
+    self.settings:debugLog("StoryGraph: _runAutolink - linkBookByHardcover linked=" .. tostring(linked))
   end
 
   if not linked and self.settings:readSetting(SETTING.LINK_BY_TITLE) then
-    self:linkBookByTitle()
+    linked = self:linkBookByTitle()
+    self.settings:debugLog("StoryGraph: _runAutolink - linkBookByTitle linked=" .. tostring(linked))
+  end
+
+  if not linked then
+    self.settings:debugLog("StoryGraph: _runAutolink - no method found a match, book stays unlinked")
   end
 end
 

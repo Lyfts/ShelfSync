@@ -15,15 +15,20 @@ end
 
 function AutoWifi:withWifi(callback)
   if NetworkMgr:isWifiOn() then
+    self.settings:debugLog("StoryGraph: withWifi - wifi already on, calling back immediately")
     callback(false)
     return
   end
 
-  if self.settings:readSetting(SETTING.ENABLE_WIFI)
+  local enable_wifi_setting = self.settings:readSetting(SETTING.ENABLE_WIFI)
+  local has_wifi_restore = Device:hasWifiRestore()
+  local not_airplane_mode = G_reader_settings:nilOrFalse("airplanemode")
+  if enable_wifi_setting
       and not NetworkMgr.pending_connection
-      and Device:hasWifiRestore()
-      and G_reader_settings:nilOrFalse("airplanemode") then
+      and has_wifi_restore
+      and not_airplane_mode then
 
+    self.settings:debugLog("StoryGraph: withWifi - wifi off, restoring automatically")
     local original_on = NetworkMgr.wifi_was_on
 
     NetworkMgr:restoreWifiAsync()
@@ -34,6 +39,7 @@ function AutoWifi:withWifi(callback)
 
       self.connection_pending = false
 
+      self.settings:debugLog("StoryGraph: withWifi - connectivity check finished, wifi_on=" .. tostring(NetworkMgr:isWifiOn()))
       callback(true)
 
       -- TODO: schedule turn off wifi, debounce
@@ -42,6 +48,9 @@ function AutoWifi:withWifi(callback)
   else
     -- Auto-connect is unavailable or disabled: don't leave callers hanging,
     -- let them handle the "still not connected" case themselves (e.g. retry).
+    self.settings:debugLog("StoryGraph: withWifi - wifi off, not auto-restoring - enable_wifi_setting="
+      .. tostring(enable_wifi_setting) .. " pending_connection=" .. tostring(NetworkMgr.pending_connection)
+      .. " has_wifi_restore=" .. tostring(has_wifi_restore) .. " not_airplane_mode=" .. tostring(not_airplane_mode))
     callback(false)
   end
 end

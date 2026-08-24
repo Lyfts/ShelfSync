@@ -171,6 +171,10 @@ end
 
 function HardcoverApi:request(url, method, data, custom_headers)
   if not NetworkManager:isConnected() or not self.enabled then
+    if self.settings then
+      self.settings:debugWarn("StoryGraph: request() aborted before sending - NetworkManager connected="
+        .. tostring(NetworkManager:isConnected()) .. " enabled=" .. tostring(self.enabled) .. " url=" .. url)
+    end
     return nil, "Network not connected"
   end
 
@@ -224,9 +228,18 @@ function HardcoverApi:request(url, method, data, custom_headers)
       logger.info("StoryGraph: POST Body: " .. (body or "nil"))
     end
 
-    local _, code, _headers, _status = http.request(request)
+    local ok, code, _headers, _status = http.request(request)
     socketutil:reset_timeout()
-    
+
+    if type(code) ~= "number" and self.settings then
+      -- On failure, LuaSocket's http.request returns (nil, error_message)
+      -- rather than (1, status_code, ...) -- that error_message ends up in
+      -- `code` here (e.g. "timeout", "closed", "connection refused"), but
+      -- gets silently discarded a few lines down since it isn't a number.
+      self.settings:debugWarn("StoryGraph: http.request to " .. url .. " failed - ok="
+        .. tostring(ok) .. " code=" .. tostring(code))
+    end
+
     local response_body = table.concat(sink)
     -- Encode headers as a string to pass back through the Trapper
     local header_str = ""
@@ -263,6 +276,10 @@ function HardcoverApi:request(url, method, data, custom_headers)
     end
 
     return code_num, response, headers
+  end
+  if self.settings then
+    self.settings:debugWarn("StoryGraph: request() subprocess did not complete - completed="
+      .. tostring(completed) .. " content_present=" .. tostring(content ~= nil) .. " url=" .. url)
   end
   return nil, "Request failed"
 end
@@ -659,8 +676,10 @@ function HardcoverApi:updateUserBook(book_id, status_id)
   local status_str = status_map[status_id] or "currently-reading"
   
   local book_url = base_url .. "/books/" .. book_id
-  local _, html, get_resp_headers = self:request(book_url, "GET")
-  
+  local get_code, html, get_resp_headers = self:request(book_url, "GET")
+  self.settings:debugLog("StoryGraph: updateUserBook GET for CSRF - code=" .. tostring(get_code)
+    .. " html_present=" .. tostring(html ~= nil) .. " html_length=" .. tostring(html and #html or 0))
+
   -- Handle session refresh from GET
   local current_session = self.settings:readSetting(SETTING.SESSION_COOKIE)
   local new_cookie = get_resp_headers and get_resp_headers["set-cookie"]
@@ -673,9 +692,10 @@ function HardcoverApi:updateUserBook(book_id, status_id)
   end
 
   local csrf = self:extract_csrf(html)
-  
+
   if not csrf then
     logger.warn("StoryGraph: Could not extract CSRF token for status update")
+    self.settings:debugWarn("StoryGraph: extract_csrf failed - last_csrf cached=" .. tostring(self.last_csrf ~= nil))
   else
     logger.info("StoryGraph: Extracted CSRF token (length: " .. #csrf .. ")")
   end
@@ -726,8 +746,10 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type)
   local book_id = user_read_id:gsub("_read", "")
   
   local book_url = base_url .. "/books/" .. book_id
-  local _, html, get_resp_headers = self:request(book_url, "GET")
-  
+  local get_code, html, get_resp_headers = self:request(book_url, "GET")
+  self.settings:debugLog("StoryGraph: updatePage GET for CSRF - code=" .. tostring(get_code)
+    .. " html_present=" .. tostring(html ~= nil) .. " html_length=" .. tostring(html and #html or 0))
+
   -- Handle session refresh from GET
   local current_session = self.settings:readSetting(SETTING.SESSION_COOKIE)
   local new_cookie = get_resp_headers and get_resp_headers["set-cookie"]
@@ -740,9 +762,10 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type)
   end
 
   local csrf = self:extract_csrf(html)
-  
+
   if not csrf then
     logger.warn("StoryGraph: Could not extract CSRF token for progress update")
+    self.settings:debugWarn("StoryGraph: extract_csrf failed - last_csrf cached=" .. tostring(self.last_csrf ~= nil))
   end
 
   local book_num_of_pages = html:match('name="read_status%[book_num_of_pages%]"%s+[^>]*value="([^"]+)"')
@@ -773,10 +796,12 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type)
     ["on_book_page"] = "true",
     ["authenticity_token"] = csrf
   }, custom_headers)
-  
+  self.settings:debugLog("StoryGraph: updatePage POST response code=" .. tostring(code))
+
   if code and (code >= 200 and code < 300 or code == 302) then
     return self:findUserBook(book_id)
   end
+  self.settings:debugWarn("StoryGraph: updatePage failed - code=" .. tostring(code) .. " resp=" .. tostring(resp))
   return nil
 end
 
