@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.4
+- An already-linked book with no status on StoryGraph now also gets automatically marked as "Currently Reading" (after a couple of retries in case it's just a momentary hiccup), instead of only ever being caught by the status-mismatch warning.
+- Add a "Verbose logging" setting (off by default) for extra diagnostic detail when troubleshooting sync issues, instead of it always being on.
+
 ## 0.3.3.2
 - Fix a newly linked book sometimes never actually getting marked as "Currently Reading" on StoryGraph, with no indication anything had gone wrong — the book stayed linked locally, but progress silently never synced until the status-mismatch warning eventually caught it. That auto-add step now surfaces a clear warning if it fails, instead of failing silently.
 
