@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.0
+- Warn when a book's progress can't sync because its status on StoryGraph isn't "Currently Reading" (e.g. it was changed to Paused/DNF/etc. directly on the site while still being read in KOReader) — previously this failed silently. The warning offers a one-tap way to mark the book as Currently Reading again.
+
 ## 0.2.8
 - Fix progress sync sometimes going quiet for the rest of a reading session: if the book's read status couldn't be determined right after opening it (e.g. a stale session cookie briefly serving a logged-out page), the plugin now retries instead of assuming sync was successfully established.
 
