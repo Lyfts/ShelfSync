@@ -388,10 +388,14 @@ function HardcoverApi:findUserBook(book_id, user_id, is_recursion)
   end
 
   local root = htmlparser.parse(html, 10000)
-  
-  -- Check for current status
-  local status_btn = root:select(".read-status-label")[1]
-  
+
+  -- Check for current status. htmlparser's tree parser is unreliable against
+  -- this page's markup (unquoted data-book-id attributes, nested SVGs), so
+  -- this is matched directly against the raw HTML rather than via
+  -- root:select(...) -- mirrors the existing bar_pct fallback below.
+  local status_text_raw = html:match('class="read%-status%-label[^"]*"[^>]*>%s*([^<]-)%s*</button>')
+  local status_btn = status_text_raw ~= nil
+
   -- If no status button on this edition, check if user is reading ANOTHER edition
   if not status_btn and not is_recursion then
     local other_id = nil
@@ -422,7 +426,7 @@ function HardcoverApi:findUserBook(book_id, user_id, is_recursion)
 
   local status_text = ""
   if status_btn then
-    status_text = decode_entities(get_node_text(status_btn)):lower()
+    status_text = decode_entities(status_text_raw):lower()
   end
   
   local status_id = nil
@@ -433,50 +437,42 @@ function HardcoverApi:findUserBook(book_id, user_id, is_recursion)
   elseif status_text == "read" or status_text:find("^read$") or status_text:find(" read$") then status_id = 3
   end
 
-  -- Progress
-  local progress_pane = root:select(".progress-tracker-pane")[1]
+  -- Progress. Matched directly against the raw HTML rather than via a
+  -- progress-tracker-pane root:select(...) node, for the same htmlparser
+  -- reliability reason as status_text above -- these patterns mirror the
+  -- proven ones already used in updatePage/createJournalEntry.
   local last_reached_percent = 0
   local last_reached_pages = 0
-  local book_num_of_pages = 0
   local progress_type = "percentage"
-  
-  if progress_pane then
-    local total_pages_input = progress_pane:select(".read-status-book-num-of-pages")[1]
-    local type_select = progress_pane:select(".read-status-progress-type")[1]
 
+  local total_pages_str = html:match('name="read_status%[book_num_of_pages%]"%s+[^>]*value="([^"]+)"')
+    or html:match('value="([^"]+)"%s+[^>]*name="read_status%[book_num_of_pages%]"')
+    or html:match('class="read%-status%-book%-num%-of%-pages"%s+[^>]*value="([^"]+)"')
+  local book_num_of_pages = tonumber(total_pages_str) or 0
 
-    if total_pages_input then book_num_of_pages = tonumber(total_pages_input.attributes.value) or 0 end
-    if type_select then
-      local selected = type_select:select("option[selected='selected']")[1]
-      if selected then progress_type = selected.attributes.value end
-    end
+  local selected_type = html:match('name="read_status%[progress_type%]"[^>]*>.-<option selected="selected" value="([^"]+)"')
+  if selected_type then progress_type = selected_type end
 
-    local bar_pct = html:match("edit%-progress[^>]*>%s*<div[^>]*style=\"width:%s*(%d+)%%\"")
-    if bar_pct then
-      last_reached_percent = tonumber(bar_pct)
-      logger.info("StoryGraph: progress from bar = " .. last_reached_percent .. "%")
-    else
-      local percent_input = progress_pane:select(".read-status-last-reached-percent")[1]
-      if percent_input then
-        last_reached_percent = tonumber(percent_input.attributes.value) or 0
-        logger.info("StoryGraph: progress from hidden input = " .. last_reached_percent .. "%")
-      end
+  local bar_pct = html:match("edit%-progress[^>]*>%s*<div[^>]*style=\"width:%s*(%d+)%%\"")
+  if bar_pct then
+    last_reached_percent = tonumber(bar_pct)
+    logger.info("StoryGraph: progress from bar = " .. last_reached_percent .. "%")
+  else
+    local percent_str = html:match('name="read_status%[last_reached_percent%]"%s+[^>]*value="([^"]+)"')
+      or html:match('value="([^"]+)"%s+[^>]*name="read_status%[last_reached_percent%]"')
+      or html:match('class="read%-status%-last%-reached%-percent"%s+[^>]*value="([^"]+)"')
+    if percent_str then
+      last_reached_percent = tonumber(percent_str) or 0
+      logger.info("StoryGraph: progress from hidden input = " .. last_reached_percent .. "%")
     end
+  end
 
-    if last_reached_percent == 0 then
-      local progress_text = get_node_text(progress_pane)
-      local pages = progress_text:match("(%d+)%%")
-      if pages then
-        last_reached_percent = tonumber(pages)
-        logger.info("StoryGraph: progress from text scan = " .. last_reached_percent .. "%")
-      end
-    end
-    
-    local pages_input = progress_pane:select(".read-status-last-reached-pages")[1]
-    if pages_input then
-      last_reached_pages = tonumber(pages_input.attributes.value) or 0
-      logger.info("StoryGraph: last reached pages = " .. last_reached_pages)
-    end
+  local pages_str = html:match('name="read_status%[last_reached_pages%]"%s+[^>]*value="([^"]+)"')
+    or html:match('value="([^"]+)"%s+[^>]*name="read_status%[last_reached_pages%]"')
+    or html:match('class="read%-status%-last%-reached%-pages"%s+[^>]*value="([^"]+)"')
+  if pages_str then
+    last_reached_pages = tonumber(pages_str) or 0
+    logger.info("StoryGraph: last reached pages = " .. last_reached_pages)
   end
 
   -- Extract Edition Format
