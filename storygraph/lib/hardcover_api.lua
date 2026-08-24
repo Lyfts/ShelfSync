@@ -387,6 +387,22 @@ function HardcoverApi:findUserBook(book_id, user_id, is_recursion)
     return {}, "Failed to fetch book"
   end
 
+  -- TEMPORARY diagnostics for the recurring "status_id keeps coming back nil"
+  -- issue -- narrows down whether the raw response we actually receive even
+  -- contains a status control at all (auth/session/rendering problem) versus
+  -- containing it in a form our regex just fails to match (a regex problem).
+  logger.info("StoryGraph: findUserBook book_id=" .. tostring(book_id) .. " html_length=" .. #html)
+  local label_pos = html:find("read-status-label", 1, true)
+  if not label_pos then
+    logger.warn("StoryGraph: DEBUG 'read-status-label' not found anywhere in response html")
+    if html:find("sign_in", 1, true) or html:find("Sign [Ii]n") then
+      logger.warn("StoryGraph: DEBUG response looks like a sign-in/logged-out page")
+    end
+  else
+    logger.info("StoryGraph: DEBUG 'read-status-label' found at byte " .. label_pos .. ", context: "
+      .. html:sub(math.max(1, label_pos - 60), label_pos + 300))
+  end
+
   local root = htmlparser.parse(html, 10000)
 
   -- Check for current status. htmlparser's tree parser is unreliable against
@@ -395,6 +411,9 @@ function HardcoverApi:findUserBook(book_id, user_id, is_recursion)
   -- root:select(...) -- mirrors the existing bar_pct fallback below.
   local status_text_raw = html:match('class="read%-status%-label[^"]*"[^>]*>%s*([^<]-)%s*</button>')
   local status_btn = status_text_raw ~= nil
+  if label_pos and not status_btn then
+    logger.warn("StoryGraph: DEBUG 'read-status-label' substring present but strict regex did not match it")
+  end
 
   -- If no status button on this edition, check if user is reading ANOTHER edition
   if not status_btn and not is_recursion then
