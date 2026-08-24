@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.6
+- Fix reading progress sync sometimes failing to start (or getting stuck) when opening a book, which previously required closing and reopening the book to recover.
+
 ## 0.2.5
 - Automatically mark a book as "read" on StoryGraph once progress reaches 100%, independent of KOReader's own end-of-book settings.
 
