@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.8
+- Fix progress sync sometimes going quiet for the rest of a reading session: if the book's read status couldn't be determined right after opening it (e.g. a stale session cookie briefly serving a logged-out page), the plugin now retries instead of assuming sync was successfully established.
+
 ## 0.2.7
 - Fix a crash at the end of some books when "Update by edition pages" is enabled, caused by a page mapping calculation returning an incomplete value once the reader passed the last page covered by the book's page map.
 - Show a clear message instead of doing nothing when manually updating progress (e.g. via gesture) can't go through — for example when the book has already been marked "read" on StoryGraph.
