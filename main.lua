@@ -513,6 +513,7 @@ function HardcoverApp:initializePageUpdate()
 end
 
 function HardcoverApp:pageUpdateEvent(page)
+  local has_baseline = self.state.last_page ~= nil
   self.state.last_page = self.state.page
   self.state.page = page
 
@@ -543,7 +544,7 @@ function HardcoverApp:pageUpdateEvent(page)
     -- No baseline yet this session: sync immediately (mirrors the periodic
     -- throttle's leading-edge fire) instead of silently waiting for a full
     -- interval to be crossed before ever pushing anything.
-    local is_first_check = not self.state.last_page
+    local is_first_check = not has_baseline
 
     local previous_percent, previous_mapped_page = 0, 0
     if not is_first_check then
@@ -874,6 +875,8 @@ function HardcoverApp:startReadCache()
   self.state.read_cache_started = true
 
   local cancel
+  local nil_status_attempts = 0
+  local max_nil_status_attempts = 2
 
   local restart = function(delay)
     delay = delay or 60
@@ -906,12 +909,21 @@ function HardcoverApp:startReadCache()
               end
 
               -- A nil status_id here (fetched the book page fine, but found no
-              -- read-status on it) is a real, stable outcome -- not just a fetch
-              -- failure to retry -- e.g. the book was removed from the user's
-              -- shelves, or its status was changed to something we don't render a
-              -- badge for. Converge to success() so process_page_turns gets set;
-              -- warnStatusMismatch (triggered from _handlePageUpdate) is what
-              -- surfaces and lets the user fix a non-READING status, nil included.
+              -- read-status on it) is usually a real, stable outcome -- e.g. the
+              -- book was removed from the user's shelves, or its status was
+              -- changed to something we don't render a badge for -- rather than a
+              -- fetch failure to retry indefinitely. But a single miss can also be
+              -- a one-off render/parse blip on an otherwise normal "Currently
+              -- Reading" book, so give it a couple of retries before accepting it
+              -- as final; only then converge to success() so process_page_turns
+              -- gets set and warnStatusMismatch (from _handlePageUpdate) can
+              -- surface and let the user fix a still-not-READING status.
+              if not self.state.book_status.status_id and nil_status_attempts < max_nil_status_attempts then
+                nil_status_attempts = nil_status_attempts + 1
+                self.state.book_status = {}
+                return fail("No read status found for book, retrying")
+              end
+
               success()
               self:registerHighlight() -- redundant but safe
             end)
@@ -927,8 +939,17 @@ function HardcoverApp:startReadCache()
 
     function()
       if self.settings:syncEnabled() then
-
         self.state.process_page_turns = true
+
+        if self.settings:syncOnOpen() then
+          -- Try a sync right away, using the current position, rather than
+          -- waiting for the first page turn (or a full trackByTime interval)
+          -- to elapse. pageUpdateEvent's existing "no baseline yet" and
+          -- remote-behind guards mean this quietly no-ops if there's nothing
+          -- new to push; subsequent page turns fall back to the usual
+          -- periodic/threshold sync pattern.
+          self:pageUpdateEvent(self.state.page)
+        end
       end
     end,
 

@@ -625,6 +625,23 @@ function HardcoverMenu:getTrackingSubMenuItems()
         local setting = self.settings:readSetting(SETTING.ALWAYS_SYNC) ~= false
         self.settings:updateSetting(SETTING.ALWAYS_SYNC, not setting)
       end,
+    },
+    {
+      text = "Sync immediately when opening a book",
+      checked_func = function()
+        return self.settings:syncOnOpen()
+      end,
+      callback = function()
+        local setting = self.settings:syncOnOpen()
+        self.settings:updateSetting(SETTING.SYNC_ON_OPEN, not setting)
+      end,
+      hold_callback = function()
+        UIManager:show(InfoMessage:new {
+          text = [[Try syncing progress as soon as a book is opened, rather than waiting for the first page turn or tracking interval.
+
+Disable this if you'd rather sync only follow the usual periodic/threshold pattern below.]],
+        })
+      end,
       separator = true
     },
     {
