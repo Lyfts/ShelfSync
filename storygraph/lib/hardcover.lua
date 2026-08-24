@@ -121,7 +121,21 @@ function Hardcover:linkBook(book)
   -- 4. Auto-Add to Library if no status was found on ANY edition
   if not self.state.book_status.status_id then
     logger.info("StoryGraph: Book has no status on any edition, adding to Currently Reading automatically")
-    self.state.book_status = Api:updateUserBook(book.book_id, HARDCOVER.STATUS.READING) or {}
+    local added = Api:updateUserBook(book.book_id, HARDCOVER.STATUS.READING)
+    if added and added.status_id then
+      self.state.book_status = added
+    else
+      -- The book stays linked locally either way (settings already saved
+      -- above), but without this the failure was completely silent -- the
+      -- book would just sit unsynced until the status-mismatch warning
+      -- eventually caught it much later, with no link back to the cause.
+      logger.warn("StoryGraph: Failed to automatically mark book as Currently Reading on StoryGraph")
+      self.state.book_status = added or {}
+      UIManager:show(InfoMessage:new {
+        text = _("Linked, but couldn't automatically mark the book as Currently Reading on StoryGraph. Use \"Update status\" to set it manually."),
+        icon = "notice-warning",
+      })
+    end
   end
 
   return true
