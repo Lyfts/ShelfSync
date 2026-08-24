@@ -1,7 +1,10 @@
 # Changelog
 
+## 0.3.3.2
+- Fix a newly linked book sometimes never actually getting marked as "Currently Reading" on StoryGraph, with no indication anything had gone wrong — the book stayed linked locally, but progress silently never synced until the status-mismatch warning eventually caught it. That auto-add step now surfaces a clear warning if it fails, instead of failing silently.
+
 ## 0.3.3
-- Fix reading progress/status not being detected at all for some books: KOReader's bundled HTML parser was silently failing on the current StoryGraph page markup, making a book's real "Currently Reading" status and progress unreadable to the plugin even though it was correctly set on the website. This could also make a freshly-linked book appear to never have been marked as Currently Reading, triggering an incorrect "not marked as reading" warning right after linking.
+- Fix reading progress/status not being detected for some books when the page's HTML happened to be structured in a way KOReader's bundled HTML parser failed to read correctly, even though the status was set correctly on the website.
 
 ## 0.3.2
 - Add an optional "Sync immediately when opening a book" setting (off by default) that tries to push progress right when a book opens instead of waiting for the first page turn or tracking interval, while still respecting the usual "don't go backwards past StoryGraph's progress" guard.
