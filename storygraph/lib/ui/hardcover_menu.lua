@@ -195,108 +195,39 @@ Settings:
   end)
 end
 
+-- Builds a radio menu item that marks the current book with `status_id` on
+-- StoryGraph (after confirmation), used for every entry in the status list
+-- below except "Remove", which has no status_id of its own to set.
+function HardcoverMenu:_statusMenuItem(icon, status_id)
+  return {
+    text = _(icon .. " " .. HARDCOVER.STATUS_NAME[status_id]),
+    checked_func = function()
+      return self.state.book_status.status_id == status_id
+    end,
+    callback = function(menu_instance)
+      self.dialog_manager:maybeConfirm({
+        text = ("Mark book as %s?"):format(HARDCOVER.STATUS_NAME[status_id]),
+        ok_callback = function()
+          self.cache:updateBookStatus(self.ui.document.file, status_id)
+          menu_instance.item_table = self:getStatusSubMenuItems()
+          menu_instance:updateItems()
+        end,
+        no_confirm_callback = function()
+          menu_instance:updateItems()
+        end
+      })
+    end,
+    radio = true
+  }
+end
+
 function HardcoverMenu:getStatusSubMenuItems()
   local items = {
-    {
-      text = _(ICON.BOOKMARK .. " Want To Read"),
-      checked_func = function()
-        return self.state.book_status.status_id == HARDCOVER.STATUS.TO_READ
-      end,
-      callback = function(menu_instance)
-        self.dialog_manager:maybeConfirm({
-          text = "Mark book as Want To Read?",
-          ok_callback = function()
-            self.cache:updateBookStatus(self.ui.document.file, HARDCOVER.STATUS.TO_READ)
-            menu_instance.item_table = self:getStatusSubMenuItems()
-            menu_instance:updateItems()
-          end,
-          no_confirm_callback = function()
-            menu_instance:updateItems()
-          end
-        })
-      end,
-      radio = true
-    },
-    {
-      text = _(ICON.OPEN_BOOK .. " Currently Reading"),
-      checked_func = function()
-        return self.state.book_status.status_id == HARDCOVER.STATUS.READING
-      end,
-      callback = function(menu_instance)
-        self.dialog_manager:maybeConfirm({
-          text = "Mark book as Currently Reading?",
-          ok_callback = function()
-            self.cache:updateBookStatus(self.ui.document.file, HARDCOVER.STATUS.READING)
-            menu_instance.item_table = self:getStatusSubMenuItems()
-            menu_instance:updateItems()
-          end,
-          no_confirm_callback = function()
-            menu_instance:updateItems()
-          end
-        })
-      end,
-      radio = true
-    },
-    {
-      text = _(ICON.CHECKMARK .. " Read"),
-      checked_func = function()
-        return self.state.book_status.status_id == HARDCOVER.STATUS.FINISHED
-      end,
-      callback = function(menu_instance)
-        self.dialog_manager:maybeConfirm({
-          text = "Mark book as Read?",
-          ok_callback = function()
-            self.cache:updateBookStatus(self.ui.document.file, HARDCOVER.STATUS.FINISHED)
-            menu_instance.item_table = self:getStatusSubMenuItems()
-            menu_instance:updateItems()
-          end,
-          no_confirm_callback = function()
-            menu_instance:updateItems()
-          end
-        })
-      end,
-      radio = true
-    },
-    {
-      text = _(ICON.PAUSE .. " Paused"),
-      checked_func = function()
-        return self.state.book_status.status_id == HARDCOVER.STATUS.PAUSED
-      end,
-      callback = function(menu_instance)
-        self.dialog_manager:maybeConfirm({
-          text = "Mark book as Paused?",
-          ok_callback = function()
-            self.cache:updateBookStatus(self.ui.document.file, HARDCOVER.STATUS.PAUSED)
-            menu_instance.item_table = self:getStatusSubMenuItems()
-            menu_instance:updateItems()
-          end,
-          no_confirm_callback = function()
-            menu_instance:updateItems()
-          end
-        })
-      end,
-      radio = true
-    },
-    {
-      text = _(ICON.STOP_CIRCLE .. " Did Not Finish"),
-      checked_func = function()
-        return self.state.book_status.status_id == HARDCOVER.STATUS.DNF
-      end,
-      callback = function(menu_instance)
-        self.dialog_manager:maybeConfirm({
-          text = "Mark book as Did Not Finish?",
-          ok_callback = function()
-            self.cache:updateBookStatus(self.ui.document.file, HARDCOVER.STATUS.DNF)
-            menu_instance.item_table = self:getStatusSubMenuItems()
-            menu_instance:updateItems()
-          end,
-          no_confirm_callback = function()
-            menu_instance:updateItems()
-          end
-        })
-      end,
-      radio = true,
-    },
+    self:_statusMenuItem(ICON.BOOKMARK, HARDCOVER.STATUS.TO_READ),
+    self:_statusMenuItem(ICON.OPEN_BOOK, HARDCOVER.STATUS.READING),
+    self:_statusMenuItem(ICON.CHECKMARK, HARDCOVER.STATUS.FINISHED),
+    self:_statusMenuItem(ICON.PAUSE, HARDCOVER.STATUS.PAUSED),
+    self:_statusMenuItem(ICON.STOP_CIRCLE, HARDCOVER.STATUS.DNF),
     {
       text = _(ICON.TRASH .. " Remove"),
       enabled_func = function()

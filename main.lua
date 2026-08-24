@@ -375,6 +375,50 @@ function HardcoverApp:onSettingsChanged(field, change, original_value)
   end
 end
 
+-- Called when a page update is skipped because the book's remote status isn't
+-- "Currently Reading" (e.g. it was changed on StoryGraph directly while the
+-- user kept reading in KOReader). Shown once per document-open session so
+-- progress silently going unsynced doesn't go unnoticed.
+-- Returns true if the dialog was shown, false if already shown this session.
+function HardcoverApp:warnStatusMismatch(filename)
+  if self.state.status_mismatch_warned then
+    return false
+  end
+
+  local book_id = self.settings:readBookSetting(filename, "book_id")
+  if not book_id then
+    return false
+  end
+
+  self.state.status_mismatch_warned = true
+
+  local status_name = HARDCOVER.STATUS_NAME[self.state.book_status.status_id] or "not Currently Reading"
+
+  self.dialog_manager:confirm({
+    text = _(("This book is marked \"%s\" on StoryGraph, so reading progress isn't syncing.\n\nMark it as Currently Reading?"):format(status_name)),
+    ok_text = _("Mark as Reading"),
+    cancel_text = _("Ignore"),
+    ok_callback = function()
+      self.wifi:withWifi(function()
+        self.cache:updateBookStatus(filename, HARDCOVER.STATUS.READING)
+        self:registerHighlight()
+        if self.state.book_status.status_id == HARDCOVER.STATUS.READING then
+          UIManager:show(Notification:new {
+            text = _("Marked as Currently Reading")
+          })
+        else
+          UIManager:show(InfoMessage:new {
+            text = _("Failed to update status on StoryGraph"),
+            icon = "notice-warning",
+          })
+        end
+      end)
+    end,
+  })
+
+  return true
+end
+
 function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, update_type)
   update_type = update_type or "percentage"
   self.page_update_pending = false
@@ -393,7 +437,10 @@ function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, up
 
   if self.state.book_status.status_id ~= HARDCOVER.STATUS.READING then
     logger.info("StoryGraph: Skipping page update - status_id is " .. tostring(self.state.book_status.status_id) .. ", not READING")
-    return bail(_("Book is not currently marked as reading on StoryGraph"))
+    if not self:warnStatusMismatch(filename) then
+      bail(_("Book is not currently marked as reading on StoryGraph"))
+    end
+    return
   end
 
   if update_type == "percentage" then
@@ -645,6 +692,7 @@ function HardcoverApp:onDocumentClose()
 
   self:cancelPendingUpdates()
   self.state.read_cache_started = false
+  self.state.status_mismatch_warned = false
 
   if not self.state.book_status.id and not self.settings:syncEnabled() then
     return

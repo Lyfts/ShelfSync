@@ -6,6 +6,13 @@ local Hardcover = {
     PAUSED = 4,
     DNF = 5,
   },
+  STATUS_NAME = {
+    [1] = "Want To Read",
+    [2] = "Currently Reading",
+    [3] = "Read",
+    [4] = "Paused",
+    [5] = "Did Not Finish",
+  },
   CATEGORY = {
     TAG = "Tag",
   },
