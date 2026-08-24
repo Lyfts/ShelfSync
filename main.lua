@@ -915,13 +915,25 @@ function HardcoverApp:startReadCache()
               -- fetch failure to retry indefinitely. But a single miss can also be
               -- a one-off render/parse blip on an otherwise normal "Currently
               -- Reading" book, so give it a couple of retries before accepting it
-              -- as final; only then converge to success() so process_page_turns
-              -- gets set and warnStatusMismatch (from _handlePageUpdate) can
-              -- surface and let the user fix a still-not-READING status.
-              if not self.state.book_status.status_id and nil_status_attempts < max_nil_status_attempts then
-                nil_status_attempts = nil_status_attempts + 1
-                self.state.book_status = {}
-                return fail("No read status found for book, retrying")
+              -- as final.
+              if not self.state.book_status.status_id then
+                if nil_status_attempts < max_nil_status_attempts then
+                  nil_status_attempts = nil_status_attempts + 1
+                  self.state.book_status = {}
+                  return fail("No read status found for book, retrying")
+                end
+
+                -- Still genuinely no status after retrying: mirror linkBook()'s
+                -- behavior for a freshly-linked book with no status, and add it
+                -- as Currently Reading automatically here too, rather than only
+                -- ever asking the user to fix it via warnStatusMismatch. If this
+                -- write fails, book_status stays empty and warnStatusMismatch
+                -- (from _handlePageUpdate) still catches and offers to fix it.
+                logger.info("StoryGraph: Already-linked book has no status, adding to Currently Reading automatically")
+                local added = Api:updateUserBook(book_settings.book_id, HARDCOVER.STATUS.READING)
+                if added and added.status_id then
+                  self.state.book_status = added
+                end
               end
 
               success()

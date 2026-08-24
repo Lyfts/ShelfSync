@@ -1,6 +1,7 @@
 local KoreaderVersion = require("version")
 local LuaSettings = require("luasettings")
 local DocSettings = require("docsettings")
+local logger = require("logger")
 
 local _t = require("storygraph/lib/table_util")
 local SETTING = require("storygraph/lib/constants/settings")
@@ -236,6 +237,26 @@ end
 
 function HardcoverSettings:syncOnOpen()
   return self.settings:readSetting(SETTING.SYNC_ON_OPEN) == true
+end
+
+function HardcoverSettings:verboseLogging()
+  return self.settings:readSetting(SETTING.VERBOSE_LOGGING) == true
+end
+
+-- Easy way to add logging that only shows up with "Verbose logging" enabled
+-- in settings, without every call site checking the setting itself:
+--   self.settings:debugLog("StoryGraph: some detail =", value)
+--   self.settings:debugWarn("StoryGraph: unexpected thing happened")
+function HardcoverSettings:debugLog(...)
+  if self:verboseLogging() then
+    logger.info(...)
+  end
+end
+
+function HardcoverSettings:debugWarn(...)
+  if self:verboseLogging() then
+    logger.warn(...)
+  end
 end
 
 function HardcoverSettings:trackByPages()

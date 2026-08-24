@@ -1031,9 +1031,26 @@ May improve compatibility for some versions of KOReader]],
       end,
       hold_callback = function()
         UIManager:show(InfoMessage:new {
-          text = [[Automatically append Chapter, Page, and % info to your regular notes. 
-          
+          text = [[Automatically append Chapter, Page, and % info to your regular notes.
+
 Quotes always include this info.]],
+        })
+      end,
+    },
+    {
+      text = "Verbose logging",
+      checked_func = function()
+        return self.settings:verboseLogging()
+      end,
+      callback = function()
+        local setting = self.settings:verboseLogging()
+        self.settings:updateSetting(SETTING.VERBOSE_LOGGING, not setting)
+      end,
+      hold_callback = function()
+        UIManager:show(InfoMessage:new {
+          text = [[Log extra detail useful for diagnosing sync issues to KOReader's log file.
+
+Off by default since it can be noisy; only worth enabling while troubleshooting.]],
         })
       end,
       separator = true

@@ -26,6 +26,7 @@ local Settings = {
   SYNC_BY_REMOTE_PAGES = "sync_by_remote_pages",
   TRACK_PAGE_STEP = "track_page_step",
   SYNC_ON_OPEN = "sync_on_open",
+  VERBOSE_LOGGING = "verbose_logging",
 }
 
 Settings.AUTOLINK_OPTIONS = { Settings.LINK_BY_ISBN, Settings.LINK_BY_TITLE }
