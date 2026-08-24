@@ -310,13 +310,17 @@ end
 
 function HardcoverApp:onStoryGraphUpdateProgress()
   if self.ui.document and self.settings:bookLinked() then
-    self:updatePageNow(function(result)
+    self:updatePageNow(function(result, reason)
       if result then
         UIManager:show(Notification:new {
           text = _("Progress updated")
         })
       else
-        logger.warn("Unsuccessful updating page progress", self.ui.document.file)
+        logger.warn("Unsuccessful updating page progress", self.ui.document.file, reason)
+        UIManager:show(InfoMessage:new {
+          text = reason or _("Unable to update reading progress"),
+          icon = "notice-warning",
+        })
       end
     end)
   else
@@ -375,12 +379,20 @@ function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, up
   update_type = update_type or "percentage"
   self.page_update_pending = false
 
+  -- Manual (immediate) updates have a caller waiting on feedback; background/throttled
+  -- updates are expected to skip silently, so only report a reason for the former.
+  local function bail(reason)
+    if immediate and callback then
+      callback(nil, reason)
+    end
+  end
+
   if not self:syncFileUpdates(filename) then
-    return
+    return bail(_("Sync is disabled for this book"))
   end
 
   if self.state.book_status.status_id ~= HARDCOVER.STATUS.READING then
-    return
+    return bail(_("Book is not currently marked as reading on StoryGraph"))
   end
 
   if update_type == "percentage" then
@@ -400,7 +412,7 @@ function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, up
   local reads = self.state.book_status.user_book_reads
   local current_read = reads and reads[#reads]
   if not current_read then
-    return
+    return bail(_("No active reading session found on StoryGraph"))
   end
 
   local immediate_update = function()

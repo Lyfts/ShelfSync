@@ -119,7 +119,7 @@ function PageMapper:getRemotePagePercent(raw_page, document_pages, remote_pages)
 
     if not mapped_page then
       if self.state.page_map_range and self.state.page_map_range.last_page and raw_page > self.state.page_map_range.last_page then
-        return 1
+        return 1, remote_pages or self.state.page_map_range.real_page
       end
     end
 
@@ -146,7 +146,7 @@ function PageMapper:getRemotePagePercent(raw_page, document_pages, remote_pages)
     return remote_page / total_pages, mapped_page or remote_page
   end
 
-  return 0
+  return 0, 0
 end
 
 return PageMapper
