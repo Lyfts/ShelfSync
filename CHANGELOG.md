@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.1
+- Fix the "not marked as Currently Reading" warning from 0.3.0 never actually appearing for a book with no status on StoryGraph (e.g. removed from your shelves) — a retry safeguard from 0.2.8 was unintentionally blocking the exact code path the warning depends on.
+
 ## 0.3.0
 - Warn when a book's progress can't sync because its status on StoryGraph isn't "Currently Reading" (e.g. it was changed to Paused/DNF/etc. directly on the site while still being read in KOReader) — previously this failed silently. The warning offers a one-tap way to mark the book as Currently Reading again.
 
