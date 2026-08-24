@@ -392,6 +392,7 @@ function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, up
   end
 
   if self.state.book_status.status_id ~= HARDCOVER.STATUS.READING then
+    logger.info("StoryGraph: Skipping page update - status_id is " .. tostring(self.state.book_status.status_id) .. ", not READING")
     return bail(_("Book is not currently marked as reading on StoryGraph"))
   end
 
@@ -851,6 +852,18 @@ function HardcoverApp:startReadCache()
               logger.info("StoryGraph: startReadCache - cacheUserBook completed, status=" .. (self.state.book_status.status_id or "nil"))
               if err then
                 return fail(err)
+              end
+
+              if not self.state.book_status.status_id then
+                -- Fetched a 200 response, but couldn't find/parse a read status on
+                -- it (e.g. a stale/rotated session cookie serving a logged-out
+                -- version of the page). Treat this like a fetch failure and retry,
+                -- rather than declaring success and leaving page updates silently
+                -- skipping forever (status_id ~= READING) for the rest of the session.
+                -- Clear book_status.id too, so the "already cached" short-circuit
+                -- above doesn't skip the re-fetch on the next retry attempt.
+                self.state.book_status = {}
+                return fail("No read status found for book")
               end
 
               success()
