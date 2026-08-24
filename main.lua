@@ -392,10 +392,13 @@ function HardcoverApp:warnStatusMismatch(filename)
 
   self.state.status_mismatch_warned = true
 
-  local status_name = HARDCOVER.STATUS_NAME[self.state.book_status.status_id] or "not Currently Reading"
+  local status_id = self.state.book_status.status_id
+  local status_clause = status_id
+    and ("This book is marked \"%s\" on StoryGraph"):format(HARDCOVER.STATUS_NAME[status_id])
+    or "This book has no status on StoryGraph (it may have been removed from your shelves)"
 
   self.dialog_manager:confirm({
-    text = _(("This book is marked \"%s\" on StoryGraph, so reading progress isn't syncing.\n\nMark it as Currently Reading?"):format(status_name)),
+    text = _(status_clause .. ", so reading progress isn't syncing.\n\nMark it as Currently Reading?"),
     ok_text = _("Mark as Reading"),
     cancel_text = _("Ignore"),
     ok_callback = function()
@@ -902,18 +905,13 @@ function HardcoverApp:startReadCache()
                 return fail(err)
               end
 
-              if not self.state.book_status.status_id then
-                -- Fetched a 200 response, but couldn't find/parse a read status on
-                -- it (e.g. a stale/rotated session cookie serving a logged-out
-                -- version of the page). Treat this like a fetch failure and retry,
-                -- rather than declaring success and leaving page updates silently
-                -- skipping forever (status_id ~= READING) for the rest of the session.
-                -- Clear book_status.id too, so the "already cached" short-circuit
-                -- above doesn't skip the re-fetch on the next retry attempt.
-                self.state.book_status = {}
-                return fail("No read status found for book")
-              end
-
+              -- A nil status_id here (fetched the book page fine, but found no
+              -- read-status on it) is a real, stable outcome -- not just a fetch
+              -- failure to retry -- e.g. the book was removed from the user's
+              -- shelves, or its status was changed to something we don't render a
+              -- badge for. Converge to success() so process_page_turns gets set;
+              -- warnStatusMismatch (triggered from _handlePageUpdate) is what
+              -- surfaces and lets the user fix a non-READING status, nil included.
               success()
               self:registerHighlight() -- redundant but safe
             end)
