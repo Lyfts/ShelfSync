@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.5
+- The auto-mark-as-Currently-Reading write (added in 0.3.4) now retries a couple of times if it fails, instead of giving up permanently after a single transient failure.
+- Expand the "Verbose logging" diagnostics (added in 0.3.4) to cover several more places that were previously silent on failure: the actual progress-update write, automatic wifi enabling, sync retry/reschedule points, the status-mismatch warning's fire/skip decision, and the autolink matching flow.
+
 ## 0.3.4
 - An already-linked book with no status on StoryGraph now also gets automatically marked as "Currently Reading" (after a couple of retries in case it's just a momentary hiccup), instead of only ever being caught by the status-mismatch warning.
 - Add a "Verbose logging" setting (off by default) for extra diagnostic detail when troubleshooting sync issues, instead of it always being on.
