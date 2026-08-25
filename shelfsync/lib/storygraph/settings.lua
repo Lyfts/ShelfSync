@@ -3,8 +3,8 @@ local BaseSettings = require("shelfsync/lib/common/base_settings")
 local StoryGraphSettings = setmetatable({}, { __index = BaseSettings })
 StoryGraphSettings.__index = StoryGraphSettings
 
-function StoryGraphSettings:new(path, ui)
-  return BaseSettings.new(self, path, ui, "storygraph")
+function StoryGraphSettings:new(path, ui, shared)
+  return BaseSettings.new(self, path, ui, "storygraph", shared)
 end
 
 -- StoryGraph doesn't expose a separate edition id from the book id it links

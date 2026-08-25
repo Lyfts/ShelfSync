@@ -1,5 +1,3 @@
-local DataStorage = require("datastorage")
-local Device = require("device")
 local _ = require("gettext")
 local math = require("math")
 local os = require("os")
@@ -7,20 +5,17 @@ local os = require("os")
 local T = require("ffi/util").template
 
 local Event = require("ui/event")
-local Font = require("ui/font")
 local UIManager = require("ui/uimanager")
 
 local UpdateDoubleSpinWidget = require("shelfsync/lib/common/ui/update_double_spin_widget")
 local InfoMessage = require("ui/widget/infomessage")
 local SpinWidget = require("ui/widget/spinwidget")
 
-local Github = require("shelfsync/lib/common/github")
 local _t = require("shelfsync/lib/common/table_util")
 
 local HARDCOVER = require("shelfsync/lib/hardcover/constants")
 local ICON = require("shelfsync/lib/common/constants/icons")
 local SETTING = require("shelfsync/lib/common/constants/settings")
-local VERSION = require("shelfsync_version")
 
 local HardcoverMenu = {}
 HardcoverMenu.__index = HardcoverMenu
@@ -149,7 +144,7 @@ function HardcoverMenu:getSubMenuItems(book_view)
       end,
     },
     book_view and {
-      text = _("Jump to Hardcover position"),
+      text = _("Jump to linked book position"),
       enabled_func = function()
         return self:isActive() and self.settings:bookLinked()
       end,
@@ -184,36 +179,6 @@ function HardcoverMenu:getSubMenuItems(book_view)
         return self:getSettingsSubMenuItems()
       end,
     },
-    {
-      text = _("About"),
-      callback = function()
-        local info = Github:fetchVersionInfo()
-        local version = table.concat(VERSION, ".")
-        local new_release_str = ""
-        if info and info.plugin_version and Github:isNewer(info.plugin_version) then
-          new_release_str = " (latest v" .. info.plugin_version .. ")"
-        end
-        local settings_file = DataStorage:getSettingsDir() .. "/" .. "hardcoversync_settings.lua"
-
-        UIManager:show(InfoMessage:new {
-          text = [[
-Hardcover plugin
-v]] .. version .. new_release_str .. [[
-
-
-Updates book progress and status on hardcover.app
-
-Project:
-github.com/Lyfts/ShelfSync
-
-Settings:
-]] .. settings_file,
-          face = Font:getFace("cfont", 18),
-          show_icon = false,
-        })
-      end,
-      keep_menu_open = true
-    }
   }
   return _t.filter(menu_items, function(v)
     return v
@@ -485,163 +450,6 @@ function HardcoverMenu:getStatusSubMenuItems()
   return items
 end
 
-function HardcoverMenu:getTrackingSubMenuItems()
-  return {
-    {
-      text = _("Auto sync by edition pages"),
-      checked_func = function()
-        return self.settings:syncByRemotePages()
-      end,
-      enabled_func = function()
-        return self:isActive() and self.settings:bookLinked()
-      end,
-      callback = function()
-        local setting = self.settings:syncByRemotePages()
-        self.settings:updateSetting(SETTING.SYNC_BY_REMOTE_PAGES, not setting)
-      end,
-    },
-    {
-      text = "Always track progress by default",
-      checked_func = function()
-        return self.settings:readSetting(SETTING.ALWAYS_SYNC) ~= false
-      end,
-      callback = function()
-        local setting = self.settings:readSetting(SETTING.ALWAYS_SYNC) ~= false
-        self.settings:updateSetting(SETTING.ALWAYS_SYNC, not setting)
-      end,
-    },
-    {
-      text = "Sync immediately when opening a book",
-      checked_func = function()
-        return self.settings:syncOnOpen()
-      end,
-      callback = function()
-        local setting = self.settings:syncOnOpen()
-        self.settings:updateSetting(SETTING.SYNC_ON_OPEN, not setting)
-      end,
-      hold_callback = function()
-        UIManager:show(InfoMessage:new {
-          text = [[Try syncing progress as soon as a book is opened, rather than waiting for the first page turn or tracking interval.
-
-Disable this if you'd rather sync only follow the usual periodic/threshold pattern below.]],
-        })
-      end,
-      separator = true
-    },
-    {
-      text = "Update periodically",
-      radio = true,
-      checked_func = function()
-        return self.settings:trackByTime()
-      end,
-      callback = function()
-        self.settings:setTrackMethod(SETTING.TRACK.FREQUENCY)
-      end
-    },
-    {
-      text_func = function()
-        return "Every " .. self.settings:trackFrequency() .. " minutes"
-      end,
-      enabled_func = function()
-        return self.settings:trackByTime()
-      end,
-      callback = function(menu_instance)
-        local spinner = SpinWidget:new {
-          value = self.settings:trackFrequency(),
-          value_min = 1,
-          value_max = 120,
-          value_step = 1,
-          value_hold_step = 6,
-          ok_text = _("Save"),
-          title_text = _("Set track frequency"),
-          callback = function(spin)
-            self.settings:updateSetting(SETTING.TRACK_FREQUENCY, spin.value)
-            menu_instance:updateItems()
-          end
-        }
-
-        UIManager:show(spinner)
-      end,
-      keep_menu_open = true
-    },
-    {
-      text = "Update by progress",
-      radio = true,
-      checked_func = function()
-        return self.settings:trackByProgress()
-      end,
-      callback = function()
-        self.settings:setTrackMethod(SETTING.TRACK.PROGRESS)
-      end
-    },
-    {
-      text_func = function()
-        return "Every " .. self.settings:trackPercentageInterval() .. " percent completed"
-      end,
-      enabled_func = function()
-        return self.settings:trackByProgress()
-      end,
-      callback = function(menu_instance)
-        local spinner = SpinWidget:new {
-          value = self.settings:trackPercentageInterval(),
-          value_min = 1,
-          value_max = 50,
-          value_step = 1,
-          value_hold_step = 10,
-          ok_text = _("Save"),
-          title_text = _("Set track progress"),
-          callback = function(spin)
-            self.settings:changeTrackPercentageInterval(spin.value)
-            menu_instance:updateItems()
-          end
-        }
-
-        UIManager:show(spinner)
-      end,
-      keep_menu_open = true
-    },
-    {
-      text = "Update by edition pages",
-      radio = true,
-      checked_func = function()
-        return self.settings:trackMethod() == SETTING.TRACK.PAGES
-      end,
-      callback = function()
-        self.settings:setTrackMethod(SETTING.TRACK.PAGES)
-      end
-    },
-    {
-      text_func = function()
-        if self.settings:trackMethod() == SETTING.TRACK.PAGES and not self.settings:trackByPages() then
-          return _("No page count from Hardcover for this book — falling back to progress %")
-        end
-        return "Every " .. self.settings:trackPageStep() .. " pages completed"
-      end,
-      enabled_func = function()
-        return self.settings:trackByPages()
-      end,
-      callback = function(menu_instance)
-        local spinner = SpinWidget:new {
-          value = self.settings:trackPageStep(),
-          value_min = 1,
-          value_max = 500,
-          value_step = 1,
-          value_hold_step = 10,
-          ok_text = _("Save"),
-          title_text = _("Set track pages"),
-          callback = function(spin)
-            self.settings:updateSetting(SETTING.TRACK_PAGE_STEP, spin.value)
-            menu_instance:updateItems()
-          end
-        }
-
-        UIManager:show(spinner)
-      end,
-      keep_menu_open = true
-    },
-  }
-end
-
 function HardcoverMenu:getAuthSubMenuItems()
   return {
     {
@@ -736,87 +544,6 @@ function HardcoverMenu:getSettingsSubMenuItems()
       callback = function()
         local setting = self.settings:readSetting(SETTING.LINK_BY_TITLE) == true
         self.settings:updateSetting(SETTING.LINK_BY_TITLE, not setting)
-      end,
-      separator = true
-    },
-    {
-      text = "Progress tracking settings",
-      sub_item_table_func = function()
-        return self:getTrackingSubMenuItems()
-      end,
-    },
-    {
-      text = "Enable wifi on demand",
-      checked_func = function()
-        return self.settings:readSetting(SETTING.ENABLE_WIFI) == true
-      end,
-      enabled_func = function()
-        return Device:hasWifiRestore()
-      end,
-      callback = function()
-        local setting = self.settings:readSetting(SETTING.ENABLE_WIFI) == true
-        self.settings:updateSetting(SETTING.ENABLE_WIFI, not setting)
-      end
-    },
-    {
-      text = "Confirm changes to book read status",
-      checked_func = function()
-        return self.settings:menuConfirm()
-      end,
-      callback = function()
-        local setting = self.settings:menuConfirm() == true
-        self.settings:setMenuConfirm(not setting)
-      end
-    },
-    {
-      text = "Compatibility mode",
-      checked_func = function()
-        return self.settings:compatibilityMode()
-      end,
-      callback = function()
-        local setting = self.settings:compatibilityMode()
-        self.settings:updateSetting(SETTING.COMPATIBILITY_MODE, not setting)
-      end,
-      hold_callback = function()
-        UIManager:show(InfoMessage:new {
-          text = [[Disable fancy menu for book and edition search results.
-
-May improve compatibility for some versions of KOReader]],
-        })
-      end
-    },
-    {
-      text = "Include location info in regular notes",
-      checked_func = function()
-        return self.settings:readSetting(SETTING.INCLUDE_LOCATION_IN_NOTES) == true
-      end,
-      callback = function()
-        local setting = self.settings:readSetting(SETTING.INCLUDE_LOCATION_IN_NOTES) == true
-        self.settings:updateSetting(SETTING.INCLUDE_LOCATION_IN_NOTES, not setting)
-      end,
-      hold_callback = function()
-        UIManager:show(InfoMessage:new {
-          text = [[Automatically append Chapter, Page, and % info to your regular notes.
-
-Quotes always include this info.]],
-        })
-      end,
-    },
-    {
-      text = "Verbose logging",
-      checked_func = function()
-        return self.settings:verboseLogging()
-      end,
-      callback = function()
-        local setting = self.settings:verboseLogging()
-        self.settings:updateSetting(SETTING.VERBOSE_LOGGING, not setting)
-      end,
-      hold_callback = function()
-        UIManager:show(InfoMessage:new {
-          text = [[Log extra detail useful for diagnosing sync issues to KOReader's log file.
-
-Off by default since it can be noisy; only worth enabling while troubleshooting.]],
-        })
       end,
       separator = true
     },

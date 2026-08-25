@@ -29,7 +29,7 @@ jobs:
         run: |
           cd ..
           cp -r "$GITHUB_WORKSPACE" shelfsync.koplugin
-          zip -r shelfsync.koplugin.zip shelfsync.koplugin -x '*/*.git*' '*/spec/*' '*/lua_modules/*' '*/.luarocks/*' '*/lua' '*/luarocks' '*/.tool-versions' '*/*.rockspec'
+          zip -r shelfsync.koplugin.zip shelfsync.koplugin -x '*/*.git*' '*/spec/*' '*/lua_modules/*' '*/.luarocks/*' '*/lua' '*/luarocks' '*/.tool-versions' '*/*.rockspec' '*/tools/*' '*/README.md' '*/CHANGELOG.md' '*/LICENSE'
 
       - name: Release
         uses: softprops/action-gh-release@v3

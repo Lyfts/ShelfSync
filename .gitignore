@@ -8,3 +8,4 @@ storygraph_config.lua
 .DS_STORE
 graphify-out/
 .serena
+/build

@@ -29,7 +29,7 @@ Both services share a single config file: rename `shelfsync_config.example.lua` 
 
 ## Usage
 
-Both the **StoryGraph** and **Hardcover** menus are located in the **Bookmark** top menu when a document is active. They work the same way and can be used together or independently.
+Everything lives under a single **ShelfSync** menu in the **Bookmark** top menu when a document is active, with **StoryGraph** and **Hardcover** as sub-menus. They work the same way and can be used together or independently.
 
 ### Updating Progress & Notes
 Each menu provides a unified **"Update progress: [XX]%"** item. This opens a powerful dialog where you can:
@@ -54,13 +54,14 @@ When enabled (per service), the plugin will periodically sync your progress:
 
 ## Settings
 
-Each service has its own **Settings** submenu with its own linking, tracking, and account options, including:
-- **Include location info in regular notes**: Automatically append Chapter, Page, and % info to your regular notes.
-- **Automatically link by ISBN/Title**: Attempt to find matching books automatically when opening a new document.
-- **Enable wifi on demand**: Briefly enable wifi for background syncs to preserve battery life.
-- **Confirm changes**: Prompt for confirmation before changing a book's status (e.g., Want to Read -> Read).
+Each service has its own **Settings** submenu for linking and account options:
+- **Automatically link by ISBN/Title** (Hardcover also offers matching by its own identifiers): Attempt to find matching books automatically when opening a new document.
+- **Account**: Cookies/tokens for that service.
 
-The **"Plugin Updates"** settings (see below) are shared and only appear under the **StoryGraph** menu, since they apply to the whole plugin rather than one service.
+Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Compatibility mode", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between both services and lives under **ShelfSync > Common settings**, since it applies to the whole plugin rather than one service:
+- **Include location info in regular notes**: Automatically append Chapter, Page, and % info to your regular notes.
+- **Enable wifi on demand**: Briefly enable wifi for background syncs to preserve battery life.
+- **Confirm changes to book read status**: Prompt for confirmation before changing a book's status (e.g., Want to Read -> Read).
 
 ## Versioning & Mandatory Updates
 

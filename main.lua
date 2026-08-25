@@ -74,6 +74,7 @@ local User = require("shelfsync/lib/common/user")
 local DialogManager = require("shelfsync/lib/common/ui/dialog_manager")
 local StoryGraphMenu = require("shelfsync/lib/storygraph/menu")
 local HardcoverMenu = require("shelfsync/lib/hardcover/menu")
+local CommonMenu = require("shelfsync/lib/common/menu")
 
 local STORYGRAPH = require("shelfsync/lib/storygraph/constants")
 local HARDCOVER = require("shelfsync/lib/hardcover/constants")
@@ -151,8 +152,8 @@ local ShelfSyncApp = WidgetContainer:extend {
 }
 
 function ShelfSyncApp:onDispatcherRegisterActions()
-  for _, provider in ipairs(PROVIDERS) do
-    for _, action in ipairs(ACTIONS) do
+  for _prov_idx, provider in ipairs(PROVIDERS) do
+    for _action_idx, action in ipairs(ACTIONS) do
       Dispatcher:registerAction(provider.key .. "_" .. action.snake, {
         category = "none",
         event = provider.prefix .. action.suffix,
@@ -260,6 +261,16 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
     engine:onSettingsChanged(field, change, original_value)
   end)
 
+  -- Settings shared across providers (see base_settings.lua's SHARED_KEYS)
+  -- are notified on `plugin_settings`, not on this engine's own `settings`
+  -- instance, so subscribe to that too when they're not already the same
+  -- object (true for the StoryGraph engine, whose settings IS plugin_settings).
+  if settings ~= plugin_settings then
+    plugin_settings:subscribe(function(field, change, original_value)
+      engine:onSettingsChanged(field, change, original_value)
+    end)
+  end
+
   provider.api.settings = settings
   provider.api.on_error = function(err)
     if not err or not engine.enabled then
@@ -299,10 +310,13 @@ function ShelfSyncApp:init()
     local settings = (provider == storygraph_provider) and plugin_settings
       or provider.settings_class:new(
         ("%s/%s"):format(DataStorage:getSettingsDir(), provider.settings_filename),
-        self.ui
+        self.ui,
+        plugin_settings
       )
     self.engines[provider.key] = self:_buildEngine(provider, settings, plugin_settings)
   end
+
+  self.common_menu = CommonMenu:new { settings = plugin_settings, app = self }
 
   self:onDispatcherRegisterActions()
   self.ui.menu:registerToMainMenu(self)
@@ -400,6 +414,12 @@ function ShelfSyncApp:onPosUpdate(pos, page)
   end
 end
 
+function ShelfSyncApp:onPageUpdate(page)
+  for _, engine in pairs(self.engines) do
+    engine:onPageUpdate(page)
+  end
+end
+
 function ShelfSyncApp:onUpdatePos()
   for _, engine in pairs(self.engines) do
     engine:onUpdatePos()
@@ -449,9 +469,56 @@ function ShelfSyncApp:onDocSettingsItemsChanged(file, doc_settings)
 end
 
 function ShelfSyncApp:addToMainMenu(menu_items)
+  local sub_items = {}
   for _, provider in ipairs(PROVIDERS) do
-    menu_items[provider.key] = self.engines[provider.key].menu:mainMenu()
+    table.insert(sub_items, self.engines[provider.key].menu:mainMenu())
   end
+
+  table.insert(sub_items, {
+    text = _("Common settings"),
+    sub_item_table_func = function()
+      return self.common_menu:getSubMenuItems()
+    end,
+  })
+
+  table.insert(sub_items, {
+    text = _("About"),
+    keep_menu_open = true,
+    callback = function()
+      local Font = require("ui/font")
+      local Github = require("shelfsync/lib/common/github")
+      local VERSION = require("shelfsync_version")
+
+      local info = Github:fetchVersionInfo()
+      local version = table.concat(VERSION, ".")
+      local new_release_str = ""
+      if info and info.plugin_version and Github:isNewer(info.plugin_version) then
+        new_release_str = " (latest v" .. info.plugin_version .. ")"
+      end
+
+      UIManager:show(InfoMessage:new {
+        text = [[
+ShelfSync plugin
+v]] .. version .. new_release_str .. [[
+
+
+Synchronizes reading progress, notes, and status to The StoryGraph and/or Hardcover.
+
+See the StoryGraph and Hardcover submenus for service-specific settings.
+
+Project:
+github.com/Lyfts/ShelfSync]],
+        face = Font:getFace("cfont", 18),
+        show_icon = false,
+      })
+    end,
+  })
+
+  menu_items.shelfsync = {
+    text = _("ShelfSync"),
+    sorting_hint = "more_tools",
+    sub_item_table = sub_items,
+  }
 end
 
 return ShelfSyncApp

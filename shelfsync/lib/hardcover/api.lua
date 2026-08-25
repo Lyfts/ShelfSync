@@ -121,11 +121,16 @@ function HardcoverApi:query(query, parameters)
     return
   end
 
+  -- Subprocess forking occasionally fails to complete on some devices (no
+  -- network-level error, the fork itself just doesn't come back); one retry
+  -- recovers most of these transient failures instead of failing outright.
   local completed, content
-
-  completed, content = Trapper:dismissableRunInSubprocess(function()
-    return self:_query(query, parameters)
-  end, true, true)
+  for attempt = 1, 2 do
+    completed, content = Trapper:dismissableRunInSubprocess(function()
+      return self:_query(query, parameters)
+    end, true, true)
+    if completed then break end
+  end
 
   if completed and content then
     local code, response = string.match(content, "^([^:]*):(.*)")
@@ -415,7 +420,7 @@ function HardcoverApi:normalizedEdition(edition)
   result.edition_format = Book:editionFormatName(edition.edition_format, edition.reading_format_id)
 
   result.cached_image = edition.cached_image
-  result.publisher = edition.publisher
+  result.publisher = edition.publisher and edition.publisher.name
   if edition.release_date then
     local year = edition.release_date:match("^(%d%d%d%d)-")
     result.release_year = year

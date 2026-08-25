@@ -179,7 +179,7 @@ function StoryGraphApi:request(url, method, data, custom_headers)
     return nil, "Network not connected"
   end
 
-  local completed, content = Trapper:dismissableRunInSubprocess(function()
+  local subprocess_fn = function()
     local maxtime = 15
     local timeout = 10
     local sink = {}
@@ -250,7 +250,22 @@ function StoryGraphApi:request(url, method, data, custom_headers)
       end
     end
     return (code or "error") .. "|" .. header_str .. "|" .. response_body
-  end, true, true)
+  end
+
+  -- Subprocess forking occasionally fails to complete on some devices (seen
+  -- as "request() subprocess did not complete" with no network-level error),
+  -- after which KOReader's Trapper falls back to blocking in-process runs.
+  -- One retry recovers most of these transient failures instead of failing
+  -- the whole sync outright.
+  local completed, content
+  for attempt = 1, 2 do
+    completed, content = Trapper:dismissableRunInSubprocess(subprocess_fn, true, true)
+    if completed then break end
+    if self.settings and attempt == 1 then
+      self.settings:debugWarn("StoryGraph: request() subprocess did not complete on first attempt for "
+        .. url .. ", retrying once")
+    end
+  end
 
   if completed and content then
     local code, header_str, response = string.match(content, "^([^|]*)|([^|]*)|(.*)")

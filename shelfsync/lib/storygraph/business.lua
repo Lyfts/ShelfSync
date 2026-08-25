@@ -212,8 +212,15 @@ function StoryGraph:linkBookByTitle()
   end
 end
 
-function StoryGraph:tryAutolink()
+-- `done` (optional) is called once the attempt is fully resolved, whether or
+-- not it found a match -- including when `withWifi` has to wait on a wifi
+-- restore before it can run. Callers that need to know the outcome (e.g.
+-- SyncEngine's startReadCache retry chain) MUST use `done` rather than
+-- checking bookLinked() immediately after calling this, since a wifi wait
+-- means linking can finish well after this function itself returns.
+function StoryGraph:tryAutolink(done)
   if self.settings:bookLinked() then
+    if done then done() end
     return
   end
 
@@ -229,7 +236,10 @@ function StoryGraph:tryAutolink()
   if should_attempt then
     self.wifi:withWifi(function()
       self:_runAutolink(identifiers)
+      if done then done() end
     end)
+  elseif done then
+    done()
   end
 end
 

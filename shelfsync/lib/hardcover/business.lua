@@ -11,6 +11,7 @@ local InfoMessage = require("ui/widget/infomessage")
 local Book = require("shelfsync/lib/common/book")
 
 local SETTING = require("shelfsync/lib/common/constants/settings")
+local HARDCOVER = require("shelfsync/lib/hardcover/constants")
 
 -- Unlike StoryGraph, Hardcover can start a brand new read session on demand
 -- (see pushProgress below), so SyncEngine shouldn't bail out of a page update
@@ -148,6 +149,24 @@ function Hardcover:linkBook(book)
         new_settings.edition_id
       ) or {}
     end
+  elseif book.book_id and not self.state.book_status.status_id then
+    -- Auto-Add to Library if no status was found (mirrors StoryGraph:linkBook)
+    logger.info("Hardcover: Book has no status, adding to Currently Reading automatically")
+    local added = self.api:updateUserBook(new_settings.book_id, HARDCOVER.STATUS.READING, nil, new_settings.edition_id)
+    if added and added.status_id then
+      self.state.book_status = added
+    else
+      -- The book stays linked locally either way (settings already saved
+      -- above), but without this the failure was completely silent -- the
+      -- book would just sit unsynced until the status-mismatch warning
+      -- eventually caught it much later, with no link back to the cause.
+      logger.warn("Hardcover: Failed to automatically mark book as Currently Reading on Hardcover")
+      self.state.book_status = added or {}
+      UIManager:show(InfoMessage:new {
+        text = _("Linked, but couldn't automatically mark the book as Currently Reading on Hardcover. Use \"Update status\" to set it manually."),
+        icon = "notice-warning",
+      })
+    end
   end
 
   return true
@@ -228,8 +247,15 @@ function Hardcover:linkBookByTitle()
   end
 end
 
-function Hardcover:tryAutolink()
+-- `done` (optional) is called once the attempt is fully resolved, whether or
+-- not it found a match -- including when `withWifi` has to wait on a wifi
+-- restore before it can run. Callers that need to know the outcome (e.g.
+-- SyncEngine's startReadCache retry chain) MUST use `done` rather than
+-- checking bookLinked() immediately after calling this, since a wifi wait
+-- means linking can finish well after this function itself returns.
+function Hardcover:tryAutolink(done)
   if self.settings:bookLinked() then
+    if done then done() end
     return
   end
 
@@ -245,7 +271,10 @@ function Hardcover:tryAutolink()
   if should_attempt then
     self.wifi:withWifi(function()
       self:_runAutolink(identifiers)
+      if done then done() end
     end)
+  elseif done then
+    done()
   end
 end
 

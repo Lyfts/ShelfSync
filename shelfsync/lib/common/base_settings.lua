@@ -5,13 +5,19 @@
 --
 --   local HardcoverSettings = setmetatable({}, { __index = BaseSettings })
 --   HardcoverSettings.__index = HardcoverSettings
---   function HardcoverSettings:new(path, ui)
---     return BaseSettings.new(self, path, ui, "hardcover")
+--   function HardcoverSettings:new(path, ui, shared)
+--     return BaseSettings.new(self, path, ui, "hardcover", shared)
 --   end
 --
 -- `sidecar_key` is the per-provider sub-table name used to store book links
 -- inside a document's sidecar (metadata.lua) file, so a single book can be
 -- linked to more than one provider independently.
+--
+-- `shared` is another BaseSettings instance (the StoryGraph settings, in
+-- practice) that SHARED_KEYS below are transparently redirected to, so
+-- settings like tracking mode or verbose logging are combined across
+-- providers instead of being configured twice. If omitted, an instance is
+-- its own `shared` (i.e. it owns those keys itself).
 local KoreaderVersion = require("version")
 local LuaSettings = require("luasettings")
 local DocSettings = require("docsettings")
@@ -23,7 +29,26 @@ local SETTING = require("shelfsync/lib/common/constants/settings")
 local BaseSettings = {}
 BaseSettings.__index = BaseSettings
 
-function BaseSettings:new(path, ui, sidecar_key)
+-- Settings that are combined across all providers instead of being kept
+-- independently per service (see shelfsync/lib/common/menu.lua, which is the
+-- only place these are surfaced in the UI). Any instance other than `shared`
+-- itself transparently redirects reads/writes of these keys to `shared`.
+local SHARED_KEYS = {
+  [SETTING.ENABLE_WIFI] = true,
+  [SETTING.MENU_CONFIRMATION] = true,
+  [SETTING.COMPATIBILITY_MODE] = true,
+  [SETTING.INCLUDE_LOCATION_IN_NOTES] = true,
+  [SETTING.VERBOSE_LOGGING] = true,
+  [SETTING.SYNC_BY_REMOTE_PAGES] = true,
+  [SETTING.ALWAYS_SYNC] = true,
+  [SETTING.SYNC_ON_OPEN] = true,
+  [SETTING.TRACK_METHOD] = true,
+  [SETTING.TRACK_FREQUENCY] = true,
+  [SETTING.TRACK_PERCENTAGE] = true,
+  [SETTING.TRACK_PAGE_STEP] = true,
+}
+
+function BaseSettings:new(path, ui, sidecar_key, shared)
   local o = {}
   setmetatable(o, self)
 
@@ -31,9 +56,10 @@ function BaseSettings:new(path, ui, sidecar_key)
   o.ui = ui
   o.sidecar_key = sidecar_key
   o.subscribers = {}
+  o.shared = shared or o
 
   if KoreaderVersion:getNormalizedCurrentVersion() < 202403010000 then
-    if o.settings:readSetting(SETTING.COMPATIBILITY_MODE) == nil then
+    if o:readSetting(SETTING.COMPATIBILITY_MODE) == nil then
       o:updateSetting(SETTING.COMPATIBILITY_MODE, true)
     end
   end
@@ -49,6 +75,9 @@ function BaseSettings:getDocSettings(filename)
 end
 
 function BaseSettings:readSetting(key)
+  if SHARED_KEYS[key] and self.shared ~= self then
+    return self.shared:readSetting(key)
+  end
   return self.settings:readSetting(key)
 end
 
@@ -120,6 +149,10 @@ function BaseSettings:updateBookSetting(filename, config)
 end
 
 function BaseSettings:updateSetting(key, value)
+  if SHARED_KEYS[key] and self.shared ~= self then
+    return self.shared:updateSetting(key, value)
+  end
+
   local original_value = self.settings:readSetting(key)
   self.settings:saveSetting(key, value)
 
@@ -179,7 +212,7 @@ function BaseSettings:fileSyncEnabled(file)
 
   local sync_value = self:readBookSetting(file, "sync")
   if sync_value == nil then
-    sync_value = self.settings:readSetting(SETTING.ALWAYS_SYNC)
+    sync_value = self:readSetting(SETTING.ALWAYS_SYNC)
   end
   return sync_value ~= false
 end
@@ -203,24 +236,24 @@ function BaseSettings:pages()
 end
 
 function BaseSettings:trackFrequency()
-  return self.settings:readSetting(SETTING.TRACK_FREQUENCY) or 5
+  return self:readSetting(SETTING.TRACK_FREQUENCY) or 5
 end
 
 function BaseSettings:trackPercentageInterval()
-  return self.settings:readSetting(SETTING.TRACK_PERCENTAGE) or 10
+  return self:readSetting(SETTING.TRACK_PERCENTAGE) or 10
 end
 
 function BaseSettings:trackMethod()
-  return self.settings:readSetting(SETTING.TRACK_METHOD) or SETTING.TRACK.FREQUENCY
+  return self:readSetting(SETTING.TRACK_METHOD) or SETTING.TRACK.FREQUENCY
 end
 
 function BaseSettings:trackByTime()
-  local setting = self.settings:readSetting(SETTING.TRACK_METHOD)
+  local setting = self:readSetting(SETTING.TRACK_METHOD)
   return setting == nil or setting == SETTING.TRACK.FREQUENCY
 end
 
 function BaseSettings:trackByProgress()
-  local method = self.settings:readSetting(SETTING.TRACK_METHOD)
+  local method = self:readSetting(SETTING.TRACK_METHOD)
   -- Fallback if pages tracking is selected but remote page count is missing
   if method == SETTING.TRACK.PAGES then
     local pages = self:pages()
@@ -236,7 +269,7 @@ function BaseSettings:changeTrackPercentageInterval(percent)
 end
 
 function BaseSettings:compatibilityMode()
-  return self.settings:readSetting(SETTING.COMPATIBILITY_MODE) == true
+  return self:readSetting(SETTING.COMPATIBILITY_MODE) == true
 end
 
 function BaseSettings:setMenuConfirm(status)
@@ -244,19 +277,19 @@ function BaseSettings:setMenuConfirm(status)
 end
 
 function BaseSettings:menuConfirm()
-  return self.settings:readSetting(SETTING.MENU_CONFIRMATION) == true
+  return self:readSetting(SETTING.MENU_CONFIRMATION) == true
 end
 
 function BaseSettings:syncByRemotePages()
-  return self.settings:readSetting(SETTING.SYNC_BY_REMOTE_PAGES) ~= false
+  return self:readSetting(SETTING.SYNC_BY_REMOTE_PAGES) ~= false
 end
 
 function BaseSettings:syncOnOpen()
-  return self.settings:readSetting(SETTING.SYNC_ON_OPEN) == true
+  return self:readSetting(SETTING.SYNC_ON_OPEN) == true
 end
 
 function BaseSettings:verboseLogging()
-  return self.settings:readSetting(SETTING.VERBOSE_LOGGING) == true
+  return self:readSetting(SETTING.VERBOSE_LOGGING) == true
 end
 
 -- Easy way to add logging that only shows up with "Verbose logging" enabled
@@ -277,11 +310,11 @@ end
 
 function BaseSettings:trackByPages()
   local pages = self:pages()
-  return self.settings:readSetting(SETTING.TRACK_METHOD) == SETTING.TRACK.PAGES and (pages and pages > 0)
+  return self:readSetting(SETTING.TRACK_METHOD) == SETTING.TRACK.PAGES and (pages and pages > 0)
 end
 
 function BaseSettings:trackPageStep()
-  return self.settings:readSetting(SETTING.TRACK_PAGE_STEP) or 10
+  return self:readSetting(SETTING.TRACK_PAGE_STEP) or 10
 end
 
 return BaseSettings

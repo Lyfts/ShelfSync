@@ -4,16 +4,34 @@ local Device = require("device")
 
 local NetworkMgr = require("ui/network/manager")
 
-local AutoWifi = {
-  connection_pending = false
-}
+local AutoWifi = {}
 AutoWifi.__index = AutoWifi
 
 function AutoWifi:new(o)
   return setmetatable(o, self)
 end
 
+-- Module-level (not per-instance): StoryGraph and Hardcover each get their
+-- own AutoWifi, but there's only one real NetworkMgr, so a restore kicked
+-- off by one engine must be visible to the other. Without this, a second
+-- withWifi() call arriving while a restore is in flight would see
+-- NetworkMgr:isWifiOn() already true (the wifi interface comes up ~instantly,
+-- well before the actual network association/DHCP completes -- see
+-- restoreWifiAsync) and wrongly treat that as "already connected", firing
+-- its callback immediately against a connection that doesn't functionally
+-- exist yet. Queuing onto the same in-flight restore instead means every
+-- caller's callback only fires once real connectivity is confirmed, and
+-- wifi only gets auto-disabled once afterward, no matter how many engines
+-- asked for it around the same time.
+local pending_restore = nil -- nil, or { callbacks = { ... }, original_on = <bool> }
+
 function AutoWifi:withWifi(callback)
+  if pending_restore then
+    self.settings:debugLog(self.label .. ": withWifi - restore already in flight, queuing")
+    table.insert(pending_restore.callbacks, callback)
+    return
+  end
+
   if NetworkMgr:isWifiOn() then
     self.settings:debugLog(self.label .. ": withWifi - wifi already on, calling back immediately")
     callback(false)
@@ -29,18 +47,22 @@ function AutoWifi:withWifi(callback)
       and not_airplane_mode then
 
     self.settings:debugLog(self.label .. ": withWifi - wifi off, restoring automatically")
-    local original_on = NetworkMgr.wifi_was_on
+    pending_restore = { callbacks = { callback }, original_on = NetworkMgr.wifi_was_on }
 
     NetworkMgr:restoreWifiAsync()
     NetworkMgr:scheduleConnectivityCheck(function()
+      local restore = pending_restore
+      pending_restore = nil
+
       -- restore original "was on" state to prevent wifi being restored automatically after suspend
-      NetworkMgr.wifi_was_on = original_on
-      G_reader_settings:saveSetting("wifi_was_on", original_on)
+      NetworkMgr.wifi_was_on = restore.original_on
+      G_reader_settings:saveSetting("wifi_was_on", restore.original_on)
 
-      self.connection_pending = false
-
-      self.settings:debugLog(self.label .. ": withWifi - connectivity check finished, wifi_on=" .. tostring(NetworkMgr:isWifiOn()))
-      callback(true)
+      self.settings:debugLog(self.label .. ": withWifi - connectivity check finished, wifi_on=" .. tostring(NetworkMgr:isWifiOn())
+        .. " queued_callbacks=" .. #restore.callbacks)
+      for _, queued_callback in ipairs(restore.callbacks) do
+        queued_callback(true)
+      end
 
       -- TODO: schedule turn off wifi, debounce
       self:wifiDisableSilent()

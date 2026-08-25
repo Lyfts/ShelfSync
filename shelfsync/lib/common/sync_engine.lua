@@ -23,7 +23,6 @@ local Notification = require("ui/widget/notification")
 
 local _t = require("shelfsync/lib/common/table_util")
 local Scheduler = require("shelfsync/lib/common/scheduler")
-local debounce = require("shelfsync/lib/common/debounce")
 local throttle = require("shelfsync/lib/common/throttle")
 
 local SETTING = require("shelfsync/lib/common/constants/settings")
@@ -355,10 +354,10 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
   end
 end
 
--- Assigns the throttled/debounced page-update wrappers onto this instance
--- (not the shared class table), so two SyncEngine instances running side by
--- side (StoryGraph + Hardcover) each keep their own independent throttle
--- timers instead of clobbering each other's state.
+-- Assigns the throttled page-update wrapper onto this instance (not the
+-- shared class table), so two SyncEngine instances running side by side
+-- (StoryGraph + Hardcover) each keep their own independent throttle timer
+-- instead of clobbering each other's state.
 function SyncEngine:initializePageUpdate()
   local track_frequency = math.max(math.min(self.settings:trackFrequency(), 120), 1) * 60
 
@@ -367,12 +366,6 @@ function SyncEngine:initializePageUpdate()
   end)
   self._throttledHandlePageUpdate = function(_self, ...) return throttled_update(...) end
   self._cancelPageUpdate = cancel_throttle
-
-  local debounced_update, cancel_debounce = debounce(2, function(...)
-    self:pageUpdateEvent(...)
-  end)
-  self.onPageUpdate = function(_self, ...) return debounced_update(...) end
-  self._cancelPageUpdateEvent = cancel_debounce
 end
 
 function SyncEngine:pageUpdateEvent(page)
@@ -457,9 +450,24 @@ function SyncEngine:pageUpdateEvent(page)
   end
 end
 
-function SyncEngine:onPosUpdate(_, page)
+-- KOReader's paged view mode (the default, and the only mode for fixed-layout
+-- documents) only ever broadcasts PageUpdate, never PosUpdate -- the latter
+-- is only fired (alongside PageUpdate, for the same page turn) in the
+-- reflowable-document scroll/continuous view mode. So PageUpdate, not
+-- PosUpdate, is the one event guaranteed to fire on every real page turn
+-- regardless of view mode; onPosUpdate is kept only to avoid relying on
+-- PageUpdate's page argument alone in scroll mode, and dedupes against it
+-- via self.state.page (updated synchronously by onPageUpdate/pageUpdateEvent)
+-- so the two don't both trigger a check for the same page turn.
+function SyncEngine:onPageUpdate(page)
   if self.state.process_page_turns then
     self:pageUpdateEvent(page)
+  end
+end
+
+function SyncEngine:onPosUpdate(_, page)
+  if self.state.page ~= page then
+    self:onPageUpdate(page)
   end
 end
 
@@ -480,10 +488,6 @@ end
 function SyncEngine:cancelPendingUpdates()
   if self._cancelPageUpdate then
     self:_cancelPageUpdate()
-  end
-
-  if self._cancelPageUpdateEvent then
-    self:_cancelPageUpdateEvent()
   end
 
   self.page_update_pending = false
@@ -520,7 +524,12 @@ function SyncEngine:onSuspend()
 end
 
 function SyncEngine:onResume()
-  local will_restart = self.settings:readSetting(SETTING.ENABLE_WIFI) and self.ui.document and self.settings:syncEnabled()
+  -- Deliberately doesn't gate on SETTING.ENABLE_WIFI (the "auto-manage wifi"
+  -- toggle) -- onSuspend always resets read_cache_started regardless of that
+  -- setting, so this needs to always be willing to restart it too, or tracking
+  -- stays permanently disarmed after a suspend on devices that manage their
+  -- own wifi (mirrors onNetworkConnected's condition below).
+  local will_restart = self.ui.document and self.settings:syncEnabled() and not self.state.read_cache_started
   self.settings:debugLog(self.label .. ": onResume - will restart read cache = " .. tostring(will_restart))
   if will_restart then
     UIManager:scheduleIn(2, self.startReadCache, self)
@@ -751,10 +760,21 @@ function SyncEngine:startReadCache()
             end)
           end
         else
-          self.business:tryAutolink()
-          if self.settings:bookLinked() and self.settings:syncEnabled() then
-            return restart(2)
-          end
+          -- tryAutolink's `done` fires once linking is fully resolved, even
+          -- when it had to wait on a wifi restore first (see AutoWifi:withWifi).
+          -- Checking bookLinked() synchronously right after the call would
+          -- miss that case: this retry chain would die silently -- with
+          -- nothing left to ever restart it -- while the actual link still
+          -- went through moments later, unobserved. A miss (no match, or
+          -- autolink not enabled) isn't a transient failure worth retrying,
+          -- so it's not routed through fail() -- same as the synchronous
+          -- no-match case, this chain simply ends here.
+          self.business:tryAutolink(function()
+            if self.settings:bookLinked() and self.settings:syncEnabled() then
+              restart(2)
+            end
+          end)
+          return
         end
       end)
     end,

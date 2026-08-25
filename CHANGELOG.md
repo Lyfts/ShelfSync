@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+- The StoryGraph and Hardcover menus are now combined into a single **ShelfSync** menu, with **StoryGraph** and **Hardcover** as sub-menus and shared plugin-wide settings (previously tucked under the StoryGraph menu's Settings) moved to a new **Common settings** sub-menu.
+- Progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Compatibility mode", "Include location info in regular notes", and "Verbose logging" are now combined across StoryGraph and Hardcover instead of being configured separately for each — they've moved to **ShelfSync > Common settings** and apply to both services. Linking and account settings remain per-service. Existing values aren't migrated; each of these settings falls back to its default until re-set once under Common settings.
+- Renamed "Jump to StoryGraph/Hardcover position" to "Jump to linked book position" in both menus for consistency.
+- The top-level ShelfSync menu now has its own **About** entry with ShelfSync branding, replacing the separate About entry that used to live under each service's own sub-menu.
+- Fixed the ShelfSync menu item showing up under the Documents tab instead of Tools > More tools.
+- Fixed newly linked books not being automatically marked "Currently Reading" on Hardcover the way they already were on StoryGraph — linking a book with no existing status on your Hardcover shelves now adds it as Currently Reading right away, instead of silently staying unmarked (and unsynced) until a much later retry happened to catch it.
+- Fixed a crash when manually linking a Hardcover book whose edition has a publisher set, caused by the publisher field being passed through as a raw object instead of its name.
+- Fixed a race between the StoryGraph and Hardcover engines when a book was opened with wifi off: whichever engine's automatic wifi restore kicked off first could cause the other engine's sync to silently die instead of proceeding once the connection came up.
+- Retry once on a failed network subprocess (seen on some devices as requests silently not completing) before giving up, for both StoryGraph and Hardcover.
+
 ## 1.0.1
 - StoryGraph and Hardcover now share a single `shelfsync_config.lua` file (replacing the separate `storygraph_config.lua`/`hardcover_config.lua`), with independent, optional sections per service — see the README. Existing installs are migrated automatically.
 

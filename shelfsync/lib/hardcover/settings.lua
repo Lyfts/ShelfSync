@@ -3,8 +3,8 @@ local BaseSettings = require("shelfsync/lib/common/base_settings")
 local HardcoverSettings = setmetatable({}, { __index = BaseSettings })
 HardcoverSettings.__index = HardcoverSettings
 
-function HardcoverSettings:new(path, ui)
-  return BaseSettings.new(self, path, ui, "hardcover")
+function HardcoverSettings:new(path, ui, shared)
+  return BaseSettings.new(self, path, ui, "hardcover", shared)
 end
 
 -- Unlike StoryGraph, Hardcover has a real book/edition distinction: a book
