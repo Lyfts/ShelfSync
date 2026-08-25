@@ -8,11 +8,11 @@ local NetworkManager = require("ui/network/manager")
 local socketutil = require("socketutil")
 local htmlparser = require("htmlparser")
 
-local SETTING = require("storygraph/lib/constants/settings")
+local SETTING = require("shelfsync/lib/common/constants/settings")
 
 local base_url = "https://app.thestorygraph.com"
 
-local HardcoverApi = {
+local StoryGraphApi = {
   enabled = true,
   settings = nil, -- Injected by main.lua
 }
@@ -147,7 +147,7 @@ local function urlencode(str)
 end
 
 -- Helper to extract authenticity token from HTML
-function HardcoverApi:extract_csrf(html)
+function StoryGraphApi:extract_csrf(html)
   if not html then return self.last_csrf end
   
   local csrf = html:match('<meta%s+[^>]*name=["\']csrf%-token["\']%s+[^>]*content=["\']([^"\']+)["\']')
@@ -169,7 +169,7 @@ function HardcoverApi:extract_csrf(html)
   return csrf or self.last_csrf
 end
 
-function HardcoverApi:request(url, method, data, custom_headers)
+function StoryGraphApi:request(url, method, data, custom_headers)
   if not NetworkManager:isConnected() or not self.enabled then
     if self.settings then
       self.settings:debugWarn("StoryGraph: request() aborted before sending - NetworkManager connected="
@@ -285,7 +285,7 @@ function HardcoverApi:request(url, method, data, custom_headers)
 end
 
 -- Warn (once per cooldown) that the stored session cookie is dead
-function HardcoverApi:notifyAuthFailure()
+function StoryGraphApi:notifyAuthFailure()
   local now = os.time()
   if self.last_auth_warning and now - self.last_auth_warning < 300 then
     return
@@ -296,12 +296,12 @@ function HardcoverApi:notifyAuthFailure()
   end
 end
 
-function HardcoverApi:me()
+function StoryGraphApi:me()
   -- If we can't find a user ID, we'll return a generic one to satisfy the plugin
   return { id = "storygraph_user" }
 end
 
-function HardcoverApi:findBooks(title, author, userId)
+function StoryGraphApi:findBooks(title, author, userId)
   local search_url = base_url .. "/browse?search_term=" .. urlencode(title .. " " .. (author or ""))
   local code, html = self:request(search_url, "GET")
   
@@ -395,7 +395,7 @@ function HardcoverApi:findBooks(title, author, userId)
   return results
 end
 
-function HardcoverApi:findUserBook(book_id, user_id, is_recursion)
+function StoryGraphApi:findUserBook(book_id, user_id, is_recursion)
   if not book_id then return {} end
   local book_url = base_url .. "/books/" .. book_id
   local code, html = self:request(book_url, "GET")
@@ -571,7 +571,7 @@ function HardcoverApi:findUserBook(book_id, user_id, is_recursion)
   return res
 end
 
-function HardcoverApi:getReview(review_url)
+function StoryGraphApi:getReview(review_url)
   if not review_url then return nil end
   if not review_url:match("^http") then
     review_url = base_url .. review_url
@@ -665,7 +665,7 @@ function HardcoverApi:getReview(review_url)
   return review
 end
 
-function HardcoverApi:updateUserBook(book_id, status_id)
+function StoryGraphApi:updateUserBook(book_id, status_id)
   local status_map = {
     [1] = "to-read",
     [2] = "currently-reading",
@@ -742,7 +742,7 @@ function HardcoverApi:updateUserBook(book_id, status_id)
   return nil
 end
 
-function HardcoverApi:updatePage(user_read_id, value, started_at, update_type)
+function StoryGraphApi:updatePage(user_read_id, value, started_at, update_type)
   local book_id = user_read_id:gsub("_read", "")
   
   local book_url = base_url .. "/books/" .. book_id
@@ -805,7 +805,7 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type)
   return nil
 end
 
-function HardcoverApi:createJournalEntry(data)
+function StoryGraphApi:createJournalEntry(data)
   local book_id = data.book_id
   local book_url = base_url .. "/books/" .. book_id
   local _, html = self:request(book_url, "GET")
@@ -864,7 +864,7 @@ function HardcoverApi:createJournalEntry(data)
   return nil
 end
 
-function HardcoverApi:removeRead(user_book_id)
+function StoryGraphApi:removeRead(user_book_id)
   local book_id = user_book_id:gsub("_read", "")
   local book_url = base_url .. "/books/" .. book_id
   
@@ -888,7 +888,7 @@ function HardcoverApi:removeRead(user_book_id)
   end
   return nil
 end
-function HardcoverApi:setOwned(book_id, owned)
+function StoryGraphApi:setOwned(book_id, owned)
   local book_url = base_url .. "/books/" .. book_id
   
   -- Need CSRF for owned status update
@@ -911,7 +911,7 @@ function HardcoverApi:setOwned(book_id, owned)
   local code, resp = self:request(url, method, "", custom_headers)
   return code == 200 or code == 302
 end
-function HardcoverApi:setFavorite(book_id, favorite)
+function StoryGraphApi:setFavorite(book_id, favorite)
   local book_url = base_url .. "/books/" .. book_id
   
   -- Need CSRF for favorite status update
@@ -934,7 +934,7 @@ function HardcoverApi:setFavorite(book_id, favorite)
   local code, resp = self:request(url, method, "", custom_headers)
   return code == 200 or code == 302
 end
-function HardcoverApi:findBookByIdentifiers(identifiers, user_id)
+function StoryGraphApi:findBookByIdentifiers(identifiers, user_id)
   local isbn = identifiers and (identifiers.isbn_13 or identifiers.isbn_10)
   if not isbn then return nil end
   
@@ -944,7 +944,7 @@ function HardcoverApi:findBookByIdentifiers(identifiers, user_id)
   end
   return nil
 end
-function HardcoverApi:findEditions(book_id, user_id)
+function StoryGraphApi:findEditions(book_id, user_id)
   local url = base_url .. "/books/" .. book_id .. "/editions"
   local code, html = self:request(url, "GET")
   if code ~= 200 or not html then
@@ -1050,7 +1050,7 @@ function HardcoverApi:findEditions(book_id, user_id)
   return editions
 end
 
-function HardcoverApi:switchEdition(from_book_id, to_book_id)
+function StoryGraphApi:switchEdition(from_book_id, to_book_id)
   local url = base_url .. "/books/" .. from_book_id .. "/editions"
   local code, html, get_headers = self:request(url, "GET")
   if code ~= 200 or not html then
@@ -1137,7 +1137,7 @@ function HardcoverApi:switchEdition(from_book_id, to_book_id)
   return post_code == 200
 end
 
-function HardcoverApi:saveReview(book_id, review_data, review_url)
+function StoryGraphApi:saveReview(book_id, review_data, review_url)
   local url = review_url
   if not url then
     url = base_url .. "/reviews/new?book_id=" .. book_id
@@ -1227,4 +1227,4 @@ function HardcoverApi:saveReview(book_id, review_data, review_url)
   return code == 200 or code == 302 or code == 303
 end
 
-return HardcoverApi
+return StoryGraphApi

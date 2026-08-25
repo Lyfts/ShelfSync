@@ -1,4 +1,4 @@
-local getUrlContent = require("storygraph/vendor/url_content")
+local getUrlContent = require("shelfsync/vendor/url_content")
 local UIManager = require("ui/uimanager")
 local Trapper = require("ui/trapper")
 

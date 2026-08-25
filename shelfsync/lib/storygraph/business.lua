@@ -1,4 +1,4 @@
--- wrapper around hardcover_api to add higher level methods
+-- wrapper around storygraph_api to add higher level methods
 local _ = require("gettext")
 local logger = require("logger")
 local util = require("util")
@@ -8,23 +8,19 @@ local UIManager = require("ui/uimanager")
 local Notification = require("ui/widget/notification")
 local InfoMessage = require("ui/widget/infomessage")
 
-local Api = require("storygraph/lib/hardcover_api")
-local Book = require("storygraph/lib/book")
-local User = require("storygraph/lib/user")
+local Book = require("shelfsync/lib/common/book")
 
-local SETTING = require("storygraph/lib/constants/settings")
-local HARDCOVER = require("storygraph/lib/constants/hardcover")
+local SETTING = require("shelfsync/lib/common/constants/settings")
+local STORYGRAPH = require("shelfsync/lib/storygraph/constants")
 
-local cache = {}
+local StoryGraph = {}
+StoryGraph.__index = StoryGraph
 
-local Hardcover = {}
-Hardcover.__index = Hardcover
-
-function Hardcover:new(o)
+function StoryGraph:new(o)
   return setmetatable(o, self)
 end
 
-function Hardcover:showLinkBookDialog(force_search, link_callback)
+function StoryGraph:showLinkBookDialog(force_search, link_callback)
   local search_value, books, err = self:findBookOptions(force_search)
 
   if err then
@@ -52,8 +48,8 @@ function Hardcover:showLinkBookDialog(force_search, link_callback)
   )
 end
 
-function Hardcover:showChangeEditionDialog(callback)
-  local editions = Api:findEditions(self.settings:getLinkedBookId(), User:getId())
+function StoryGraph:showChangeEditionDialog(callback)
+  local editions = self.api:findEditions(self.settings:getLinkedBookId(), self.user:getId())
   self.dialog_manager:buildSearchDialog(
     "Select edition",
     editions,
@@ -62,7 +58,7 @@ function Hardcover:showChangeEditionDialog(callback)
     },
     function(book)
       if book.book_id ~= self.settings:getLinkedBookId() then
-        local success = Api:switchEdition(self.settings:getLinkedBookId(), book.book_id)
+        local success = self.api:switchEdition(self.settings:getLinkedBookId(), book.book_id)
         if not success then
           self.dialog_manager:showError("Failed to switch edition on StoryGraph. Please try again.")
           return
@@ -76,12 +72,12 @@ function Hardcover:showChangeEditionDialog(callback)
   )
 end
 
-function Hardcover:linkBook(book)
+function StoryGraph:linkBook(book)
   local filename = self.ui.document.file
 
   -- 1. Fetch remote status (API handles redirection and audio filtering internally)
-  local status = Api:findUserBook(book.book_id) or {}
-  
+  local status = self.api:findUserBook(book.book_id) or {}
+
   -- 2. If the final resolved edition is Audio, fail the linking process
   if status.is_audio then
     logger.warn("StoryGraph: Cannot link to an Audio edition.")
@@ -121,7 +117,7 @@ function Hardcover:linkBook(book)
   -- 4. Auto-Add to Library if no status was found on ANY edition
   if not self.state.book_status.status_id then
     logger.info("StoryGraph: Book has no status on any edition, adding to Currently Reading automatically")
-    local added = Api:updateUserBook(book.book_id, HARDCOVER.STATUS.READING)
+    local added = self.api:updateUserBook(book.book_id, STORYGRAPH.STATUS.READING)
     if added and added.status_id then
       self.state.book_status = added
     else
@@ -142,13 +138,13 @@ function Hardcover:linkBook(book)
 end
 
 -- could be moved to book search model
-function Hardcover:findBookOptions(force_search)
+function StoryGraph:findBookOptions(force_search)
   local props = self.ui.document:getProps()
   local identifiers = Book:parseIdentifiers(props.identifiers)
-  local user_id = User:getId()
+  local user_id = self.user:getId()
 
   if not force_search then
-    local book_lookup = Api:findBookByIdentifiers(identifiers, user_id)
+    local book_lookup = self.api:findBookByIdentifiers(identifiers, user_id)
     if book_lookup then
       return nil, { book_lookup }
     end
@@ -161,11 +157,11 @@ function Hardcover:findBookOptions(force_search)
 
     title = filename:gsub("_", " ")
   end
-  local result, err = Api:findBooks(title, props.authors, user_id)
+  local result, err = self.api:findBooks(title, props.authors, user_id)
   return title, result, err
 end
 
-function Hardcover:autolinkBook(book)
+function StoryGraph:autolinkBook(book)
   if not book then
     return
   end
@@ -178,10 +174,10 @@ function Hardcover:autolinkBook(book)
   end
 end
 
-function Hardcover:linkBookByIsbn(identifiers)
+function StoryGraph:linkBookByIsbn(identifiers)
   if identifiers.isbn_10 or identifiers.isbn_13 then
-    local user_id = User:getId()
-    local book_lookup = Api:findBookByIdentifiers({
+    local user_id = self.user:getId()
+    local book_lookup = self.api:findBookByIdentifiers({
       isbn_10 = identifiers.isbn_10,
       isbn_13 = identifiers.isbn_13
     },
@@ -194,10 +190,10 @@ function Hardcover:linkBookByIsbn(identifiers)
   end
 end
 
-function Hardcover:linkBookByHardcover(identifiers)
+function StoryGraph:linkBookByHardcover(identifiers)
   if identifiers.book_slug then
-    local user_id = User:getId()
-    local book_lookup = Api:findBookByIdentifiers(
+    local user_id = self.user:getId()
+    local book_lookup = self.api:findBookByIdentifiers(
       { book_slug = identifiers.book_slug }, user_id)
     if book_lookup then
       self:autolinkBook(book_lookup)
@@ -206,17 +202,17 @@ function Hardcover:linkBookByHardcover(identifiers)
   end
 end
 
-function Hardcover:linkBookByTitle()
+function StoryGraph:linkBookByTitle()
   local props = self.ui.document:getProps()
 
-  local results = Api:findBooks(props.title, props.authors, User:getId())
+  local results = self.api:findBooks(props.title, props.authors, self.user:getId())
   if results and #results > 0 then
     self:autolinkBook(results[1])
     return true
   end
 end
 
-function Hardcover:tryAutolink()
+function StoryGraph:tryAutolink()
   if self.settings:bookLinked() then
     return
   end
@@ -237,7 +233,49 @@ function Hardcover:tryAutolink()
   end
 end
 
-function Hardcover:_runAutolink(identifiers)
+-- Remote progress in `update_type`'s unit, read from a cached book_status
+-- table (e.g. self.state.book_status), used by SyncEngine to skip a
+-- background write that would move progress backward.
+function StoryGraph:getRemoteProgress(status, update_type)
+  if update_type == "pages" then
+    return tonumber(status and status.last_reached_pages) or 0
+  end
+  return tonumber(status and status.percent_finished) or 0
+end
+
+-- Overall remote completion percent (0-100), or nil if unknown. Used by
+-- "Jump to position" and to seed the note dialog's remote-percent hint.
+function StoryGraph:getRemotePercent(status)
+  return tonumber(status and status.last_reached_percent) or 0
+end
+
+-- Writes a progress update to StoryGraph and returns the refreshed status, or
+-- nil plus an error reason on failure. Also auto-marks the book Finished when
+-- the write pushes it to 100% while still Currently Reading.
+function StoryGraph:pushProgress(current_read, value, update_type, filename)
+  if not current_read then
+    return nil, "No active reading session found on StoryGraph"
+  end
+
+  local result = self.api:updatePage(current_read.id, value, current_read.started_at, update_type)
+  if not result then
+    return nil
+  end
+
+  if (tonumber(result.percent_finished) or 0) >= 100 and result.status_id == STORYGRAPH.STATUS.READING then
+    local book_id = self.settings:readBookSetting(filename, "book_id")
+    if book_id then
+      local finished = self.api:updateUserBook(book_id, STORYGRAPH.STATUS.FINISHED)
+      if finished then
+        result = finished
+      end
+    end
+  end
+
+  return result
+end
+
+function StoryGraph:_runAutolink(identifiers)
   local linked = false
   if self.settings:readSetting(SETTING.LINK_BY_ISBN) then
     linked = self:linkBookByIsbn(identifiers)
@@ -259,4 +297,4 @@ function Hardcover:_runAutolink(identifiers)
   end
 end
 
-return Hardcover
+return StoryGraph

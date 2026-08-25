@@ -1,4 +1,4 @@
-local SETTING = require("storygraph/lib/constants/settings")
+local SETTING = require("shelfsync/lib/common/constants/settings")
 
 local Device = require("device")
 
@@ -15,7 +15,7 @@ end
 
 function AutoWifi:withWifi(callback)
   if NetworkMgr:isWifiOn() then
-    self.settings:debugLog("StoryGraph: withWifi - wifi already on, calling back immediately")
+    self.settings:debugLog(self.label .. ": withWifi - wifi already on, calling back immediately")
     callback(false)
     return
   end
@@ -28,7 +28,7 @@ function AutoWifi:withWifi(callback)
       and has_wifi_restore
       and not_airplane_mode then
 
-    self.settings:debugLog("StoryGraph: withWifi - wifi off, restoring automatically")
+    self.settings:debugLog(self.label .. ": withWifi - wifi off, restoring automatically")
     local original_on = NetworkMgr.wifi_was_on
 
     NetworkMgr:restoreWifiAsync()
@@ -39,7 +39,7 @@ function AutoWifi:withWifi(callback)
 
       self.connection_pending = false
 
-      self.settings:debugLog("StoryGraph: withWifi - connectivity check finished, wifi_on=" .. tostring(NetworkMgr:isWifiOn()))
+      self.settings:debugLog(self.label .. ": withWifi - connectivity check finished, wifi_on=" .. tostring(NetworkMgr:isWifiOn()))
       callback(true)
 
       -- TODO: schedule turn off wifi, debounce
@@ -48,7 +48,7 @@ function AutoWifi:withWifi(callback)
   else
     -- Auto-connect is unavailable or disabled: don't leave callers hanging,
     -- let them handle the "still not connected" case themselves (e.g. retry).
-    self.settings:debugLog("StoryGraph: withWifi - wifi off, not auto-restoring - enable_wifi_setting="
+    self.settings:debugLog(self.label .. ": withWifi - wifi off, not auto-restoring - enable_wifi_setting="
       .. tostring(enable_wifi_setting) .. " pending_connection=" .. tostring(NetworkMgr.pending_connection)
       .. " has_wifi_restore=" .. tostring(has_wifi_restore) .. " not_airplane_mode=" .. tostring(not_airplane_mode))
     callback(false)

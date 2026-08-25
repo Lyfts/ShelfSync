@@ -9,7 +9,7 @@ local InputDialog = require("ui/widget/inputdialog")
 local Size = require("ui/size")
 local ToggleSwitch = require("ui/widget/toggleswitch")
 local DateTimeWidget = require("ui/widget/datetimewidget")
-local UpdateDoubleSpinWidget = require("storygraph/lib/ui/update_double_spin_widget")
+local UpdateDoubleSpinWidget = require("shelfsync/lib/common/ui/update_double_spin_widget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 local _ = require("gettext")
@@ -17,7 +17,7 @@ local _ = require("gettext")
 local JournalDialog = InputDialog:extend {
   allow_newline = true,
   results = {},
-  title = "StoryGraph: Add note",
+  label = "StoryGraph", -- provider display name, e.g. for the title and progress warnings
   padding = 10,
 
   page = nil, -- current mapped value (percent or page)
@@ -43,6 +43,7 @@ function JournalDialog:onConfigChoose(key, value)
 end
 
 function JournalDialog:init()
+  self.title = self.label .. ": Add note"
   self:setModified()
   self.date = self.date or os.date("*t")
 
@@ -75,7 +76,7 @@ function JournalDialog:init()
 
     if not confirm_bypass and remote_val > current_pct then
       local confirm = ConfirmBox:new{
-        text = _("Your selection (" .. current_pct .. "%) is behind your current StoryGraph progress (" .. remote_val .. "%). Are you sure you want to save?"),
+        text = _("Your selection (" .. current_pct .. "%) is behind your current " .. journal_self.label .. " progress (" .. remote_val .. "%). Are you sure you want to save?"),
         ok_text = _("Save anyway"),
         cancel_text = _("Cancel"),
         ok_callback = function()

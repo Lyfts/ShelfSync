@@ -2,7 +2,7 @@ local _ = require("gettext")
 local DataStorage = require("datastorage")
 
 -- Migration: Rename hardcover_config.lua to storygraph_config.lua if it exists
-local plugin_dir = DataStorage:getDataDir() .. "/plugins/storygraph.koplugin"
+local plugin_dir = DataStorage:getDataDir() .. "/plugins/shelfsync.koplugin"
 local old_config = plugin_dir .. "/hardcover_config.lua"
 local new_config = plugin_dir .. "/storygraph_config.lua"
 
@@ -18,106 +18,64 @@ else
 end
 
 local Dispatcher = require("dispatcher")
-local DocSettings = require("docsettings")
-local logger = require("logger")
 local math = require("math")
 
-local NetworkManager = require("ui/network/manager")
-local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
-local Event = require("ui/event")
 
 local InfoMessage = require("ui/widget/infomessage")
 local Notification = require("ui/widget/notification")
 
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 
-local _t = require("storygraph/lib/table_util")
-local Api = require("storygraph/lib/hardcover_api")
-local AutoWifi = require("storygraph/lib/auto_wifi")
-local Cache = require("storygraph/lib/cache")
-local debounce = require("storygraph/lib/debounce")
-local Hardcover = require("storygraph/lib/hardcover")
-local HardcoverSettings = require("storygraph/lib/hardcover_settings")
-local PageMapper = require("storygraph/lib/page_mapper")
-local Scheduler = require("storygraph/lib/scheduler")
-local throttle = require("storygraph/lib/throttle")
-local User = require("storygraph/lib/user")
+local Api = require("shelfsync/lib/storygraph/api")
+local HardcoverApi = require("shelfsync/lib/hardcover/api")
+local AutoWifi = require("shelfsync/lib/common/auto_wifi")
+local Cache = require("shelfsync/lib/common/cache")
+local StoryGraph = require("shelfsync/lib/storygraph/business")
+local Hardcover = require("shelfsync/lib/hardcover/business")
+local StoryGraphSettings = require("shelfsync/lib/storygraph/settings")
+local HardcoverSettings = require("shelfsync/lib/hardcover/settings")
+local PageMapper = require("shelfsync/lib/common/page_mapper")
+local SyncEngine = require("shelfsync/lib/common/sync_engine")
+local User = require("shelfsync/lib/common/user")
 
-local DialogManager = require("storygraph/lib/ui/dialog_manager")
-local HardcoverMenu = require("storygraph/lib/ui/hardcover_menu")
+local DialogManager = require("shelfsync/lib/common/ui/dialog_manager")
+local StoryGraphMenu = require("shelfsync/lib/storygraph/menu")
+local HardcoverMenu = require("shelfsync/lib/hardcover/menu")
 
-local HARDCOVER = require("storygraph/lib/constants/hardcover")
-local SETTING = require("storygraph/lib/constants/settings")
+local STORYGRAPH = require("shelfsync/lib/storygraph/constants")
+local HARDCOVER = require("shelfsync/lib/hardcover/constants")
+local SETTING = require("shelfsync/lib/common/constants/settings")
 
-local HardcoverApp = WidgetContainer:extend {
-  name = "storygraph",
-  is_doc_only = false,
-  state = nil,
-  settings = nil,
-  width = nil,
-  enabled = true
+-- Per-provider dispatcher actions. Each becomes a KOReader dispatcher action
+-- named "<key>_<snake>" broadcasting event "<Prefix><suffix>", which in turn
+-- is wired below to `self.engines[key]:on<suffix>(...)`.
+local ACTIONS = {
+  { suffix = "Link", snake = "link", title = "Link book" },
+  { suffix = "Track", snake = "track", title = "Track progress" },
+  { suffix = "StopTrack", snake = "stop_track", title = "Stop tracking progress" },
+  { suffix = "UpdateProgress", snake = "update_progress", title = "Update progress" },
 }
 
-local HIGHLIGHT_MENU_NAME = "13_0_make_storygraph_highlight_item"
+-- Broadcast-only events (not exposed as dispatcher actions) that also get a
+-- delegating `on<Prefix><suffix>` handler routed to the matching engine.
+local BROADCAST_HANDLERS = { "Note", "PullPosition" }
 
-function HardcoverApp:onDispatcherRegisterActions()
-  Dispatcher:registerAction("storygraph_link", {
-    category = "none",
-    event = "StoryGraphLink",
-    title = _("StoryGraph: Link book"),
-    general = true,
-  })
-
-  Dispatcher:registerAction("storygraph_track", {
-    category = "none",
-    event = "StoryGraphTrack",
-    title = _("StoryGraph: Track progress"),
-    general = true,
-  })
-
-  Dispatcher:registerAction("storygraph_stop_track", {
-    category = "none",
-    event = "StoryGraphStopTrack",
-    title = _("StoryGraph: Stop tracking progress"),
-    general = true,
-  })
-
-  Dispatcher:registerAction("storygraph_update_progress", {
-    category = "none",
-    event = "StoryGraphUpdateProgress",
-    title = _("StoryGraph: Update progress"),
-    general = true,
-  })
-
-
-end
-
-function HardcoverApp:init()
-  self.state = {
-    page = nil,
-    pos = nil,
-    search_results = {},
-    book_status = {},
-    page_update_pending = false
-  }
-  self.settings = HardcoverSettings:new(
-    ("%s/%s"):format(DataStorage:getSettingsDir(), "storygraphsync_settings.lua"),
-    self.ui
-  )
-  self.settings:subscribe(function(field, change, original_value) self:onSettingsChanged(field, change, original_value) end)
-
-  User.settings = self.settings
-  Api.settings = self.settings
-  Api.on_error = function(err)
-    if not err or not self.enabled then
-      return
-    end
-
-    if err == "Unauthorized" or (err.message and string.find(err.message, "login")) then
-      self:disable()
-      UIManager:show(InfoMessage:new {
-        text = _([[Your StoryGraph session has expired. Syncing is paused.
+local PROVIDERS = {
+  {
+    key = "storygraph",
+    prefix = "StoryGraph",
+    label = "StoryGraph",
+    business_field = "storygraph",
+    constants = STORYGRAPH,
+    api = Api,
+    business_class = StoryGraph,
+    settings_class = StoryGraphSettings,
+    settings_filename = "storygraphsync_settings.lua",
+    menu_class = StoryGraphMenu,
+    highlight_menu_name = "13_0_make_storygraph_highlight_item",
+    auth_setting_key = SETTING.SESSION_COOKIE,
+    auth_help_text = _([[Your StoryGraph session has expired. Syncing is paused.
 
 To fix it:
 1. Log in to app.thestorygraph.com in a browser
@@ -126,508 +84,217 @@ To fix it:
 4. In KOReader: StoryGraph menu > Settings > Account (Cookies & Tokens), paste each one in
 
 Re-enable syncing afterwards from the StoryGraph menu.]]),
+  },
+  {
+    key = "hardcover",
+    prefix = "Hardcover",
+    label = "Hardcover",
+    business_field = "hardcover",
+    constants = HARDCOVER,
+    api = HardcoverApi,
+    business_class = Hardcover,
+    settings_class = HardcoverSettings,
+    settings_filename = "hardcoversync_settings.lua",
+    menu_class = HardcoverMenu,
+    highlight_menu_name = "13_1_make_hardcover_highlight_item",
+    auth_setting_key = SETTING.API_TOKEN,
+    auth_help_text = _([[Your Hardcover API token is invalid or has expired. Syncing is paused.
+
+To fix it:
+1. Go to hardcover.app/account/api in a browser
+2. Copy your API token
+3. In KOReader: Hardcover menu > Settings > Account (API Token), paste it in
+
+Re-enable syncing afterwards from the Hardcover menu.]]),
+  },
+}
+
+local ShelfSyncApp = WidgetContainer:extend {
+  name = "shelfsync",
+  is_doc_only = false,
+  state = nil,
+  engines = nil,
+  width = nil,
+  enabled = true
+}
+
+function ShelfSyncApp:onDispatcherRegisterActions()
+  for _, provider in ipairs(PROVIDERS) do
+    for _, action in ipairs(ACTIONS) do
+      Dispatcher:registerAction(provider.key .. "_" .. action.snake, {
+        category = "none",
+        event = provider.prefix .. action.suffix,
+        title = _(provider.label .. ": " .. action.title),
+        general = true,
+      })
+    end
+  end
+end
+
+-- Delegate every dispatcher action and broadcast-only event to the matching
+-- engine, e.g. ShelfSyncApp:onStoryGraphLink() -> self.engines.storygraph:onLink(),
+-- ShelfSyncApp:onHardcoverNote(params) -> self.engines.hardcover:onNote(params).
+for _, provider in ipairs(PROVIDERS) do
+  local suffixes = {}
+  for _, action in ipairs(ACTIONS) do
+    table.insert(suffixes, action.suffix)
+  end
+  for _, suffix in ipairs(BROADCAST_HANDLERS) do
+    table.insert(suffixes, suffix)
+  end
+
+  for _, suffix in ipairs(suffixes) do
+    ShelfSyncApp["on" .. provider.prefix .. suffix] = function(self, ...)
+      local engine = self.engines[provider.key]
+      return engine["on" .. suffix](engine, ...)
+    end
+  end
+end
+
+-- Builds the full per-provider object graph (settings/user/cache/page_mapper/
+-- wifi/dialog_manager/business/menu) and wraps it in a SyncEngine. `settings`
+-- and `plugin_settings` are constructed by the caller so the StoryGraph and
+-- Hardcover engines can be pointed at the same plugin-wide settings instance
+-- (see ShelfSyncApp:init).
+function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
+  local state = {
+    page = nil,
+    pos = nil,
+    search_results = {},
+    book_status = {},
+  }
+
+  local user = User:new { api = provider.api, settings = settings }
+  local cache = Cache:new { api = provider.api, user = user, settings = settings, state = state, ui = self.ui }
+  local page_mapper = PageMapper:new { state = state, ui = self.ui }
+  local wifi = AutoWifi:new { settings = settings, label = provider.label }
+  local dialog_manager = DialogManager:new {
+    api = provider.api,
+    user = user,
+    label = provider.label,
+    page_mapper = page_mapper,
+    settings = settings,
+    state = state,
+    ui = self.ui,
+    wifi = wifi,
+  }
+  local business = provider.business_class:new {
+    api = provider.api,
+    user = user,
+    cache = cache,
+    dialog_manager = dialog_manager,
+    settings = settings,
+    state = state,
+    ui = self.ui,
+    wifi = wifi,
+  }
+
+  local engine = SyncEngine:new {
+    label = provider.label,
+    constants = provider.constants,
+    highlight_menu_name = provider.highlight_menu_name,
+    auth_setting_key = provider.auth_setting_key,
+    api = provider.api,
+    user = user,
+    cache = cache,
+    page_mapper = page_mapper,
+    wifi = wifi,
+    dialog_manager = dialog_manager,
+    business = business,
+    settings = settings,
+    plugin_settings = plugin_settings,
+    ui = self.ui,
+    view = self.view,
+    state = state,
+  }
+
+  local menu = provider.menu_class:new {
+    app = self,
+    enabled = true,
+    api = provider.api,
+    user = user,
+    cache = cache,
+    dialog_manager = dialog_manager,
+    [provider.business_field] = business,
+    page_mapper = page_mapper,
+    settings = settings,
+    plugin_settings = plugin_settings,
+    state = state,
+    ui = self.ui,
+  }
+  engine.menu = menu
+
+  settings:subscribe(function(field, change, original_value)
+    engine:onSettingsChanged(field, change, original_value)
+  end)
+
+  provider.api.settings = settings
+  provider.api.on_error = function(err)
+    if not err or not engine.enabled then
+      return
+    end
+
+    if err == "Unauthorized" or (err.message and string.find(err.message, "login")) then
+      engine:disable()
+      UIManager:show(InfoMessage:new {
+        text = provider.auth_help_text,
         icon = "notice-warning",
       })
     end
   end
 
-  self.cache = Cache:new {
-    settings = self.settings,
-    state = self.state,
-    ui = self.ui
-  }
-  self.page_mapper = PageMapper:new {
-    state = self.state,
-    ui = self.ui,
-  }
-  self.wifi = AutoWifi:new {
-    settings = self.settings
-  }
-  self.dialog_manager = DialogManager:new {
-    page_mapper = self.page_mapper,
-    settings = self.settings,
-    state = self.state,
-    ui = self.ui,
-    wifi = self.wifi
-  }
-  self.hardcover = Hardcover:new {
-    cache = self.cache,
-    dialog_manager = self.dialog_manager,
-    settings = self.settings,
-    state = self.state,
-    ui = self.ui,
-    wifi = self.wifi
-  }
+  engine:initializePageUpdate()
 
-  self.menu = HardcoverMenu:new {
-    app = self,
-    enabled = true,
+  return engine
+end
 
-    cache = self.cache,
-    dialog_manager = self.dialog_manager,
-    hardcover = self.hardcover,
-    page_mapper = self.page_mapper,
-    settings = self.settings,
-    state = self.state,
-    ui = self.ui,
-  }
+function ShelfSyncApp:init()
+  self.state = {}
+  self.engines = {}
+
+  -- StoryGraph's settings double as the plugin-wide settings: version-check
+  -- bookkeeping and the "ignore mandatory update" override apply to the
+  -- whole plugin (both providers), not one provider at a time, so they only
+  -- live in one place rather than being duplicated per engine.
+  local storygraph_provider = PROVIDERS[1]
+  local plugin_settings = storygraph_provider.settings_class:new(
+    ("%s/%s"):format(DataStorage:getSettingsDir(), storygraph_provider.settings_filename),
+    self.ui
+  )
+  self.storygraph_settings = plugin_settings
+
+  for _, provider in ipairs(PROVIDERS) do
+    local settings = (provider == storygraph_provider) and plugin_settings
+      or provider.settings_class:new(
+        ("%s/%s"):format(DataStorage:getSettingsDir(), provider.settings_filename),
+        self.ui
+      )
+    self.engines[provider.key] = self:_buildEngine(provider, settings, plugin_settings)
+  end
 
   self:onDispatcherRegisterActions()
-  self:initializePageUpdate()
   self.ui.menu:registerToMainMenu(self)
 end
 
-function HardcoverApp:_bookSettingChanged(setting, key)
-  return setting[key] ~= nil or _t.contains(_t.dig(setting, "_delete"), key)
-end
-
--- Open note dialog
---
--- UIManager:broadcastEvent(Event:new("HardcoverNote", note_params))
---
--- note_params can contain:
---   text: Value will prepopulate the note section
---   page_number: The local page number
---   remote_page (optional): The mapped page in the linked book edition
---   note_type: one of "quote" or "note"
-function HardcoverApp:onStoryGraphNote(note_params)
-  if not self:isActive() then return end
-  -- Fetch latest progress from API for quotes/notes
-  local book_id = self.settings:getLinkedBookId()
-  local remote_percent = self.state.book_status.last_reached_percent or 0
-  
-  if book_id then
-    self.wifi:wifiPrompt(function()
-      local latest_status = Api:findUserBook(book_id, User:getId())
-      if latest_status and latest_status.last_reached_percent then
-        remote_percent = latest_status.last_reached_percent
-        self.state.book_status = latest_status
-      end
-      
-      self.dialog_manager:journalEntryForm(
-        note_params.text,
-        self.ui.document,
-        note_params.page_number,
-        self.settings:pages(),
-        note_params.remote_page or nil,
-        remote_percent,
-        note_params.note_type or "quote"
-      )
-    end)
-    return
-  end
-
-  -- Fallback if no book linked
-  self.dialog_manager:journalEntryForm(
-    note_params.text,
-    self.ui.document,
-    note_params.page_number,
-    self.settings:pages(),
-    note_params.remote_page or nil,
-    remote_percent,
-    note_params.note_type or "quote"
-  )
-end
-
-function HardcoverApp:disable()
-  self.enabled = false
-  if self.menu then
-    self.menu.enabled = false
-  end
-  self:registerHighlight()
-end
-
-function HardcoverApp:onStoryGraphLink()
-  self.hardcover:showLinkBookDialog(false, function(book)
-    UIManager:show(Notification:new {
-      text = _("Linked to: " .. book.title),
-    })
-  end)
-end
-
-function HardcoverApp:onStoryGraphTrack()
-  self.settings:setSync(true)
-  UIManager:nextTick(function()
-    UIManager:show(Notification:new {
-      text = _("Progress tracking enabled")
-    })
-  end)
-end
-
-function HardcoverApp:onStoryGraphStopTrack()
-  self.settings:setSync(false)
-  UIManager:show(Notification:new {
-    text = _("Progress tracking disabled")
-  })
-end
-
-function HardcoverApp:onStoryGraphPullPosition()
-  if not self.ui.document or not self.settings:bookLinked() then return end
-
-  local ConfirmBox = require("ui/widget/confirmbox")
-  local book_id = self.settings:getLinkedBookId()
-
-  UIManager:show(Notification:new {
-    text = _("Fetching position from StoryGraph..."),
-    timeout = 3,
-  })
-
-  self.wifi:withWifi(function()
-    local status = Api:findUserBook(book_id, User:getId())
-    if not status or not status.last_reached_percent then
-      UIManager:show(InfoMessage:new {
-        text = _("Could not fetch position from StoryGraph."),
-        icon = "notice-warning",
-      })
-      return
-    end
-
-    local remote_percent = tonumber(status.last_reached_percent) or 0
-    if remote_percent == 0 then
-      UIManager:show(InfoMessage:new {
-        text = _("StoryGraph shows no progress recorded yet."),
-      })
-      return
-    end
-
-    local document_pages = self.ui.document:getPageCount()
-    local target_page = math.max(1, math.floor((remote_percent / 100) * document_pages))
-
-    UIManager:show(ConfirmBox:new {
-      text = _(string.format(
-        "StoryGraph shows %d%% progress.\nJump to page %d of %d?",
-        remote_percent, target_page, document_pages
-      )),
-      ok_text = _("Jump"),
-      ok_callback = function()
-        self.ui:handleEvent(Event:new("GotoPage", target_page))
-        -- Update cached status
-        self.state.book_status = status
-      end,
-    })
-  end)
-end
-
-function HardcoverApp:onStoryGraphUpdateProgress()
-  if self.ui.document and self.settings:bookLinked() then
-    self:updatePageNow(function(result, reason)
-      if result then
-        UIManager:show(Notification:new {
-          text = _("Progress updated")
-        })
-      else
-        logger.warn("Unsuccessful updating page progress", self.ui.document.file, reason)
-        UIManager:show(InfoMessage:new {
-          text = reason or _("Unable to update reading progress"),
-          icon = "notice-warning",
-        })
-      end
-    end)
-  else
-    logger.warn(self.state.book_status)
-    local error
-    if not self.ui.document then
-      error = "No book active"
-    elseif not self.state.book_status.id then
-      error = "Book has not been mapped"
-    end
-
-    local error_message = error and "Unable to update reading progress: " .. error or "Unable to update reading progress"
-    UIManager:show(InfoMessage:new {
-      text = error_message,
-      icon = "notice-warning",
-    })
+function ShelfSyncApp:startReadCache()
+  for _, engine in pairs(self.engines) do
+    engine:startReadCache()
   end
 end
 
-function HardcoverApp:onSettingsChanged(field, change, original_value)
-  if field == SETTING.BOOKS then
-    local book_settings = change.config
-    if self:_bookSettingChanged(book_settings, "sync") then
-      if book_settings.sync then
-        if not self.state.book_status.id then
-          self:startReadCache()
-        end
-      else
-        self:cancelPendingUpdates()
-      end
-    end
-
-    if self:_bookSettingChanged(book_settings, "book_id") then
-      self:registerHighlight()
-    end
-  elseif field == SETTING.TRACK_METHOD then
-    self:cancelPendingUpdates()
-    self:initializePageUpdate()
-  elseif field == SETTING.LINK_BY_ISBN or field == SETTING.LINK_BY_TITLE then
-    if change then
-      self.hardcover:tryAutolink()
-    end
-  elseif field == SETTING.SESSION_COOKIE then
-    if change and change ~= "" and not self.enabled then
-      self.enabled = true
-      self.menu.enabled = true
-      Api.last_auth_warning = nil
-      UIManager:show(Notification:new {
-        text = _("StoryGraph syncing re-enabled"),
-      })
-    end
+function ShelfSyncApp:cancelPendingUpdates()
+  for _, engine in pairs(self.engines) do
+    engine:cancelPendingUpdates()
   end
 end
 
--- Called when a page update is skipped because the book's remote status isn't
--- "Currently Reading" (e.g. it was changed on StoryGraph directly while the
--- user kept reading in KOReader). Shown once per document-open session so
--- progress silently going unsynced doesn't go unnoticed.
--- Returns true if the dialog was shown, false if already shown this session.
-function HardcoverApp:warnStatusMismatch(filename)
-  if self.state.status_mismatch_warned then
-    self.settings:debugLog("StoryGraph: warnStatusMismatch - already warned this session, skipping")
-    return false
-  end
-
-  local book_id = self.settings:readBookSetting(filename, "book_id")
-  if not book_id then
-    self.settings:debugLog("StoryGraph: warnStatusMismatch - no book_id for filename, skipping")
-    return false
-  end
-
-  self.settings:debugLog("StoryGraph: warnStatusMismatch - showing dialog, status_id="
-    .. tostring(self.state.book_status.status_id))
-  self.state.status_mismatch_warned = true
-
-  local status_id = self.state.book_status.status_id
-  local status_clause = status_id
-    and ("This book is marked \"%s\" on StoryGraph"):format(HARDCOVER.STATUS_NAME[status_id])
-    or "This book has no status on StoryGraph (it may have been removed from your shelves)"
-
-  self.dialog_manager:confirm({
-    text = _(status_clause .. ", so reading progress isn't syncing.\n\nMark it as Currently Reading?"),
-    ok_text = _("Mark as Reading"),
-    cancel_text = _("Ignore"),
-    ok_callback = function()
-      self.wifi:withWifi(function()
-        self.cache:updateBookStatus(filename, HARDCOVER.STATUS.READING)
-        self:registerHighlight()
-        if self.state.book_status.status_id == HARDCOVER.STATUS.READING then
-          UIManager:show(Notification:new {
-            text = _("Marked as Currently Reading")
-          })
-        else
-          UIManager:show(InfoMessage:new {
-            text = _("Failed to update status on StoryGraph"),
-            icon = "notice-warning",
-          })
-        end
-      end)
-    end,
-  })
-
-  return true
-end
-
-function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, update_type)
-  update_type = update_type or "percentage"
-  self.page_update_pending = false
-
-  -- Manual (immediate) updates have a caller waiting on feedback; background/throttled
-  -- updates are expected to skip silently, so only report a reason for the former.
-  local function bail(reason)
-    if immediate and callback then
-      callback(nil, reason)
-    end
-  end
-
-  if not self:syncFileUpdates(filename) then
-    self.settings:debugLog("StoryGraph: _handlePageUpdate - sync disabled for file, skipping")
-    return bail(_("Sync is disabled for this book"))
-  end
-
-  if self.state.book_status.status_id ~= HARDCOVER.STATUS.READING then
-    logger.info("StoryGraph: Skipping page update - status_id is " .. tostring(self.state.book_status.status_id) .. ", not READING")
-    if not self:warnStatusMismatch(filename) then
-      bail(_("Book is not currently marked as reading on StoryGraph"))
-    end
-    return
-  end
-
-  if update_type == "percentage" then
-    local remote_percent = tonumber(self.state.book_status.percent_finished) or 0
-    if not immediate and value < remote_percent then
-      logger.info("StoryGraph: Local progress (" .. value .. "%) is behind remote (" .. remote_percent .. "%). Skipping auto-update.")
-      return
-    end
-  elseif update_type == "pages" then
-    local remote_page = tonumber(self.state.book_status.last_reached_pages) or 0
-    if not immediate and value < remote_page then
-      logger.info("StoryGraph: Local progress (" .. value .. " pages) is behind remote (" .. remote_page .. " pages). Skipping auto-update.")
-      return
-    end
-  end
-
-  local reads = self.state.book_status.user_book_reads
-  local current_read = reads and reads[#reads]
-  if not current_read then
-    self.settings:debugLog("StoryGraph: _handlePageUpdate - no user_book_reads on book_status, skipping")
-    return bail(_("No active reading session found on StoryGraph"))
-  end
-
-  local immediate_update = function()
-    self.wifi:withWifi(function()
-      local result = Api:updatePage(current_read.id, value, current_read.started_at, update_type)
-      if result then
-        self.state.book_status = result
-        self:registerHighlight()
-
-        if (tonumber(result.percent_finished) or 0) >= 100 and result.status_id == HARDCOVER.STATUS.READING then
-          local book_id = self.settings:readBookSetting(filename, "book_id")
-          if book_id then
-            local finished = Api:updateUserBook(book_id, HARDCOVER.STATUS.FINISHED)
-            if finished then
-              self.state.book_status = finished
-              self:registerHighlight()
-            end
-          end
-        end
-      end
-      if callback then
-        callback(result)
-      end
-    end)
-  end
-
-  local trapped_update = function()
-    Trapper:wrap(immediate_update)
-  end
-
-  if immediate then
-    immediate_update()
-  else
-    UIManager:scheduleIn(1, trapped_update)
-  end
-end
-
-function HardcoverApp:initializePageUpdate()
-  local track_frequency = math.max(math.min(self.settings:trackFrequency(), 120), 1) * 60
-
-  HardcoverApp._throttledHandlePageUpdate, HardcoverApp._cancelPageUpdate = throttle(
-    track_frequency,
-    HardcoverApp._handlePageUpdate
-  )
-
-  HardcoverApp.onPageUpdate, HardcoverApp._cancelPageUpdateEvent = debounce(2, HardcoverApp.pageUpdateEvent)
-end
-
-function HardcoverApp:pageUpdateEvent(page)
-  local has_baseline = self.state.last_page ~= nil
-  self.state.last_page = self.state.page
-  self.state.page = page
-
-  if not (self.state.book_status.id and self.settings:syncEnabled()) then
-    return
-  end
-  local document_pages = self.ui.document:getPageCount()
-  local remote_pages = self.settings:pages()
-
-  if self.settings:trackByTime() then
-    local decimal_percent, mapped_page = self.page_mapper:getRemotePagePercent(
-      self.state.page,
-      self.ui.document:getPageCount(),
-      self.settings:pages()
-    )
-    local value, update_type
-    if self.settings:syncByRemotePages() and mapped_page then
-      value = mapped_page
-      update_type = "pages"
-    else
-      value = math.floor(decimal_percent * 100 + 0.5)
-      update_type = "percentage"
-    end
-
-    self.settings:debugLog("StoryGraph: trackByTime check - value=" .. tostring(value) .. " update_type=" .. update_type)
-    self:_throttledHandlePageUpdate(self.ui.document.file, value, false, nil, update_type)
-    self.page_update_pending = true
-  elseif self.settings:trackByProgress() or self.settings:trackByPages() then
-    -- No baseline yet this session: sync immediately (mirrors the periodic
-    -- throttle's leading-edge fire) instead of silently waiting for a full
-    -- interval to be crossed before ever pushing anything.
-    local is_first_check = not has_baseline
-
-    local previous_percent, previous_mapped_page = 0, 0
-    if not is_first_check then
-      previous_percent, previous_mapped_page = self.page_mapper:getRemotePagePercent(
-        self.state.last_page,
-        document_pages,
-        remote_pages
-      )
-    end
-
-    local current_percent, current_mapped_page = self.page_mapper:getRemotePagePercent(
-      self.state.page,
-      document_pages,
-      remote_pages
-    )
-
-    local should_sync = is_first_check
-    if not should_sync and self.settings:trackByProgress() then
-      local percent_interval = self.settings:trackPercentageInterval()
-      local last_compare = math.floor(previous_percent * 100 / percent_interval)
-      local current_compare = math.floor(current_percent * 100 / percent_interval)
-      should_sync = (last_compare ~= current_compare)
-    elseif not should_sync and self.settings:trackByPages() then
-      local page_step = self.settings:trackPageStep()
-      local last_compare = math.floor(previous_mapped_page / page_step)
-      local current_compare = math.floor(current_mapped_page / page_step)
-      should_sync = (last_compare ~= current_compare)
-    end
-
-    logger.info("StoryGraph: progress/pages track check - first=" .. tostring(is_first_check)
-      .. " prev%=" .. tostring(previous_percent) .. " cur%=" .. tostring(current_percent)
-      .. " should_sync=" .. tostring(should_sync))
-
-    if should_sync then
-      local percentage = math.floor(current_percent * 100 + 0.5)
-      local last_percent = math.floor(previous_percent * 100 + 0.5)
-      local remote_percent = self.state.book_status.percent_finished or 0
-      if (is_first_check or percentage > last_percent) and percentage >= remote_percent then
-        if self.settings:syncByRemotePages() and current_mapped_page then
-          self:_handlePageUpdate(self.ui.document.file, current_mapped_page, false, nil, "pages")
-        else
-          self:_handlePageUpdate(self.ui.document.file, percentage)
-        end
-      end
-    end
-  end
-end
-
-function HardcoverApp:onPosUpdate(_, page)
-  if self.state.process_page_turns then
-    self:pageUpdateEvent(page)
-  end
-end
-
-function HardcoverApp:onUpdatePos()
-  self.page_mapper:cachePageMap()
-end
-
-function HardcoverApp:onReaderReady()
-  self.page_mapper:cachePageMap()
-  self:registerHighlight()
-  self.state.page = self.ui:getCurrentPage()
- 
-  if self.ui.document and (self.settings:bookLinked() or self.settings:autolinkEnabled()) then
-    UIManager:scheduleIn(1, self.startReadCache, self)
-  end
-  UIManager:scheduleIn(1, self.initiateVersionCheck, self)
-end
-
-function HardcoverApp:initiateVersionCheck()
+function ShelfSyncApp:initiateVersionCheck()
   if self.state.version_checked then return end
 
-  local last_check = self.settings:readSetting(SETTING.LAST_VERSION_CHECK) or 0
-  local interval = self.settings:readSetting(SETTING.VERSION_CHECK_INTERVAL) or 1
+  local last_check = self.storygraph_settings:readSetting(SETTING.LAST_VERSION_CHECK) or 0
+  local interval = self.storygraph_settings:readSetting(SETTING.VERSION_CHECK_INTERVAL) or 1
   local now = os.time()
-  
+
   -- Always check on first startup of the session, otherwise respect interval
   if not self.state.session_checked or (now - last_check >= (interval * 24 * 3600)) then
     self.state.session_checked = true
@@ -639,38 +306,40 @@ function HardcoverApp:initiateVersionCheck()
   end
 end
 
-function HardcoverApp:checkForUpdates()
+function ShelfSyncApp:checkForUpdates()
   -- If we're already out of date and NOT ignoring, no need to keep checking
-  if not self.enabled and not self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) then
+  if not self.enabled and not self.storygraph_settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) then
     return
   end
 
-  self.wifi:withWifi(function()
-    local Github = require("storygraph/lib/github")
+  self.engines.storygraph.wifi:withWifi(function()
+    local Github = require("shelfsync/lib/common/github")
     local info = Github:fetchVersionInfo()
     if not info then return end
 
     self.state.version_checked = true
-    self.settings:updateSetting(SETTING.LAST_VERSION_CHECK, os.time())
+    self.storygraph_settings:updateSetting(SETTING.LAST_VERSION_CHECK, os.time())
 
     -- Check for mandatory update
-    local plugin_path = self.path or (DataStorage:getPluginDir() .. "/storygraph.koplugin")
+    local plugin_path = self.path or (DataStorage:getPluginDir() .. "/shelfsync.koplugin")
     local Meta = dofile(plugin_path .. "/_meta.lua")
 
     if info.api_version and Meta.api_version < info.api_version then
       -- Always mark as disabled internally if version is outdated
       self.enabled = false
-      self.menu.enabled = false
+      for _, engine in pairs(self.engines) do
+        engine:disable()
+      end
 
-      if self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) then
+      if self.storygraph_settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) then
         UIManager:show(Notification:new {
           text = _("StoryGraph: Mandatory update available (Ignored)"),
           timeout = 5
         })
       else
         self:cancelPendingUpdates()
-        
-        if self.settings:readSetting(SETTING.SHOW_VERSION_DIALOG) ~= false then
+
+        if self.storygraph_settings:readSetting(SETTING.SHOW_VERSION_DIALOG) ~= false then
           UIManager:show(Notification:new {
             text = info.message or _("StoryGraph: Mandatory update required!"),
             timeout = 10
@@ -680,365 +349,77 @@ function HardcoverApp:checkForUpdates()
       end
     else
       -- Up to date, schedule the next check
-      local interval = self.settings:readSetting(SETTING.VERSION_CHECK_INTERVAL) or 1
+      local interval = self.storygraph_settings:readSetting(SETTING.VERSION_CHECK_INTERVAL) or 1
       UIManager:scheduleIn(interval * 24 * 3600, self.checkForUpdates, self)
     end
   end)
 end
 
-function HardcoverApp:cancelPendingUpdates()
-  if self._cancelPageUpdate then
-    self:_cancelPageUpdate()
+function ShelfSyncApp:onReaderReady()
+  for _, engine in pairs(self.engines) do
+    engine:onReaderReady()
   end
-
-  if self._cancelPageUpdateEvent then
-    self:_cancelPageUpdateEvent()
-  end
-
-  self.page_update_pending = false
+  UIManager:scheduleIn(1, self.initiateVersionCheck, self)
 end
 
-function HardcoverApp:onDocumentClose()
-  UIManager:unschedule(self.startCacheRead)
-
-  self:cancelPendingUpdates()
-  self.state.read_cache_started = false
-  self.state.status_mismatch_warned = false
-
-  if not self.state.book_status.id and not self.settings:syncEnabled() then
-    return
-  end
-
-  if self.page_update_pending then
-    self:updatePageNow()
-  end
-
-  self.state.process_page_turns = false
-  self.page_update_pending = false
-  self.state.book_status = {}
-  self.state.page_map = nil
-  self.state.last_page = nil
-end
-
-function HardcoverApp:onSuspend()
-  self.settings:debugLog("StoryGraph: onSuspend - cancelling pending updates, read_cache_started was " .. tostring(self.state.read_cache_started))
-  self:cancelPendingUpdates()
-
-  Scheduler:clear()
-  self.state.read_cache_started = false
-end
-
-function HardcoverApp:onResume()
-  local will_restart = self.settings:readSetting(SETTING.ENABLE_WIFI) and self.ui.document and self.settings:syncEnabled()
-  self.settings:debugLog("StoryGraph: onResume - will restart read cache = " .. tostring(will_restart))
-  if will_restart then
-    UIManager:scheduleIn(2, self.startReadCache, self)
+function ShelfSyncApp:onPosUpdate(pos, page)
+  for _, engine in pairs(self.engines) do
+    engine:onPosUpdate(pos, page)
   end
 end
 
-function HardcoverApp:updatePageNow(callback, value, update_type)
-  if not value then
-    local decimal_percent, mapped_page = self.page_mapper:getRemotePagePercent(
-      self.state.page,
-      self.ui.document:getPageCount(),
-      self.settings:pages()
-    )
-    if self.settings:syncByRemotePages() and mapped_page then
-      value = mapped_page
-      update_type = "pages"
-    else
-      value = math.floor(decimal_percent * 100 + 0.5)
-      update_type = "percentage"
-    end
-  end
-  self:_handlePageUpdate(self.ui.document.file, value, true, callback, update_type)
-end
-
-function HardcoverApp:onNetworkDisconnecting()
-  if self.settings:readSetting(SETTING.ENABLE_WIFI) then
-    return
-  end
-
-  self.settings:debugLog("StoryGraph: onNetworkDisconnecting - page_update_pending=" .. tostring(self.page_update_pending))
-  self:cancelPendingUpdates()
-
-  Scheduler:clear()
-  self.state.read_cache_started = false
-
-  if self.page_update_pending and self.ui.document and self.state.book_status.id and self.settings:syncEnabled() and self.settings:trackByTime() then
-    self:updatePageNow()
-  end
-  self.page_update_pending = false
-end
-
-function HardcoverApp:onNetworkConnected()
-  local will_start = self.ui.document and self.settings:syncEnabled() and not self.state.read_cache_started
-  self.settings:debugLog("StoryGraph: onNetworkConnected - will start read cache = " .. tostring(will_start))
-  if will_start then
-    self:startReadCache()
+function ShelfSyncApp:onUpdatePos()
+  for _, engine in pairs(self.engines) do
+    engine:onUpdatePos()
   end
 end
 
-function HardcoverApp:onEndOfBook()
-  local file_path = self.ui.document.file
-
-  if not self:syncFileUpdates(file_path) then
-    return
-  end
-
-  local mark_read = false
-  if G_reader_settings:isTrue("end_document_auto_mark") then
-    mark_read = true
-  end
-
-  if not mark_read then
-    local action = G_reader_settings:readSetting("end_document_action") or "pop-up"
-    mark_read = action == "mark_read"
-
-    if action == "pop-up" then
-      mark_read = 'later'
-    end
-  end
-
-  if not mark_read then
-    return
-  end
-
-  local user_id = User:getId()
-
-  local marker = function()
-    local book_id = self.settings:readBookSetting(file_path, "book_id")
-    local user_book = Api:findUserBook(book_id, user_id) or {}
-    self.cache:updateBookStatus(file_path, HARDCOVER.STATUS.FINISHED)
-  end
-
-  if mark_read == 'later' then
-    UIManager:scheduleIn(30, function()
-      local status = "reading"
-      if DocSettings:hasSidecarFile(file_path) then
-        local summary = DocSettings:open(file_path):readSetting("summary")
-        if summary and summary.status and summary.status ~= "" then
-          status = summary.status
-        end
-      end
-      if status == "complete" then
-        self.wifi:withWifi(function()
-          marker()
-        end)
-      end
-    end)
-  else
-    self.wifi:withWifi(function()
-      marker()
-      UIManager:show(InfoMessage:new {
-        text = _("StoryGraph status saved"),
-        timeout = 2
-      })
-    end)
+function ShelfSyncApp:onDocumentClose()
+  for _, engine in pairs(self.engines) do
+    engine:onDocumentClose()
   end
 end
 
-function HardcoverApp:syncFileUpdates(filename)
-  return self.settings:readBookSetting(filename, "book_id") and self.settings:fileSyncEnabled(filename)
-end
-
-function HardcoverApp:onDocSettingsItemsChanged(file, doc_settings)
-  if not self:syncFileUpdates(file) or not doc_settings then
-    return
-  end
-
-  local status
-  if doc_settings.summary.status == "complete" then
-    status = HARDCOVER.STATUS.FINISHED
-  elseif doc_settings.summary.status == "reading" then
-    status = HARDCOVER.STATUS.READING
-  end
-
-  if status then
-    local book_id = self.settings:readBookSetting(file, "book_id")
-    local user_book = Api:findUserBook(book_id, User:getId()) or {}
-    self.wifi:withWifi(function()
-      self.cache:updateBookStatus(file, status)
-
-      UIManager:show(InfoMessage:new {
-        text = _("StoryGraph status saved"),
-        timeout = 2
-      })
-    end)
+function ShelfSyncApp:onSuspend()
+  for _, engine in pairs(self.engines) do
+    engine:onSuspend()
   end
 end
 
-function HardcoverApp:startReadCache()
-  logger.info("StoryGraph: startReadCache triggered")
-  if not self:isActive() then
-    logger.info("StoryGraph: startReadCache aborted - app not active")
-    return
-  end
-
-  if self.state.read_cache_started then
-    logger.info("StoryGraph: startReadCache aborted - already started")
-    return
-  end
-
-  if not self.ui.document then
-    return
-  end
-
-  self.state.read_cache_started = true
-
-  local cancel
-  local nil_status_attempts = 0
-  local max_nil_status_attempts = 2
-  local auto_add_attempts = 0
-  local max_auto_add_attempts = 2
-
-  local restart = function(delay)
-    delay = delay or 60
-    self.settings:debugLog("StoryGraph: startReadCache restart() - rescheduling in " .. delay .. "s")
-    cancel()
-    self.state.read_cache_started = false
-    UIManager:scheduleIn(delay, self.startReadCache, self)
-  end
-
-  cancel = Scheduler:withRetries(6, 3, function(success, fail)
-      Trapper:wrap(function()
-        if not self.ui.document then
-          -- fail, but cancel retries
-          return success()
-        end
-        local book_settings = self.settings:readBookSettings(self.ui.document.file) or {}
-        if book_settings.book_id then
-          if self.state.book_status.id then
-            return success()
-          else
-            self.wifi:withWifi(function()
-              if not NetworkManager:isConnected() then
-                return restart()
-              end
-
-              local err = self.cache:cacheUserBook()
-              self:registerHighlight()
-              logger.info("StoryGraph: startReadCache - cacheUserBook completed, status=" .. (self.state.book_status.status_id or "nil"))
-              if err then
-                return fail(err)
-              end
-
-              -- A nil status_id here (fetched the book page fine, but found no
-              -- read-status on it) is usually a real, stable outcome -- e.g. the
-              -- book was removed from the user's shelves, or its status was
-              -- changed to something we don't render a badge for -- rather than a
-              -- fetch failure to retry indefinitely. But a single miss can also be
-              -- a one-off render/parse blip on an otherwise normal "Currently
-              -- Reading" book, so give it a couple of retries before accepting it
-              -- as final.
-              if not self.state.book_status.status_id then
-                if nil_status_attempts < max_nil_status_attempts then
-                  nil_status_attempts = nil_status_attempts + 1
-                  self.state.book_status = {}
-                  return fail("No read status found for book, retrying")
-                end
-
-                -- Still genuinely no status after retrying: mirror linkBook()'s
-                -- behavior for a freshly-linked book with no status, and add it
-                -- as Currently Reading automatically here too, rather than only
-                -- ever asking the user to fix it via warnStatusMismatch.
-                logger.info("StoryGraph: Already-linked book has no status, adding to Currently Reading automatically")
-                local added = Api:updateUserBook(book_settings.book_id, HARDCOVER.STATUS.READING)
-                if added and added.status_id then
-                  self.state.book_status = added
-                elseif auto_add_attempts < max_auto_add_attempts then
-                  -- The write itself can fail transiently (e.g. a momentary
-                  -- network hiccup) just as easily as the read above did --
-                  -- give it the same kind of retry instead of giving up after
-                  -- a single attempt.
-                  auto_add_attempts = auto_add_attempts + 1
-                  self.state.book_status = {}
-                  return fail("Failed to auto-mark book as Currently Reading, retrying")
-                end
-                -- Still no status after retrying the write too: fall through
-                -- to success() with an empty book_status. warnStatusMismatch
-                -- (from _handlePageUpdate) remains the safety net to let the
-                -- user fix it manually.
-              end
-
-              success()
-              self:registerHighlight() -- redundant but safe
-            end)
-          end
-        else
-          self.hardcover:tryAutolink()
-          if self.settings:bookLinked() and self.settings:syncEnabled() then
-            return restart(2)
-          end
-        end
-      end)
-    end,
-
-    function()
-      if self.settings:syncEnabled() then
-        self.state.process_page_turns = true
-
-        if self.settings:syncOnOpen() then
-          -- Try a sync right away, using the current position, rather than
-          -- waiting for the first page turn (or a full trackByTime interval)
-          -- to elapse. pageUpdateEvent's existing "no baseline yet" and
-          -- remote-behind guards mean this quietly no-ops if there's nothing
-          -- new to push; subsequent page turns fall back to the usual
-          -- periodic/threshold sync pattern.
-          self:pageUpdateEvent(self.state.page)
-        end
-      end
-    end,
-
-    function()
-      if NetworkManager:isConnected() then
-        UIManager:show(Notification:new {
-          text = _("Failed to fetch book information from StoryGraph"),
-        })
-      end
-    end)
-end
-
-function HardcoverApp:isActive()
-  return self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true
-end
-
-function HardcoverApp:registerHighlight()
-  self.ui.highlight:removeFromHighlightDialog(HIGHLIGHT_MENU_NAME)
-
-  if self.settings:bookLinked() then
-    self.ui.highlight:addToHighlightDialog(HIGHLIGHT_MENU_NAME, function(this)
-      return {
-        text_func = function()
-          return _("StoryGraph: Add note")
-        end,
-        enabled_func = function()
-          local status = self.state.book_status.status_id
-          return self:isActive() and status and status ~= HARDCOVER.STATUS.FINISHED and status ~= HARDCOVER.STATUS.DNF and status ~= HARDCOVER.STATUS.TO_READ
-        end,
-        callback = function()
-          if not self:isActive() then return end
-          local selected_text = this.selected_text
-          local raw_page = selected_text.pos0.page
-          if not raw_page then
-            raw_page = self.view.document:getPageFromXPointer(selected_text.pos0)
-          end
-          -- open journal dialog
-          self:onStoryGraphNote({
-            text = selected_text.text,
-            page_number = raw_page,
-            note_type = "quote"
-          })
-
-          this:onClose()
-        end,
-      }
-    end)
+function ShelfSyncApp:onResume()
+  for _, engine in pairs(self.engines) do
+    engine:onResume()
   end
 end
 
-function HardcoverApp:addToMainMenu(menu_items)
-  menu_items.storygraph = self.menu:mainMenu()
+function ShelfSyncApp:onNetworkDisconnecting()
+  for _, engine in pairs(self.engines) do
+    engine:onNetworkDisconnecting()
+  end
 end
 
-return HardcoverApp
+function ShelfSyncApp:onNetworkConnected()
+  for _, engine in pairs(self.engines) do
+    engine:onNetworkConnected()
+  end
+end
+
+function ShelfSyncApp:onEndOfBook()
+  for _, engine in pairs(self.engines) do
+    engine:onEndOfBook()
+  end
+end
+
+function ShelfSyncApp:onDocSettingsItemsChanged(file, doc_settings)
+  for _, engine in pairs(self.engines) do
+    engine:onDocSettingsItemsChanged(file, doc_settings)
+  end
+end
+
+function ShelfSyncApp:addToMainMenu(menu_items)
+  for _, provider in ipairs(PROVIDERS) do
+    menu_items[provider.key] = self.engines[provider.key].menu:mainMenu()
+  end
+end
+
+return ShelfSyncApp

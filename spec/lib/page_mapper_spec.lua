@@ -1,4 +1,4 @@
-local PageMapper = require("storygraph/lib/page_mapper")
+local PageMapper = require("shelfsync/lib/common/page_mapper")
 
 describe("PageMapper", function()
   local ui = function(page_map, use_page_map)

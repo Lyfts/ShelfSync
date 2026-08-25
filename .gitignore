@@ -5,3 +5,5 @@ storygraph_config.lua
 /lua_modules
 /.luarocks
 .DS_STORE
+graphify-out/
+.serena

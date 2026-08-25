@@ -1,58 +1,70 @@
-# StoryGraph for KOReader
+# ShelfSync for KOReader
 
-A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com).
+A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com) and/or [Hardcover](https://hardcover.app). Both services can be linked and tracked independently, side by side, from the same install.
 
 > [!NOTE]
 > This repository is a personal fork of [storygraph.koplugin](https://github.com/burneracc0112/storygraph.koplugin), largely vibe coded, with changes made mostly for personal use. They aren't intended to be upstreamed, but this fork may still be useful to others.
 
 > [!CAUTION]
-> **Disclaimer**: This plugin uses an unofficial API based on session cookies. Because of this, it is inherently brittle and may break if StoryGraph updates their website or cookie structure. If sync stops working, please ensure you are using the latest version of the plugin and try re-fetching your session tokens.
+> **Disclaimer**: StoryGraph sync uses an unofficial API based on session cookies. Because of this, it is inherently brittle and may break if StoryGraph updates their website or cookie structure. If sync stops working, please ensure you are using the latest version of the plugin and try re-fetching your session tokens. Hardcover sync uses Hardcover's official API and does not have this issue.
 
 ## Installation
 
 1. Download the latest release and extract it to your KOReader `plugins/` folder.
-2. Rename `storygraph_config.example.lua` to `storygraph_config.lua`.
+2. Set up authentication for whichever service(s) you want to use — both are optional and independent.
+
+### StoryGraph authentication
+1. Rename `storygraph_config.example.lua` to `storygraph_config.lua`.
    - *Note: If you are upgrading from an older version, the plugin will automatically rename `hardcover_config.lua` to `storygraph_config.lua`.*
-3. **Authentication**:
-   - Log in to [thestorygraph.com](https://thestorygraph.com) in your browser.
-   - Open your browser's Developer Tools (F12) -> Application/Storage -> Cookies.
-   - Copy the value of the `_story_graph_session` cookie and paste it into the `session_cookie` field in `storygraph_config.lua`.
-   - Copy the value of the `remember_user_token` cookie and paste it into the `remember_user_token` field in `storygraph_config.lua`.
+2. Log in to [thestorygraph.com](https://thestorygraph.com) in your browser.
+3. Open your browser's Developer Tools (F12) -> Application/Storage -> Cookies.
+4. Copy the value of the `_story_graph_session` cookie and paste it into the `session_cookie` field in `storygraph_config.lua`.
+5. Copy the value of the `remember_user_token` cookie and paste it into the `remember_user_token` field in `storygraph_config.lua`.
+
+### Hardcover authentication
+1. Rename `hardcover_config.example.lua` to `hardcover_config.lua`.
+2. Go to [hardcover.app/account/api](https://hardcover.app/account/api) in your browser and copy your API token.
+3. Paste it into the `token` field in `hardcover_config.lua`.
+   - Alternatively, you can paste the token directly into the **Hardcover** menu's **Settings > Account (API Token)** field from within KOReader instead of editing the config file.
 
 ## Usage
 
-The StoryGraph menu is located in the **Bookmark** top menu when a document is active.
+Both the **StoryGraph** and **Hardcover** menus are located in the **Bookmark** top menu when a document is active. They work the same way and can be used together or independently.
 
 ### Updating Progress & Notes
-The plugin provides a unified **"Update progress: [XX]%"** menu item. This opens a powerful dialog where you can:
-- **Set Progress**: Tap the progress button to open a native picker showing both your **KOReader** and **StoryGraph** synced percentages.
+Each menu provides a unified **"Update progress: [XX]%"** item. This opens a powerful dialog where you can:
+- **Set Progress**: Tap the progress button to open a native picker showing both your **KOReader** and remote synced percentages.
 - **Add a Note**: Write your thoughts directly in the note field.
 - **Location Context**: By default, notes sent via the highlight menu automatically include your current **Chapter, Page, and Percentage**. You can enable this for regular notes in the settings.
 
 ### Linking a Book
-Before updates can be sent, the plugin needs to link your document to a StoryGraph book.
+Before updates can be sent, a document needs to be linked to a book on each service you want to sync to.
 - Use **"Link book"** to search by metadata or ISBN.
-- Use **"Change edition"** to switch to a different edition.
+- Use **"Change edition"** to switch to a different edition (StoryGraph) or select a specific edition (Hardcover).
 - Audio editions are filtered out of the search results.
-- If a book is not currently tracked, the plugin will set its status to Currently Reading
-- If another edition of the book is set as 'Currently Reading' or 'Want to Read' then the plugin will automatically link to that edition, but not change the status. You can use "Change edition" to link to a different edition if needed.
+- If a book is not currently tracked, the plugin will set its status to Currently Reading.
+- On StoryGraph, if another edition of the book is set as 'Currently Reading' or 'Want to Read' then the plugin will automatically link to that edition, but not change the status. You can use "Change edition" to link to a different edition if needed.
 
 ### Automatically Track Progress
-When enabled, the plugin will periodically sync your progress to StoryGraph:
+When enabled (per service), the plugin will periodically sync your progress:
 - Updates are sent when paging, no more than once per minute (configurable).
-- When reaching the end of the document, the book is automatically marked as "Read" on StoryGraph.
+- When reaching the end of the document, the book is automatically marked as "Read"/"Finished".
 - Progress can be synced automatically based on time duration, percentage read or pages read (based on edition page count).
+- Hardcover only stores progress as a page number; if a tracking mode produces a percentage instead (e.g. no page count is known for the linked edition), it's converted to a page number automatically before syncing.
 
 ## Settings
 
+Each service has its own **Settings** submenu with its own linking, tracking, and account options, including:
 - **Include location info in regular notes**: Automatically append Chapter, Page, and % info to your regular notes.
-- **Automatically link by ISBN/Title**: Attempt to find matching books on StoryGraph automatically when opening a new document.
+- **Automatically link by ISBN/Title**: Attempt to find matching books automatically when opening a new document.
 - **Enable wifi on demand**: Briefly enable wifi for background syncs to preserve battery life.
 - **Confirm changes**: Prompt for confirmation before changing a book's status (e.g., Want to Read -> Read).
 
+The **"Plugin Updates"** settings (see below) are shared and only appear under the **StoryGraph** menu, since they apply to the whole plugin rather than one service.
+
 ## Versioning & Mandatory Updates
 
-To prevent data corruption and ensure compatibility with StoryGraph's unofficial API, the plugin includes a remote versioning system.
+To prevent data corruption and ensure compatibility with StoryGraph's unofficial API, the plugin includes a remote versioning system. This applies to the plugin as a whole (both StoryGraph and Hardcover sync).
 
 - **Automatic Checks**: The plugin periodically checks for mandatory updates via GitHub. If the StoryGraph API changes in a way that breaks older versions, the plugin will automatically disable sync to prevent errors.
 - **Blocking**: When a mandatory update is required, the plugin menus will be greyed out.

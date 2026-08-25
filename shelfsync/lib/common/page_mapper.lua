@@ -1,4 +1,4 @@
-local _t = require("storygraph/lib/table_util")
+local _t = require("shelfsync/lib/common/table_util")
 
 local PageMapper = {}
 PageMapper.__index = PageMapper

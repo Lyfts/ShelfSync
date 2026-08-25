@@ -2,9 +2,9 @@ local http = require("socket.http")
 local json = require("json")
 local ltn12 = require("ltn12")
 
-local VERSION = require("storygraph_version")
+local VERSION = require("shelfsync_version")
 
-local VERSION_URL = "https://raw.githubusercontent.com/burneracc0112/storygraph.koplugin/main/version.json"
+local VERSION_URL = "https://raw.githubusercontent.com/Lyfts/ShelfSync/main/version.json"
 
 local Github = {}
 

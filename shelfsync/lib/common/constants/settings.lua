@@ -5,6 +5,7 @@ local Settings = {
   ENABLE_WIFI = "enable_wifi",
   LINK_BY_ISBN = "link_by_isbn",
   LINK_BY_TITLE = "link_by_title",
+  LINK_BY_HARDCOVER = "link_by_hardcover",
   MENU_CONFIRMATION = "menu_confirmation",
   SYNC = "sync",
   TRACK_FREQUENCY = "track_frequency",
@@ -18,6 +19,7 @@ local Settings = {
   USER_ID = "user_id",
   SESSION_COOKIE = "session_cookie",
   REMEMBER_TOKEN = "remember_token",
+  API_TOKEN = "api_token",
   INCLUDE_LOCATION_IN_NOTES = "include_location_in_notes",
   IGNORE_VERSION_BLOCK = "ignore_version_block",
   SHOW_VERSION_DIALOG = "show_version_dialog",
@@ -29,6 +31,6 @@ local Settings = {
   VERBOSE_LOGGING = "verbose_logging",
 }
 
-Settings.AUTOLINK_OPTIONS = { Settings.LINK_BY_ISBN, Settings.LINK_BY_TITLE }
+Settings.AUTOLINK_OPTIONS = { Settings.LINK_BY_ISBN, Settings.LINK_BY_TITLE, Settings.LINK_BY_HARDCOVER }
 
 return Settings

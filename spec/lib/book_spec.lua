@@ -1,4 +1,4 @@
-local Book = require("storygraph/lib/book")
+local Book = require("shelfsync/lib/common/book")
 
 describe("Book", function()
   describe("parseIdentifiers", function()

@@ -28,7 +28,8 @@ jobs:
       - name: Zip release
         run: |
           cd ..
-          zip -r storygraph.koplugin.zip storygraph.koplugin -x '*/*.git*' '*/spec/*' '*/lua_modules/*' '*/.luarocks/*' '*/lua' '*/luarocks' '*/.tool-versions' '*/*.rockspec'
+          cp -r "$GITHUB_WORKSPACE" shelfsync.koplugin
+          zip -r shelfsync.koplugin.zip shelfsync.koplugin -x '*/*.git*' '*/spec/*' '*/lua_modules/*' '*/.luarocks/*' '*/lua' '*/luarocks' '*/.tool-versions' '*/*.rockspec'
 
       - name: Release
         uses: softprops/action-gh-release@v3
@@ -36,4 +37,4 @@ jobs:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           body: |
             See [CHANGELOG.md](${{ github.server_url }}/${{ github.repository }}/blob/main/CHANGELOG.md) for changes in this release.
-          files: ../storygraph.koplugin.zip
+          files: ../shelfsync.koplugin.zip

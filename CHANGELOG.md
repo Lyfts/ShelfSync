@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0
+- Renamed the project to ShelfSync (from storygraph.koplugin) now that it syncs to both StoryGraph and Hardcover — the plugin folder, internal require paths, and update-check/repo URLs all moved accordingly. No functional changes; existing settings and linked books are unaffected.
+
+## 0.4.0
+- Add Hardcover sync support alongside StoryGraph, so both services can be linked and tracked independently from the same install instead of needing two near-identical plugins. See the README for setup instructions.
+- The StoryGraph and Hardcover sync logic now share a common engine internally; behavior and settings for each service remain independent, but "Plugin Updates" settings (mandatory update checks) are shared plugin-wide and only shown under the StoryGraph menu.
+
 ## 0.3.5
 - The auto-mark-as-Currently-Reading write (added in 0.3.4) now retries a couple of times if it fails, instead of giving up permanently after a single transient failure.
 - Expand the "Verbose logging" diagnostics (added in 0.3.4) to cover several more places that were previously silent on failure: the actual progress-update write, automatic wifi enabling, sync retry/reschedule points, the status-mismatch warning's fire/skip decision, and the autolink matching flow.

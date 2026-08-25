@@ -6,13 +6,10 @@ local ConfirmBox = require("ui/widget/confirmbox")
 local InfoMessage = require("ui/widget/infomessage")
 local FileSearcher = require("apps/filemanager/filemanagerfilesearcher")
 
-local Api = require("storygraph/lib/hardcover_api")
-local User = require("storygraph/lib/user")
+local SETTING = require("shelfsync/lib/common/constants/settings")
 
-local SETTING = require("storygraph/lib/constants/settings")
-
-local JournalDialog = require("storygraph/lib/ui/journal_dialog")
-local SearchDialog = require("storygraph/lib/ui/search_dialog")
+local JournalDialog = require("shelfsync/lib/common/ui/journal_dialog")
+local SearchDialog = require("shelfsync/lib/common/ui/search_dialog")
 
 local DialogManager = {}
 DialogManager.__index = DialogManager
@@ -114,9 +111,9 @@ function DialogManager:buildBookListDialog(title, items, icon_callback, disable_
 end
 
 function DialogManager:updateSearchResults(search)
-  local books, error = Api:findBooks(search, nil, User:getId())
+  local books, error = self.api:findBooks(search, nil, self.user:getId())
   if error then
-    if not Api.enabled then
+    if not self.api.enabled then
       UIManager:close(self.search_dialog)
     end
 
@@ -170,6 +167,7 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
   dialog = JournalDialog:new {
     input = text,
     input_box_height = 250,
+    label = self.label,
     book_id = settings.book_id,
     page = initial_percent,
     remote_page = remote_pages,
@@ -179,12 +177,12 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
     save_dialog_callback = function(book_data)
       local api_data = mapJournalData(book_data)
       local saving_msg = InfoMessage:new{
-        text = _("Saving progress to StoryGraph..."),
+        text = _("Saving progress to " .. self.label .. "..."),
       }
       UIManager:show(saving_msg)
-      
+
       UIManager:scheduleIn(0.1, function()
-        local result = Api:createJournalEntry(api_data)
+        local result = self.api:createJournalEntry(api_data)
         UIManager:close(saving_msg)
         
         if result then
@@ -197,7 +195,7 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
             end)
           end
         else
-          self:showError(_("Failed to update StoryGraph"))
+          self:showError(_("Failed to update " .. self.label))
           UIManager:setDirty(nil, "full")
         end
       end)

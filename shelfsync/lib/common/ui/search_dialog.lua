@@ -5,15 +5,15 @@ local GestureRange = require("ui/gesturerange")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
 local Menu = require("ui/widget/menu")
-local SearchMenu = require("storygraph/lib/ui/search_menu")
+local SearchMenu = require("shelfsync/lib/common/ui/search_menu")
 local Size = require("ui/size")
 local UIManager = require("ui/uimanager")
 local _ = require("gettext")
-local _t = require("storygraph/lib/table_util")
+local _t = require("shelfsync/lib/common/table_util")
 
 local Screen = Device.screen
 
-local HardcoverSearchDialog = InputContainer:extend {
+local BookSearchDialog = InputContainer:extend {
   width = nil,
   bordersize = Size.border.window,
   items = {},
@@ -29,7 +29,7 @@ local HardcoverSearchDialog = InputContainer:extend {
   compatibility_mode = true
 }
 
-function HardcoverSearchDialog:createListItem(book, active_item)
+function BookSearchDialog:createListItem(book, active_item)
   local info = ""
   local title = book.title
   local authors = {}
@@ -60,7 +60,7 @@ function HardcoverSearchDialog:createListItem(book, active_item)
     title = title,
     mandatory = info,
     mandatory_dim = true,
-    file = "hardcover-" .. book.book_id,
+    file = "book-" .. book.book_id,
     book_id = book.book_id,
     edition_format = book.edition_format,
     highlight = active,
@@ -148,7 +148,7 @@ function HardcoverSearchDialog:createListItem(book, active_item)
   return result
 end
 
-function HardcoverSearchDialog:init()
+function BookSearchDialog:init()
   if Device:isTouchDevice() then
     self.ges_events.Tap = {
       GestureRange:new {
@@ -209,7 +209,7 @@ function HardcoverSearchDialog:init()
   self[1] = self.container
 end
 
-function HardcoverSearchDialog:search()
+function BookSearchDialog:search()
   local search_dialog
   search_dialog = InputDialog:new {
     title = "New search",
@@ -242,35 +242,35 @@ function HardcoverSearchDialog:search()
   search_dialog:onShowKeyboard()
 end
 
-function HardcoverSearchDialog:setTitle(title)
+function BookSearchDialog:setTitle(title)
   self.menu.title = title
 end
 
-function HardcoverSearchDialog:onClose()
+function BookSearchDialog:onClose()
   UIManager:close(self)
   if self.close_callback then
     self.close_callback()
   end
-  local ImageLoader = require("storygraph/lib/ui/image_loader")
+  local ImageLoader = require("shelfsync/lib/common/ui/image_loader")
   ImageLoader:clearCache()
 
   return true
 end
 
-function HardcoverSearchDialog:onTapClose(arg, ges)
+function BookSearchDialog:onTapClose(arg, ges)
   if ges.pos:notIntersectWith(self.movable.dimen) then
     self:onClose()
   end
   return true
 end
 
-function HardcoverSearchDialog:parseItems(items, active_item)
+function BookSearchDialog:parseItems(items, active_item)
   return _t.map(items, function(book)
     return self:createListItem(book, active_item)
   end)
 end
 
-function HardcoverSearchDialog:setItems(title, items, active_item)
+function BookSearchDialog:setItems(title, items, active_item)
   if self.menu.halt_image_loading then
     self.menu.halt_image_loading()
   end
@@ -288,7 +288,7 @@ function HardcoverSearchDialog:setItems(title, items, active_item)
   self.menu:switchItemTable(title, new_item_table)
 end
 
-function HardcoverSearchDialog:onTap(_, ges)
+function BookSearchDialog:onTap(_, ges)
   if ges.pos:notIntersectWith(self[1][1].dimen) then
     -- Tap outside closes widget
     self:onClose()
@@ -296,4 +296,4 @@ function HardcoverSearchDialog:onTap(_, ges)
   end
 end
 
-return HardcoverSearchDialog
+return BookSearchDialog

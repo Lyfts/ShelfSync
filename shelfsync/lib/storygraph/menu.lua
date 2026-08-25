@@ -13,29 +13,28 @@ local InfoMessage = require("ui/widget/infomessage")
 local Notification = require("ui/widget/notification")
 local SpinWidget = require("ui/widget/spinwidget")
 
-local Api = require("storygraph/lib/hardcover_api")
-local Github = require("storygraph/lib/github")
-local _t = require("storygraph/lib/table_util")
+local Github = require("shelfsync/lib/common/github")
+local _t = require("shelfsync/lib/common/table_util")
 
-local HARDCOVER = require("storygraph/lib/constants/hardcover")
-local ICON = require("storygraph/lib/constants/icons")
-local SETTING = require("storygraph/lib/constants/settings")
-local VERSION = require("storygraph_version")
+local STORYGRAPH = require("shelfsync/lib/storygraph/constants")
+local ICON = require("shelfsync/lib/common/constants/icons")
+local SETTING = require("shelfsync/lib/common/constants/settings")
+local VERSION = require("shelfsync_version")
 
-local HardcoverMenu = {}
-HardcoverMenu.__index = HardcoverMenu
+local StoryGraphMenu = {}
+StoryGraphMenu.__index = StoryGraphMenu
 
-function HardcoverMenu:new(o)
+function StoryGraphMenu:new(o)
   return setmetatable(o or {
     enabled = true
   }, self)
 end
 
-function HardcoverMenu:isActive()
+function StoryGraphMenu:isActive()
   return self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true
 end
 
-function HardcoverMenu:mainMenu()
+function StoryGraphMenu:mainMenu()
   return {
     enabled_func = function()
       return true
@@ -50,7 +49,7 @@ function HardcoverMenu:mainMenu()
   }
 end
 
-function HardcoverMenu:getSubMenuItems(book_view)
+function StoryGraphMenu:getSubMenuItems(book_view)
   local menu_items = {
     book_view and {
       text_func = function()
@@ -88,7 +87,7 @@ function HardcoverMenu:getSubMenuItems(book_view)
 
         local force_search = self.settings:bookLinked()
 
-        self.hardcover:showLinkBookDialog(force_search, function()
+        self.storygraph:showLinkBookDialog(force_search, function()
           menu_instance:updateItems()
         end)
       end,
@@ -110,7 +109,7 @@ function HardcoverMenu:getSubMenuItems(book_view)
         return self:isActive() and self.settings:bookLinked()
       end,
       callback = function(menu_instance)
-        self.hardcover:showChangeEditionDialog(function()
+        self.storygraph:showChangeEditionDialog(function()
           menu_instance:updateItems()
         end)
       end,
@@ -179,7 +178,7 @@ v]] .. version .. new_release_str .. [[
 Updates book progress and status on thestorygraph.com
 
 Project:
-github.com/Lyfts/storygraph.koplugin
+github.com/Lyfts/ShelfSync
 
 Settings:
 ]] .. settings_file,
@@ -198,15 +197,15 @@ end
 -- Builds a radio menu item that marks the current book with `status_id` on
 -- StoryGraph (after confirmation), used for every entry in the status list
 -- below except "Remove", which has no status_id of its own to set.
-function HardcoverMenu:_statusMenuItem(icon, status_id)
+function StoryGraphMenu:_statusMenuItem(icon, status_id)
   return {
-    text = _(icon .. " " .. HARDCOVER.STATUS_NAME[status_id]),
+    text = _(icon .. " " .. STORYGRAPH.STATUS_NAME[status_id]),
     checked_func = function()
       return self.state.book_status.status_id == status_id
     end,
     callback = function(menu_instance)
       self.dialog_manager:maybeConfirm({
-        text = ("Mark book as %s?"):format(HARDCOVER.STATUS_NAME[status_id]),
+        text = ("Mark book as %s?"):format(STORYGRAPH.STATUS_NAME[status_id]),
         ok_callback = function()
           self.cache:updateBookStatus(self.ui.document.file, status_id)
           menu_instance.item_table = self:getStatusSubMenuItems()
@@ -221,13 +220,13 @@ function HardcoverMenu:_statusMenuItem(icon, status_id)
   }
 end
 
-function HardcoverMenu:getStatusSubMenuItems()
+function StoryGraphMenu:getStatusSubMenuItems()
   local items = {
-    self:_statusMenuItem(ICON.BOOKMARK, HARDCOVER.STATUS.TO_READ),
-    self:_statusMenuItem(ICON.OPEN_BOOK, HARDCOVER.STATUS.READING),
-    self:_statusMenuItem(ICON.CHECKMARK, HARDCOVER.STATUS.FINISHED),
-    self:_statusMenuItem(ICON.PAUSE, HARDCOVER.STATUS.PAUSED),
-    self:_statusMenuItem(ICON.STOP_CIRCLE, HARDCOVER.STATUS.DNF),
+    self:_statusMenuItem(ICON.BOOKMARK, STORYGRAPH.STATUS.TO_READ),
+    self:_statusMenuItem(ICON.OPEN_BOOK, STORYGRAPH.STATUS.READING),
+    self:_statusMenuItem(ICON.CHECKMARK, STORYGRAPH.STATUS.FINISHED),
+    self:_statusMenuItem(ICON.PAUSE, STORYGRAPH.STATUS.PAUSED),
+    self:_statusMenuItem(ICON.STOP_CIRCLE, STORYGRAPH.STATUS.DNF),
     {
       text = _(ICON.TRASH .. " Remove"),
       enabled_func = function()
@@ -237,7 +236,7 @@ function HardcoverMenu:getStatusSubMenuItems()
         self.dialog_manager:maybeConfirm({
           text = "Remove current book status?",
           ok_callback = function()
-            local result = Api:removeRead(self.state.book_status.id)
+            local result = self.api:removeRead(self.state.book_status.id)
             if result then
               self.state.book_status = {}
               menu_instance.item_table = self:getStatusSubMenuItems()
@@ -258,7 +257,7 @@ function HardcoverMenu:getStatusSubMenuItems()
       end,
       callback = function(menu_instance)
         local new_status = not self.state.book_status.is_owned
-        local success = Api:setOwned(self.state.book_status.id, new_status)
+        local success = self.api:setOwned(self.state.book_status.id, new_status)
         if success then
           self.state.book_status.is_owned = new_status
           menu_instance:updateItems()
@@ -276,7 +275,7 @@ function HardcoverMenu:getStatusSubMenuItems()
       end,
       callback = function(menu_instance)
         local new_status = not self.state.book_status.is_favorite
-        local success = Api:setFavorite(self.state.book_status.id, new_status)
+        local success = self.api:setFavorite(self.state.book_status.id, new_status)
         if success then
           self.state.book_status.is_favorite = new_status
           menu_instance:updateItems()
@@ -290,7 +289,7 @@ function HardcoverMenu:getStatusSubMenuItems()
   local status = self.state.book_status.status_id
 
   -- Update progress: only when NOT read, DNF, removed, or want to read
-  if status and status ~= HARDCOVER.STATUS.FINISHED and status ~= HARDCOVER.STATUS.DNF and status ~= HARDCOVER.STATUS.TO_READ then
+  if status and status ~= STORYGRAPH.STATUS.FINISHED and status ~= STORYGRAPH.STATUS.DNF and status ~= STORYGRAPH.STATUS.TO_READ then
     table.insert(items, {
       text_func = function()
         local current_page = self.ui:getCurrentPage()
@@ -323,7 +322,7 @@ function HardcoverMenu:getStatusSubMenuItems()
   end
 
   -- Review: only when read or DNF or can_review
-  if status and (status == HARDCOVER.STATUS.FINISHED or status == HARDCOVER.STATUS.DNF or self.state.book_status.can_review) then
+  if status and (status == STORYGRAPH.STATUS.FINISHED or status == STORYGRAPH.STATUS.DNF or self.state.book_status.can_review) then
     table.insert(items, {
       text = _("Review"),
       sub_item_table_func = function(menu_instance)
@@ -337,7 +336,7 @@ function HardcoverMenu:getStatusSubMenuItems()
   return items
 end
 
-function HardcoverMenu:getReviewSubMenuItems(menu_instance)
+function StoryGraphMenu:getReviewSubMenuItems(menu_instance)
   if not self.state.review then
     local existing_review = nil
     if self.state.book_status.review_url then
@@ -346,7 +345,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
         text = _("Fetching existing review..."),
       }
       UIManager:show(info)
-      existing_review = Api:getReview(self.state.book_status.review_url)
+      existing_review = self.api:getReview(self.state.book_status.review_url)
       UIManager:close(info)
     end
 
@@ -579,7 +578,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
     {
       text = "Save Review",
       callback = function(menu_instance)
-        local success = Api:saveReview(book_id, review, self.state.book_status.review_url)
+        local success = self.api:saveReview(book_id, review, self.state.book_status.review_url)
         if success then
           self.cache:cacheUserBook()
           UIManager:show(InfoMessage:new { text = "Review saved!" })
@@ -600,7 +599,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
   }
 end
 
-function HardcoverMenu:getTrackingSubMenuItems()
+function StoryGraphMenu:getTrackingSubMenuItems()
   return {
     {
       text = _("Auto sync by edition pages"),
@@ -758,7 +757,7 @@ Disable this if you'd rather sync only follow the usual periodic/threshold patte
   }
 end
 
-function HardcoverMenu:getUpdateSubMenuItems()
+function StoryGraphMenu:getUpdateSubMenuItems()
   return {
     {
       text = "Ignore version blocks",
@@ -842,7 +841,7 @@ function HardcoverMenu:getUpdateSubMenuItems()
   }
 end
 
-function HardcoverMenu:getAuthSubMenuItems()
+function StoryGraphMenu:getAuthSubMenuItems()
   return {
     {
       text = _("How to get your cookies"),
@@ -950,7 +949,7 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
   }
 end
 
-function HardcoverMenu:getSettingsSubMenuItems()
+function StoryGraphMenu:getSettingsSubMenuItems()
   return {
     {
       text = "Automatically link by ISBN",
@@ -1070,4 +1069,4 @@ Off by default since it can be noisy; only worth enabling while troubleshooting.
   }
 end
 
-return HardcoverMenu
+return StoryGraphMenu

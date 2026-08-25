@@ -7,7 +7,7 @@ assignees: ''
 
 ---
 
-* hardcoverapp.koplugin version:
+* Plugin version:
 * KOReader version:
 * Device:
 

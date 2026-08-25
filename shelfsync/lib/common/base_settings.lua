@@ -1,20 +1,35 @@
+-- Shared settings logic for all sync providers (StoryGraph, Hardcover, ...).
+--
+-- Provider-specific settings classes (storygraph_settings.lua, hardcover_settings.lua)
+-- extend this via metatable inheritance:
+--
+--   local HardcoverSettings = setmetatable({}, { __index = BaseSettings })
+--   HardcoverSettings.__index = HardcoverSettings
+--   function HardcoverSettings:new(path, ui)
+--     return BaseSettings.new(self, path, ui, "hardcover")
+--   end
+--
+-- `sidecar_key` is the per-provider sub-table name used to store book links
+-- inside a document's sidecar (metadata.lua) file, so a single book can be
+-- linked to more than one provider independently.
 local KoreaderVersion = require("version")
 local LuaSettings = require("luasettings")
 local DocSettings = require("docsettings")
 local logger = require("logger")
 
-local _t = require("storygraph/lib/table_util")
-local SETTING = require("storygraph/lib/constants/settings")
+local _t = require("shelfsync/lib/common/table_util")
+local SETTING = require("shelfsync/lib/common/constants/settings")
 
-local HardcoverSettings = {}
-HardcoverSettings.__index = HardcoverSettings
+local BaseSettings = {}
+BaseSettings.__index = BaseSettings
 
-function HardcoverSettings:new(path, ui)
+function BaseSettings:new(path, ui, sidecar_key)
   local o = {}
   setmetatable(o, self)
 
   o.settings = LuaSettings:open(path)
   o.ui = ui
+  o.sidecar_key = sidecar_key
   o.subscribers = {}
 
   if KoreaderVersion:getNormalizedCurrentVersion() < 202403010000 then
@@ -26,25 +41,25 @@ function HardcoverSettings:new(path, ui)
   return o
 end
 
-function HardcoverSettings:getDocSettings(filename)
+function BaseSettings:getDocSettings(filename)
   if self.ui and self.ui.doc_settings and self.ui.document and self.ui.document.file == filename then
     return self.ui.doc_settings
   end
   return DocSettings:open(filename)
 end
 
-function HardcoverSettings:readSetting(key)
+function BaseSettings:readSetting(key)
   return self.settings:readSetting(key)
 end
 
-function HardcoverSettings:readBookSettings(filename)
+function BaseSettings:readBookSettings(filename)
   if not filename then
     return {}
   end
 
-  -- 1. Try sidecar first (storygraph sub-table in metadata.lua)
+  -- 1. Try sidecar first (provider sub-table in metadata.lua)
   local sidecar = self:getDocSettings(filename)
-  local sidecar_data = sidecar:readSetting("storygraph")
+  local sidecar_data = sidecar:readSetting(self.sidecar_key)
   if sidecar_data then
     return sidecar_data
   end
@@ -58,7 +73,7 @@ function HardcoverSettings:readBookSettings(filename)
   return {}
 end
 
-function HardcoverSettings:readBookSetting(filename, key)
+function BaseSettings:readBookSetting(filename, key)
   if not filename then
     return
   end
@@ -69,7 +84,7 @@ function HardcoverSettings:readBookSetting(filename, key)
   end
 end
 
-function HardcoverSettings:updateBookSetting(filename, config)
+function BaseSettings:updateBookSetting(filename, config)
   if not filename then return end
 
   -- 1. Load existing data (prioritizing sidecar)
@@ -90,7 +105,7 @@ function HardcoverSettings:updateBookSetting(filename, config)
 
   -- 3. Save to sidecar
   local sidecar = self:getDocSettings(filename)
-  sidecar:saveSetting("storygraph", book_setting)
+  sidecar:saveSetting(self.sidecar_key, book_setting)
   sidecar:flush()
 
   -- 4. Clean up global table (Migration)
@@ -104,7 +119,7 @@ function HardcoverSettings:updateBookSetting(filename, config)
   self:notify(SETTING.BOOKS, { filename = filename, config = config }, original_value)
 end
 
-function HardcoverSettings:updateSetting(key, value)
+function BaseSettings:updateSetting(key, value)
   local original_value = self.settings:readSetting(key)
   self.settings:saveSetting(key, value)
 
@@ -113,50 +128,51 @@ function HardcoverSettings:updateSetting(key, value)
   self:notify(key, value, original_value)
 end
 
-function HardcoverSettings:notify(key, value, original_value)
+function BaseSettings:notify(key, value, original_value)
   for _, cb in ipairs(self.subscribers) do
     cb(key, value, original_value)
   end
 end
 
-function HardcoverSettings:subscribe(cb)
+function BaseSettings:subscribe(cb)
   table.insert(self.subscribers, cb)
 end
 
-function HardcoverSettings:setSync(value)
+function BaseSettings:unsubscribe(cb)
+  local new_subscribers = {}
+  for _, original_cb in ipairs(self.subscribers) do
+    if original_cb ~= cb then
+      table.insert(new_subscribers, original_cb)
+    end
+  end
+  self.subscribers = new_subscribers
+end
+
+function BaseSettings:setSync(value)
   self:updateBookSetting(self.ui.document.file, { sync = value == true })
 end
 
-function HardcoverSettings:setTrackMethod(method)
+function BaseSettings:setTrackMethod(method)
   self:updateSetting(SETTING.TRACK_METHOD, method)
 end
 
-function HardcoverSettings:bookLinked()
+function BaseSettings:bookLinked()
   return self:getLinkedBookId() ~= nil
 end
 
-function HardcoverSettings:getFilePath()
+function BaseSettings:getFilePath()
   return _t.dig(self, "ui", "document", "file")
 end
 
-function HardcoverSettings:getLinkedTitle()
+function BaseSettings:getLinkedTitle()
   return self:readBookSetting(self:getFilePath(), "title")
 end
 
-function HardcoverSettings:getLinkedBookId()
-  local file = self:getFilePath()
-  return self:readBookSetting(file, "book_id") or self:readBookSetting(file, "edition_id")
-end
-
-function HardcoverSettings:getLinkedEditionFormat()
+function BaseSettings:getLinkedEditionFormat()
   return self:readBookSetting(self:getFilePath(), "edition_format")
 end
 
-function HardcoverSettings:getLinkedEditionId()
-  return self:getLinkedBookId()
-end
-
-function HardcoverSettings:fileSyncEnabled(file)
+function BaseSettings:fileSyncEnabled(file)
   if not file then
     return false
   end
@@ -168,11 +184,11 @@ function HardcoverSettings:fileSyncEnabled(file)
   return sync_value ~= false
 end
 
-function HardcoverSettings:syncEnabled()
+function BaseSettings:syncEnabled()
   return self:fileSyncEnabled(self:getFilePath())
 end
 
-function HardcoverSettings:autolinkEnabled()
+function BaseSettings:autolinkEnabled()
   for _, setting in ipairs(SETTING.AUTOLINK_OPTIONS) do
     if self.settings:readSetting(setting) then
       return true
@@ -182,28 +198,28 @@ function HardcoverSettings:autolinkEnabled()
   return false
 end
 
-function HardcoverSettings:pages()
+function BaseSettings:pages()
   return self:readBookSetting(self:getFilePath(), "pages")
 end
 
-function HardcoverSettings:trackFrequency()
+function BaseSettings:trackFrequency()
   return self.settings:readSetting(SETTING.TRACK_FREQUENCY) or 5
 end
 
-function HardcoverSettings:trackPercentageInterval()
+function BaseSettings:trackPercentageInterval()
   return self.settings:readSetting(SETTING.TRACK_PERCENTAGE) or 10
 end
 
-function HardcoverSettings:trackMethod()
+function BaseSettings:trackMethod()
   return self.settings:readSetting(SETTING.TRACK_METHOD) or SETTING.TRACK.FREQUENCY
 end
 
-function HardcoverSettings:trackByTime()
+function BaseSettings:trackByTime()
   local setting = self.settings:readSetting(SETTING.TRACK_METHOD)
   return setting == nil or setting == SETTING.TRACK.FREQUENCY
 end
 
-function HardcoverSettings:trackByProgress()
+function BaseSettings:trackByProgress()
   local method = self.settings:readSetting(SETTING.TRACK_METHOD)
   -- Fallback if pages tracking is selected but remote page count is missing
   if method == SETTING.TRACK.PAGES then
@@ -215,31 +231,31 @@ function HardcoverSettings:trackByProgress()
   return method == SETTING.TRACK.PROGRESS
 end
 
-function HardcoverSettings:changeTrackPercentageInterval(percent)
+function BaseSettings:changeTrackPercentageInterval(percent)
   self:updateSetting(SETTING.TRACK_PERCENTAGE, percent)
 end
 
-function HardcoverSettings:compatibilityMode()
+function BaseSettings:compatibilityMode()
   return self.settings:readSetting(SETTING.COMPATIBILITY_MODE) == true
 end
 
-function HardcoverSettings:setMenuConfirm(status)
+function BaseSettings:setMenuConfirm(status)
   self:updateSetting(SETTING.MENU_CONFIRMATION, status)
 end
 
-function HardcoverSettings:menuConfirm()
+function BaseSettings:menuConfirm()
   return self.settings:readSetting(SETTING.MENU_CONFIRMATION) == true
 end
 
-function HardcoverSettings:syncByRemotePages()
+function BaseSettings:syncByRemotePages()
   return self.settings:readSetting(SETTING.SYNC_BY_REMOTE_PAGES) ~= false
 end
 
-function HardcoverSettings:syncOnOpen()
+function BaseSettings:syncOnOpen()
   return self.settings:readSetting(SETTING.SYNC_ON_OPEN) == true
 end
 
-function HardcoverSettings:verboseLogging()
+function BaseSettings:verboseLogging()
   return self.settings:readSetting(SETTING.VERBOSE_LOGGING) == true
 end
 
@@ -247,25 +263,25 @@ end
 -- in settings, without every call site checking the setting itself:
 --   self.settings:debugLog("StoryGraph: some detail =", value)
 --   self.settings:debugWarn("StoryGraph: unexpected thing happened")
-function HardcoverSettings:debugLog(...)
+function BaseSettings:debugLog(...)
   if self:verboseLogging() then
     logger.info(...)
   end
 end
 
-function HardcoverSettings:debugWarn(...)
+function BaseSettings:debugWarn(...)
   if self:verboseLogging() then
     logger.warn(...)
   end
 end
 
-function HardcoverSettings:trackByPages()
+function BaseSettings:trackByPages()
   local pages = self:pages()
   return self.settings:readSetting(SETTING.TRACK_METHOD) == SETTING.TRACK.PAGES and (pages and pages > 0)
 end
 
-function HardcoverSettings:trackPageStep()
+function BaseSettings:trackPageStep()
   return self.settings:readSetting(SETTING.TRACK_PAGE_STEP) or 10
 end
 
-return HardcoverSettings
+return BaseSettings
