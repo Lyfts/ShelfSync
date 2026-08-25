@@ -283,7 +283,7 @@ function BaseSettings:menuConfirm()
 end
 
 function BaseSettings:syncByRemotePages()
-  return self:readSetting(SETTING.SYNC_BY_REMOTE_PAGES) ~= false
+  return self:readSetting(SETTING.SYNC_BY_REMOTE_PAGES) == true
 end
 
 function BaseSettings:syncOnOpen()

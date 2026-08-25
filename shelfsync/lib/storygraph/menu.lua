@@ -15,6 +15,12 @@ local STORYGRAPH = require("shelfsync/lib/storygraph/constants")
 local ICON = require("shelfsync/lib/common/constants/icons")
 local SETTING = require("shelfsync/lib/common/constants/settings")
 
+-- Falls back to shelfsync_config.lua's legacy cookies, same as api.lua's
+-- get_headers(), so the menu doesn't show "(not set)" for a cookie that's
+-- actually in use (e.g. carried over from a pre-Settings-menu install).
+local config_ok, shelfsync_config = pcall(require, "shelfsync_config")
+local legacy_config = (config_ok and shelfsync_config.storygraph) or {}
+
 local StoryGraphMenu = {}
 StoryGraphMenu.__index = StoryGraphMenu
 
@@ -147,9 +153,9 @@ function StoryGraphMenu:getSubMenuItems(book_view)
     },
 
     {
-      text = _("Settings"),
+      text = _("Account (Cookies & Tokens)"),
       sub_item_table_func = function()
-        return self:getSettingsSubMenuItems()
+        return self:getAuthSubMenuItems()
       end,
     },
   }
@@ -586,6 +592,7 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
       text = _("StoryGraph Session Cookie"),
       text_func = function()
         local set = self.settings:readSetting(SETTING.SESSION_COOKIE)
+        if not set or set == "" then set = legacy_config.session_cookie end
         return _("StoryGraph Session Cookie") .. (set and set ~= "" and _(" (set)") or _(" (not set)"))
       end,
       hold_callback = function()
@@ -600,7 +607,7 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
           title = _("StoryGraph Session Cookie"),
           fields = {
             {
-              text = self.settings:readSetting(SETTING.SESSION_COOKIE) or "",
+              text = self.settings:readSetting(SETTING.SESSION_COOKIE) or legacy_config.session_cookie or "",
             },
           },
           buttons = {
@@ -629,6 +636,7 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
       text = _("StoryGraph Remember Token"),
       text_func = function()
         local set = self.settings:readSetting(SETTING.REMEMBER_TOKEN)
+        if not set or set == "" then set = legacy_config.remember_user_token end
         return _("StoryGraph Remember Token") .. (set and set ~= "" and _(" (set)") or _(" (not set)"))
       end,
       hold_callback = function()
@@ -643,7 +651,7 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
           title = _("StoryGraph Remember Token"),
           fields = {
             {
-              text = self.settings:readSetting(SETTING.REMEMBER_TOKEN) or "",
+              text = self.settings:readSetting(SETTING.REMEMBER_TOKEN) or legacy_config.remember_user_token or "",
             },
           },
           buttons = {
@@ -668,17 +676,6 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
         UIManager:show(dialog)
       end,
     }
-  }
-end
-
-function StoryGraphMenu:getSettingsSubMenuItems()
-  return {
-    {
-      text = "Account (Cookies & Tokens)",
-      sub_item_table_func = function()
-        return self:getAuthSubMenuItems()
-      end,
-    },
   }
 end
 

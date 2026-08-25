@@ -17,6 +17,12 @@ local HARDCOVER = require("shelfsync/lib/hardcover/constants")
 local ICON = require("shelfsync/lib/common/constants/icons")
 local SETTING = require("shelfsync/lib/common/constants/settings")
 
+-- Falls back to shelfsync_config.lua's legacy token, same as api.lua's
+-- get_headers(), so the menu doesn't show "(not set)" for a token that's
+-- actually in use (e.g. carried over from a pre-Settings-menu install).
+local config_ok, shelfsync_config = pcall(require, "shelfsync_config")
+local legacy_config = (config_ok and shelfsync_config.hardcover) or {}
+
 local HardcoverMenu = {}
 HardcoverMenu.__index = HardcoverMenu
 
@@ -174,9 +180,9 @@ function HardcoverMenu:getSubMenuItems(book_view)
       keep_menu_open = true
     },
     {
-      text = _("Settings"),
+      text = _("Account (API Token)"),
       sub_item_table_func = function()
-        return self:getSettingsSubMenuItems()
+        return self:getAuthSubMenuItems()
       end,
     },
   }
@@ -472,6 +478,7 @@ The token does not expire automatically, but can be regenerated (which invalidat
       text = _("Hardcover API Token"),
       text_func = function()
         local set = self.settings:readSetting(SETTING.API_TOKEN)
+        if not set or set == "" then set = legacy_config.token end
         return _("Hardcover API Token") .. (set and set ~= "" and _(" (set)") or _(" (not set)"))
       end,
       hold_callback = function()
@@ -486,7 +493,7 @@ The token does not expire automatically, but can be regenerated (which invalidat
           title = _("Hardcover API Token"),
           fields = {
             {
-              text = self.settings:readSetting(SETTING.API_TOKEN) or "",
+              text = self.settings:readSetting(SETTING.API_TOKEN) or legacy_config.token or "",
             },
           },
           buttons = {
@@ -509,17 +516,6 @@ The token does not expire automatically, but can be regenerated (which invalidat
           },
         }
         UIManager:show(dialog)
-      end,
-    },
-  }
-end
-
-function HardcoverMenu:getSettingsSubMenuItems()
-  return {
-    {
-      text = "Account (API Token)",
-      sub_item_table_func = function()
-        return self:getAuthSubMenuItems()
       end,
     },
   }
