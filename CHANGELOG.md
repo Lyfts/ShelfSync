@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.0.3
+- Add a "Paused" status option to the Hardcover menu, matching StoryGraph's, now that Hardcover supports it too.
+
 ## 1.0.2
 - The StoryGraph and Hardcover menus are now combined into a single **ShelfSync** menu, with **StoryGraph** and **Hardcover** as sub-menus and shared plugin-wide settings (previously tucked under the StoryGraph menu's Settings) moved to a new **Common settings** sub-menu.
 - Progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Compatibility mode", "Include location info in regular notes", and "Verbose logging" are now combined across StoryGraph and Hardcover instead of being configured separately for each — they've moved to **ShelfSync > Common settings** and apply to both services. Linking and account settings remain per-service. Existing values aren't migrated; each of these settings falls back to its default until re-set once under Common settings.
