@@ -56,7 +56,6 @@ describe("SyncEngine autolink race (StoryGraph + Hardcover sharing one wifi rest
     local settings = settings_class:new("/settings/" .. filename, ui, nil)
     settings:updateSetting(SETTING.LINK_BY_ISBN, true)
     settings:updateSetting(SETTING.LINK_BY_TITLE, true)
-    settings:updateSetting(SETTING.LINK_BY_HARDCOVER, true)
     settings:updateSetting(SETTING.ENABLE_WIFI, true)
 
     local state = { page = nil, pos = nil, search_results = {}, book_status = {} }

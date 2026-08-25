@@ -517,37 +517,6 @@ end
 function HardcoverMenu:getSettingsSubMenuItems()
   return {
     {
-      text = "Automatically link by ISBN",
-      checked_func = function()
-        return self.settings:readSetting(SETTING.LINK_BY_ISBN) == true
-      end,
-      callback = function()
-        local setting = self.settings:readSetting(SETTING.LINK_BY_ISBN) == true
-        self.settings:updateSetting(SETTING.LINK_BY_ISBN, not setting)
-      end
-    },
-    {
-      text = "Automatically link by Hardcover identifiers",
-      checked_func = function()
-        return self.settings:readSetting(SETTING.LINK_BY_HARDCOVER) == true
-      end,
-      callback = function()
-        local setting = self.settings:readSetting(SETTING.LINK_BY_HARDCOVER) == true
-        self.settings:updateSetting(SETTING.LINK_BY_HARDCOVER, not setting)
-      end
-    },
-    {
-      text = "Automatically link by title and author",
-      checked_func = function()
-        return self.settings:readSetting(SETTING.LINK_BY_TITLE) == true
-      end,
-      callback = function()
-        local setting = self.settings:readSetting(SETTING.LINK_BY_TITLE) == true
-        self.settings:updateSetting(SETTING.LINK_BY_TITLE, not setting)
-      end,
-      separator = true
-    },
-    {
       text = "Account (API Token)",
       sub_item_table_func = function()
         return self:getAuthSubMenuItems()

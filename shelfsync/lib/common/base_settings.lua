@@ -46,6 +46,8 @@ local SHARED_KEYS = {
   [SETTING.TRACK_FREQUENCY] = true,
   [SETTING.TRACK_PERCENTAGE] = true,
   [SETTING.TRACK_PAGE_STEP] = true,
+  [SETTING.LINK_BY_ISBN] = true,
+  [SETTING.LINK_BY_TITLE] = true,
 }
 
 function BaseSettings:new(path, ui, sidecar_key, shared)

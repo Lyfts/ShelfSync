@@ -437,9 +437,14 @@ function SyncEngine:pageUpdateEvent(page)
 
     if should_sync then
       local percentage = math.floor(current_percent * 100 + 0.5)
-      local last_percent = math.floor(previous_percent * 100 + 0.5)
       local remote_percent = self.business:getRemoteProgress(self.state.book_status, "percentage")
-      if (is_first_check or percentage > last_percent) and percentage >= remote_percent then
+      -- Compare the raw (unrounded) percents here, not values rounded to a
+      -- whole percent -- should_sync above can legitimately fire on a
+      -- sub-1%-point crossing (e.g. a fine trackPercentageInterval, or a
+      -- small trackPageStep on a long book), and rounding both sides to the
+      -- same whole percent before comparing would silently swallow the very
+      -- push should_sync just asked for, with no log line to show it happened.
+      if (is_first_check or current_percent > previous_percent) and percentage >= remote_percent then
         if self.settings:syncByRemotePages() and current_mapped_page then
           self:_handlePageUpdate(self.ui.document.file, current_mapped_page, false, nil, "pages")
         else

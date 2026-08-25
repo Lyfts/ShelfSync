@@ -5,7 +5,6 @@ local Settings = {
   ENABLE_WIFI = "enable_wifi",
   LINK_BY_ISBN = "link_by_isbn",
   LINK_BY_TITLE = "link_by_title",
-  LINK_BY_HARDCOVER = "link_by_hardcover",
   MENU_CONFIRMATION = "menu_confirmation",
   SYNC = "sync",
   TRACK_FREQUENCY = "track_frequency",
@@ -31,6 +30,6 @@ local Settings = {
   VERBOSE_LOGGING = "verbose_logging",
 }
 
-Settings.AUTOLINK_OPTIONS = { Settings.LINK_BY_ISBN, Settings.LINK_BY_TITLE, Settings.LINK_BY_HARDCOVER }
+Settings.AUTOLINK_OPTIONS = { Settings.LINK_BY_ISBN, Settings.LINK_BY_TITLE }
 
 return Settings

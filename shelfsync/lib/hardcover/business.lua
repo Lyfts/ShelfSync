@@ -225,18 +225,6 @@ function Hardcover:linkBookByIsbn(identifiers)
   end
 end
 
-function Hardcover:linkBookByHardcover(identifiers)
-  if identifiers.book_slug or identifiers.edition_id then
-    local user_id = self.user:getId()
-    local book_lookup = self.api:findBookByIdentifiers(
-      { book_slug = identifiers.book_slug, edition_id = identifiers.edition_id }, user_id)
-    if book_lookup then
-      self:autolinkBook(book_lookup)
-      return true
-    end
-  end
-end
-
 function Hardcover:linkBookByTitle()
   local props = self.ui.document:getProps()
 
@@ -263,11 +251,10 @@ function Hardcover:tryAutolink(done)
 
   local identifiers = Book:parseIdentifiers(props.identifiers)
   local should_attempt = ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.LINK_BY_ISBN))
-    or ((identifiers.book_slug or identifiers.edition_id) and self.settings:readSetting(SETTING.LINK_BY_HARDCOVER))
     or (props.title and self.settings:readSetting(SETTING.LINK_BY_TITLE))
   self.settings:debugLog("Hardcover: tryAutolink - should_attempt=" .. tostring(should_attempt)
     .. " isbn_10=" .. tostring(identifiers.isbn_10) .. " isbn_13=" .. tostring(identifiers.isbn_13)
-    .. " book_slug=" .. tostring(identifiers.book_slug) .. " title=" .. tostring(props.title))
+    .. " title=" .. tostring(props.title))
   if should_attempt then
     self.wifi:withWifi(function()
       self:_runAutolink(identifiers)
@@ -357,11 +344,6 @@ function Hardcover:_runAutolink(identifiers)
   if self.settings:readSetting(SETTING.LINK_BY_ISBN) then
     linked = self:linkBookByIsbn(identifiers)
     self.settings:debugLog("Hardcover: _runAutolink - linkBookByIsbn linked=" .. tostring(linked))
-  end
-
-  if not linked and self.settings:readSetting(SETTING.LINK_BY_HARDCOVER) then
-    linked = self:linkBookByHardcover(identifiers)
-    self.settings:debugLog("Hardcover: _runAutolink - linkBookByHardcover linked=" .. tostring(linked))
   end
 
   if not linked and self.settings:readSetting(SETTING.LINK_BY_TITLE) then

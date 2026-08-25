@@ -177,6 +177,31 @@ Disable this if you'd rather sync only follow the usual periodic/threshold patte
   }
 end
 
+function CommonMenu:getAutoLinkSubMenuItems()
+  return {
+    {
+      text = _("Automatically link by ISBN"),
+      checked_func = function()
+        return self.settings:readSetting(SETTING.LINK_BY_ISBN) == true
+      end,
+      callback = function()
+        local setting = self.settings:readSetting(SETTING.LINK_BY_ISBN) == true
+        self.settings:updateSetting(SETTING.LINK_BY_ISBN, not setting)
+      end
+    },
+    {
+      text = _("Automatically link by title and author"),
+      checked_func = function()
+        return self.settings:readSetting(SETTING.LINK_BY_TITLE) == true
+      end,
+      callback = function()
+        local setting = self.settings:readSetting(SETTING.LINK_BY_TITLE) == true
+        self.settings:updateSetting(SETTING.LINK_BY_TITLE, not setting)
+      end
+    },
+  }
+end
+
 function CommonMenu:getUpdateSubMenuItems()
   return {
     {
@@ -267,6 +292,12 @@ function CommonMenu:getSubMenuItems()
       text = _("Progress tracking settings"),
       sub_item_table_func = function()
         return self:getTrackingSubMenuItems()
+      end,
+    },
+    {
+      text = _("Auto Book Link"),
+      sub_item_table_func = function()
+        return self:getAutoLinkSubMenuItems()
       end,
     },
     {
