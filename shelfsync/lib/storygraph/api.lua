@@ -1,4 +1,5 @@
-local config = require("storygraph_config")
+local config_ok, shelfsync_config = pcall(require, "shelfsync_config")
+local config = (config_ok and shelfsync_config.storygraph) or {}
 local logger = require("logger")
 local http = require("socket.http")
 local ltn12 = require("ltn12")

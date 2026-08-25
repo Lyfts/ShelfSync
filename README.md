@@ -3,7 +3,7 @@
 A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com) and/or [Hardcover](https://hardcover.app). Both services can be linked and tracked independently, side by side, from the same install.
 
 > [!NOTE]
-> This repository is a personal fork of [storygraph.koplugin](https://github.com/burneracc0112/storygraph.koplugin), largely vibe coded, with changes made mostly for personal use. They aren't intended to be upstreamed, but this fork may still be useful to others.
+> This project combines the features of [storygraph.koplugin](https://github.com/burneracc0112/storygraph.koplugin) and [hardcoverapp.koplugin](https://github.com/Billiam/hardcoverapp.koplugin) into a single plugin, largely vibe coded, with changes made mostly for personal use. It isn't intended to be upstreamed, but may still be useful to others.
 
 > [!CAUTION]
 > **Disclaimer**: StoryGraph sync uses an unofficial API based on session cookies. Because of this, it is inherently brittle and may break if StoryGraph updates their website or cookie structure. If sync stops working, please ensure you are using the latest version of the plugin and try re-fetching your session tokens. Hardcover sync uses Hardcover's official API and does not have this issue.
@@ -13,18 +13,18 @@ A KOReader plugin to synchronize your reading progress, notes, and status to [Th
 1. Download the latest release and extract it to your KOReader `plugins/` folder.
 2. Set up authentication for whichever service(s) you want to use — both are optional and independent.
 
+Both services share a single config file: rename `shelfsync_config.example.lua` to `shelfsync_config.lua`, then fill in whichever section(s) below you want — the `storygraph` and `hardcover` sections are both optional and independent, and leaving one blank (or the whole file missing) doesn't affect the other.
+- *Note: If you are upgrading from an older version, the plugin will automatically merge an existing `storygraph_config.lua` and/or `hardcover_config.lua` into `shelfsync_config.lua`.*
+
 ### StoryGraph authentication
-1. Rename `storygraph_config.example.lua` to `storygraph_config.lua`.
-   - *Note: If you are upgrading from an older version, the plugin will automatically rename `hardcover_config.lua` to `storygraph_config.lua`.*
-2. Log in to [thestorygraph.com](https://thestorygraph.com) in your browser.
-3. Open your browser's Developer Tools (F12) -> Application/Storage -> Cookies.
-4. Copy the value of the `_story_graph_session` cookie and paste it into the `session_cookie` field in `storygraph_config.lua`.
-5. Copy the value of the `remember_user_token` cookie and paste it into the `remember_user_token` field in `storygraph_config.lua`.
+1. Log in to [thestorygraph.com](https://thestorygraph.com) in your browser.
+2. Open your browser's Developer Tools (F12) -> Application/Storage -> Cookies.
+3. Copy the value of the `_story_graph_session` cookie and paste it into the `session_cookie` field of the `storygraph` section in `shelfsync_config.lua`.
+4. Copy the value of the `remember_user_token` cookie and paste it into the `remember_user_token` field of the `storygraph` section in `shelfsync_config.lua`.
 
 ### Hardcover authentication
-1. Rename `hardcover_config.example.lua` to `hardcover_config.lua`.
-2. Go to [hardcover.app/account/api](https://hardcover.app/account/api) in your browser and copy your API token.
-3. Paste it into the `token` field in `hardcover_config.lua`.
+1. Go to [hardcover.app/account/api](https://hardcover.app/account/api) in your browser and copy your API token.
+2. Paste it into the `token` field of the `hardcover` section in `shelfsync_config.lua`.
    - Alternatively, you can paste the token directly into the **Hardcover** menu's **Settings > Account (API Token)** field from within KOReader instead of editing the config file.
 
 ## Usage

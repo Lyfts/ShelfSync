@@ -1,20 +1,52 @@
 local _ = require("gettext")
 local DataStorage = require("datastorage")
 
--- Migration: Rename hardcover_config.lua to storygraph_config.lua if it exists
+-- Migration: merge the legacy storygraph_config.lua / hardcover_config.lua
+-- files into a single shelfsync_config.lua. Very old installs (pre-Hardcover
+-- support) stored StoryGraph's session cookie in hardcover_config.lua under
+-- the same field names storygraph_config.lua uses now, so that file's
+-- content is treated as StoryGraph's rather than Hardcover's in that case.
 local plugin_dir = DataStorage:getDataDir() .. "/plugins/shelfsync.koplugin"
-local old_config = plugin_dir .. "/hardcover_config.lua"
-local new_config = plugin_dir .. "/storygraph_config.lua"
+local new_config = plugin_dir .. "/shelfsync_config.lua"
 
-local f_new = io.open(new_config, "r")
-if not f_new then
-    local f_old = io.open(old_config, "r")
-    if f_old then
-        f_old:close()
-        os.rename(old_config, new_config)
+local function loadLegacyConfig(path)
+    local f = io.open(path, "r")
+    if not f then return nil end
+    f:close()
+    local ok, result = pcall(dofile, path)
+    if ok and type(result) == "table" then return result end
+    return nil
+end
+
+if not io.open(new_config, "r") then
+    local storygraph_path = plugin_dir .. "/storygraph_config.lua"
+    local hardcover_path = plugin_dir .. "/hardcover_config.lua"
+
+    local storygraph_legacy = loadLegacyConfig(storygraph_path)
+    local hardcover_legacy = loadLegacyConfig(hardcover_path)
+
+    if not storygraph_legacy and hardcover_legacy and hardcover_legacy.session_cookie ~= nil then
+        storygraph_legacy, hardcover_legacy = hardcover_legacy, nil
     end
-else
-    f_new:close()
+
+    if storygraph_legacy or hardcover_legacy then
+        local f_out = io.open(new_config, "w")
+        if f_out then
+            f_out:write("return {\n")
+            f_out:write(("  storygraph = {\n    session_cookie = %q,\n    remember_user_token = %q,\n  },\n"):format(
+                (storygraph_legacy and storygraph_legacy.session_cookie) or '',
+                (storygraph_legacy and storygraph_legacy.remember_user_token) or ''
+            ))
+            f_out:write(("  hardcover = {\n    token = %q,\n  },\n"):format(
+                (hardcover_legacy and hardcover_legacy.token) or ''
+            ))
+            f_out:write("}\n")
+            f_out:close()
+
+            os.remove(storygraph_path)
+            os.remove(hardcover_path)
+        end
+    end
 end
 
 local Dispatcher = require("dispatcher")
