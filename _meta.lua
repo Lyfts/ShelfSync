@@ -3,6 +3,6 @@ return {
   name = "shelfsync",
   fullname = _("ShelfSync"),
   description = _([[Synchronize reading progress to app.thestorygraph.com and hardcover.app]]),
-  version = "1.0.1",
+  version = "1.0.2",
   api_version = 1
 }
