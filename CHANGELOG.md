@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.0.1
+- StoryGraph and Hardcover now share a single `shelfsync_config.lua` file (replacing the separate `storygraph_config.lua`/`hardcover_config.lua`), with independent, optional sections per service — see the README. Existing installs are migrated automatically.
+
 ## 1.0.0
 - Renamed the project to ShelfSync (from storygraph.koplugin) now that it syncs to both StoryGraph and Hardcover — the plugin folder, internal require paths, and update-check/repo URLs all moved accordingly. No functional changes; existing settings and linked books are unaffected.
 
