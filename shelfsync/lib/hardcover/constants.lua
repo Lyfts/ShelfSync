@@ -1,28 +1,15 @@
+local Status = require("shelfsync/lib/common/constants/status")
+
 local Hardcover = {
-  STATUS = {
-    TO_READ = 1,
-    READING = 2,
-    FINISHED = 3,
-    DNF = 5,
-  },
-  STATUS_NAME = {
-    [1] = "Want To Read",
-    [2] = "Currently Reading",
-    [3] = "Read",
-    [5] = "Did Not Finish",
-  },
+  STATUS = Status.STATUS,
+  STATUS_NAME = Status.STATUS_NAME,
+  CATEGORY = Status.CATEGORY,
+  ERROR = Status.ERROR,
   PRIVACY = {
     PUBLIC = 1,
     FOLLOWS = 2,
     PRIVATE = 3,
   },
-  CATEGORY = {
-    TAG = "Tag",
-  },
-  ERROR = {
-    JWT = "invalid-jwt",
-    TOKEN = "Unable to verify token",
-  }
 }
 
 return Hardcover

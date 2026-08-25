@@ -260,6 +260,7 @@ function HardcoverMenu:getStatusSubMenuItems()
     self:_statusMenuItem(ICON.BOOKMARK, HARDCOVER.STATUS.TO_READ),
     self:_statusMenuItem(ICON.OPEN_BOOK, HARDCOVER.STATUS.READING),
     self:_statusMenuItem(ICON.CHECKMARK, HARDCOVER.STATUS.FINISHED),
+    self:_statusMenuItem(ICON.PAUSE, HARDCOVER.STATUS.PAUSED),
     self:_statusMenuItem(ICON.STOP_CIRCLE, HARDCOVER.STATUS.DNF),
     {
       text = _(ICON.TRASH .. " Remove"),
