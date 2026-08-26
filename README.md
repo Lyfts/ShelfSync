@@ -50,7 +50,7 @@ Each menu provides a unified **"Update progress: [XX]%"** item. This opens a pow
 
 ### Linking a Book
 Before updates can be sent, a document needs to be linked to a book on each service you want to sync to.
-- Use **"Link book"** to search by metadata or ISBN.
+- Use **"Link book"** to search by metadata or ISBN. The plugin automatically tries to link the correct edition (e.g. by matching ISBN) — "Change edition" and the other settings below are mostly for changing which specific edition ends up linked, when you want something other than what was auto-selected.
 - Use **"Change edition"** to switch to a different edition (StoryGraph) or select a specific edition (Hardcover). Goodreads has no edition-switching concept, so it has no "Change edition" item — linking picks whichever edition its search returns.
 - Audio editions are filtered out of the search results (StoryGraph, Hardcover).
 - If a book is not currently tracked, the plugin will set its status to Currently Reading.
@@ -66,7 +66,7 @@ When enabled (per service), the plugin will periodically sync your progress:
 ## Settings
 
 Each service has its own **Settings** submenu for linking and account options:
-- **Automatically link by ISBN/Title** (Hardcover also offers matching by its own identifiers): Attempt to find matching books automatically when opening a new document.
+- **Automatically link by ISBN/Title** (Hardcover also offers matching by its own identifiers): Attempt to find matching books automatically when opening a new document. Enabled by default; disable here if you'd rather link books manually.
 - **Account**: Cookies/tokens for that service.
 
 Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Common settings**, since it applies to the whole plugin rather than one service:

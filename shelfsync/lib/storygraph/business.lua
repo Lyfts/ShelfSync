@@ -215,8 +215,8 @@ function StoryGraph:tryAutolink(done)
   local props = self.ui.document:getProps()
 
   local identifiers = Book:parseIdentifiers(props.identifiers)
-  local should_attempt = ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.LINK_BY_ISBN))
-    or (props.title and self.settings:readSetting(SETTING.LINK_BY_TITLE))
+  local should_attempt = ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.LINK_BY_ISBN) ~= false)
+    or (props.title and self.settings:readSetting(SETTING.LINK_BY_TITLE) ~= false)
   self.settings:debugLog("StoryGraph: tryAutolink - should_attempt=" .. tostring(should_attempt)
     .. " isbn_10=" .. tostring(identifiers.isbn_10) .. " isbn_13=" .. tostring(identifiers.isbn_13)
     .. " title=" .. tostring(props.title))
@@ -274,12 +274,12 @@ end
 
 function StoryGraph:_runAutolink(identifiers)
   local linked = false
-  if self.settings:readSetting(SETTING.LINK_BY_ISBN) then
+  if self.settings:readSetting(SETTING.LINK_BY_ISBN) ~= false then
     linked = self:linkBookByIsbn(identifiers)
     self.settings:debugLog("StoryGraph: _runAutolink - linkBookByIsbn linked=" .. tostring(linked))
   end
 
-  if not linked and self.settings:readSetting(SETTING.LINK_BY_TITLE) then
+  if not linked and self.settings:readSetting(SETTING.LINK_BY_TITLE) ~= false then
     linked = self:linkBookByTitle()
     self.settings:debugLog("StoryGraph: _runAutolink - linkBookByTitle linked=" .. tostring(linked))
   end

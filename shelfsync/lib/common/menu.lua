@@ -182,20 +182,20 @@ function CommonMenu:getAutoLinkSubMenuItems()
     {
       text = _("Automatically link by ISBN"),
       checked_func = function()
-        return self.settings:readSetting(SETTING.LINK_BY_ISBN) == true
+        return self.settings:readSetting(SETTING.LINK_BY_ISBN) ~= false
       end,
       callback = function()
-        local setting = self.settings:readSetting(SETTING.LINK_BY_ISBN) == true
+        local setting = self.settings:readSetting(SETTING.LINK_BY_ISBN) ~= false
         self.settings:updateSetting(SETTING.LINK_BY_ISBN, not setting)
       end
     },
     {
       text = _("Automatically link by title and author"),
       checked_func = function()
-        return self.settings:readSetting(SETTING.LINK_BY_TITLE) == true
+        return self.settings:readSetting(SETTING.LINK_BY_TITLE) ~= false
       end,
       callback = function()
-        local setting = self.settings:readSetting(SETTING.LINK_BY_TITLE) == true
+        local setting = self.settings:readSetting(SETTING.LINK_BY_TITLE) ~= false
         self.settings:updateSetting(SETTING.LINK_BY_TITLE, not setting)
       end
     },

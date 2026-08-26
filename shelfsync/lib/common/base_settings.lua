@@ -222,7 +222,7 @@ function BaseSettings:autolinkEnabled()
     -- settings file is where they're actually stored, so reading straight
     -- off this instance's own settings would always miss them for every
     -- non-StoryGraph provider, silently disabling autolink for those.
-    if self:readSetting(setting) then
+    if self:readSetting(setting) ~= false then
       return true
     end
   end
