@@ -40,7 +40,7 @@ Goodreads accounts are linked through Amazon, so a valid session is a bundle of 
 
 ## Usage
 
-Everything lives under a single **ShelfSync** menu in the **Bookmark** top menu when a document is active, with **StoryGraph**, **Hardcover**, and **Goodreads** as sub-menus. They work the same way and can be used together or independently.
+Everything lives under a single **ShelfSync** menu in **Tools > More tools** when a document is active, with **StoryGraph**, **Hardcover**, and **Goodreads** as sub-menus. They work the same way and can be used together or independently.
 
 ### Updating Progress & Notes
 Each menu provides a unified **"Update progress: [XX]%"** item. This opens a powerful dialog where you can:
