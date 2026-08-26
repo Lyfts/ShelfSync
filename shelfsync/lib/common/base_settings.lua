@@ -225,7 +225,12 @@ end
 
 function BaseSettings:autolinkEnabled()
   for _, setting in ipairs(SETTING.AUTOLINK_OPTIONS) do
-    if self.settings:readSetting(setting) then
+    -- Must go through self:readSetting (not self.settings:readSetting)
+    -- since LINK_BY_ISBN/LINK_BY_TITLE are SHARED_KEYS: StoryGraph's
+    -- settings file is where they're actually stored, so reading straight
+    -- off this instance's own settings would always miss them for every
+    -- non-StoryGraph provider, silently disabling autolink for those.
+    if self:readSetting(setting) then
       return true
     end
   end
