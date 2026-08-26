@@ -8,4 +8,7 @@ return {
   hardcover = {
     token = '',
   },
+  goodreads = {
+    cookie = '',
+  },
 }
