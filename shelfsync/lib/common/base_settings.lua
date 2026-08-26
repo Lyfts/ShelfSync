@@ -238,8 +238,54 @@ function BaseSettings:autolinkEnabled()
   return false
 end
 
+-- Preferred order for picking a page count when a book is linked on more
+-- than one provider: Hardcover exposes a real edition-level page count (the
+-- most precise), StoryGraph's is book-level but still first-party, and
+-- Goodreads' is scraped off a page it doesn't always successfully fetch (see
+-- the 0-vs-nil handling in pages() below) -- so it's used only as a last
+-- resort. Matches each settings class's sidecar_key (see storygraph/
+-- hardcover/goodreads settings.lua).
+local PAGE_COUNT_PROVIDERS = { "hardcover", "storygraph", "goodreads" }
+
+-- Reads a *different* provider's "pages" book setting directly off the
+-- sidecar, bypassing this instance's own sidecar_key. Doesn't fall back to
+-- the legacy flat "books" table the way readBookSettings does for this
+-- instance's own provider -- that table lives in the other provider's own
+-- settings file, unreachable from here, and only pre-sidecar-migration
+-- installs would ever need it.
+function BaseSettings:_readOtherProviderPages(filename, sidecar_key)
+  local data = self:getDocSettings(filename):readSetting(sidecar_key)
+  return data and data.pages
+end
+
+-- Normalizes a stored 0 to nil ("unknown"): every caller (page_mapper's
+-- remote_pages arithmetic, trackByPages/trackByProgress's fallback, the
+-- "Update by edition pages" menu) treats a truthy remote_pages as a real,
+-- known page count, and 0 is truthy in Lua -- so a provider that couldn't
+-- determine the real count (Goodreads' numPages scrape silently defaults to
+-- 0 on a parse miss, and its search results carry no page count at all,
+-- unlike StoryGraph/Hardcover) would otherwise corrupt page/percent mapping
+-- with divide-by-zero instead of falling back to document page count.
+--
+-- Checks every linked provider's own page count, not just this instance's,
+-- in PAGE_COUNT_PROVIDERS order, so eg. a Hardcover edition's page count is
+-- used for mapping even while running the StoryGraph or Goodreads engine.
 function BaseSettings:pages()
-  return self:readBookSetting(self:getFilePath(), "pages")
+  local filename = self:getFilePath()
+  if not filename then
+    return nil
+  end
+
+  for _, sidecar_key in ipairs(PAGE_COUNT_PROVIDERS) do
+    local pages = sidecar_key == self.sidecar_key
+      and self:readBookSetting(filename, "pages")
+      or self:_readOtherProviderPages(filename, sidecar_key)
+    if pages and pages > 0 then
+      return pages
+    end
+  end
+
+  return nil
 end
 
 function BaseSettings:trackFrequency()
