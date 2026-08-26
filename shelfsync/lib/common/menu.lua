@@ -1,6 +1,6 @@
 -- Settings shared across every provider (progress tracking, wifi-on-demand,
--- confirmation prompts, compatibility mode, note location info, verbose
--- logging, and plugin update checks), surfaced once under the top-level
+-- confirmation prompts, note location info, verbose logging, and plugin
+-- update checks), surfaced once under the top-level
 -- ShelfSync > Common settings menu instead of being configured separately
 -- per service. `settings` is the shared plugin_settings instance (see
 -- ShelfSyncApp:init/base_settings.lua's SHARED_KEYS), and `app` is the
@@ -321,23 +321,6 @@ function CommonMenu:getSubMenuItems()
       callback = function()
         local setting = self.settings:menuConfirm() == true
         self.settings:setMenuConfirm(not setting)
-      end
-    },
-    {
-      text = _("Compatibility mode"),
-      checked_func = function()
-        return self.settings:compatibilityMode()
-      end,
-      callback = function()
-        local setting = self.settings:compatibilityMode()
-        self.settings:updateSetting(SETTING.COMPATIBILITY_MODE, not setting)
-      end,
-      hold_callback = function()
-        UIManager:show(InfoMessage:new {
-          text = [[Disable fancy menu for book and edition search results.
-
-May improve compatibility for some versions of KOReader]],
-        })
       end
     },
     {

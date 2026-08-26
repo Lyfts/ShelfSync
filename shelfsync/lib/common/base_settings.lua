@@ -18,7 +18,6 @@
 -- settings like tracking mode or verbose logging are combined across
 -- providers instead of being configured twice. If omitted, an instance is
 -- its own `shared` (i.e. it owns those keys itself).
-local KoreaderVersion = require("version")
 local LuaSettings = require("luasettings")
 local DocSettings = require("docsettings")
 local logger = require("logger")
@@ -36,7 +35,6 @@ BaseSettings.__index = BaseSettings
 local SHARED_KEYS = {
   [SETTING.ENABLE_WIFI] = true,
   [SETTING.MENU_CONFIRMATION] = true,
-  [SETTING.COMPATIBILITY_MODE] = true,
   [SETTING.INCLUDE_LOCATION_IN_NOTES] = true,
   [SETTING.VERBOSE_LOGGING] = true,
   [SETTING.SYNC_BY_REMOTE_PAGES] = true,
@@ -59,12 +57,6 @@ function BaseSettings:new(path, ui, sidecar_key, shared)
   o.sidecar_key = sidecar_key
   o.subscribers = {}
   o.shared = shared or o
-
-  if KoreaderVersion:getNormalizedCurrentVersion() < 202403010000 then
-    if o:readSetting(SETTING.COMPATIBILITY_MODE) == nil then
-      o:updateSetting(SETTING.COMPATIBILITY_MODE, true)
-    end
-  end
 
   return o
 end
@@ -319,10 +311,6 @@ end
 
 function BaseSettings:changeTrackPercentageInterval(percent)
   self:updateSetting(SETTING.TRACK_PERCENTAGE, percent)
-end
-
-function BaseSettings:compatibilityMode()
-  return self:readSetting(SETTING.COMPATIBILITY_MODE) == true
 end
 
 function BaseSettings:setMenuConfirm(status)
