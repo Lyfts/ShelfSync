@@ -85,7 +85,7 @@ local HARDCOVER = require("shelfsync/lib/hardcover/constants")
 local GOODREADS = require("shelfsync/lib/goodreads/constants")
 local SETTING = require("shelfsync/lib/common/constants/settings")
 
-local MANDATORY_UPDATE_MESSAGE = _("A mandatory update is required due to StoryGraph API changes. Please update the plugin to continue.")
+local MANDATORY_UPDATE_MESSAGE = _("A mandatory update is required due to StoryGraph/Goodreads API changes. Please update the plugin to continue.")
 
 -- Per-provider dispatcher actions. Each becomes a KOReader dispatcher action
 -- named "<key>_<snake>" broadcasting event "<Prefix><suffix>", which in turn

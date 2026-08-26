@@ -19,10 +19,19 @@ A KOReader plugin to synchronize your reading progress, notes, and status to [Th
 All services share a single config file: rename `shelfsync_config.example.lua` to `shelfsync_config.lua`, then fill in whichever section(s) below you want — the `storygraph`, `hardcover`, and `goodreads` sections are all optional and independent, and leaving one blank (or the whole file missing) doesn't affect the others.
 - *Note: If you are upgrading from an older version, the plugin will automatically merge an existing `storygraph_config.lua` and/or `hardcover_config.lua` into `shelfsync_config.lua`.*
 
+> [!TIP]
+> The StoryGraph and Goodreads cookies below can be grabbed automatically instead of copying them out of devtools by hand:
+>
+> 1. Log in to StoryGraph and/or Goodreads in a browser on this PC — the script only reads cookies that already exist, it can't log in for you.
+> 2. Download `shelfsync-fetch-cookies.zip` from the [latest release](/releases/latest), extract it, and run `fetch-cookies.sh` (macOS/Linux) or `fetch-cookies.bat` (Windows). Needs Python 3; it'll use [uv](https://docs.astral.sh/uv/) if you have it to grab `browser_cookie3` automatically, otherwise `pip install browser_cookie3` first.
+> 3. It writes the cookies straight into `shelfsync_config.lua` — nothing is sent anywhere else. Use `--help` for options like `--browser firefox`.
+>
+> Hardcover isn't cookie-based, so its token still needs to be pasted in by hand (see below).
+
 ### StoryGraph authentication
 1. Log in to [thestorygraph.com](https://thestorygraph.com) in your browser.
 2. Open your browser's Developer Tools (F12) -> Application/Storage -> Cookies.
-3. Copy the value of the `_story_graph_session` cookie and paste it into the `session_cookie` field of the `storygraph` section in `shelfsync_config.lua`.
+3. Copy the value of the `_storygraph_session` cookie and paste it into the `session_cookie` field of the `storygraph` section in `shelfsync_config.lua`.
 4. Copy the value of the `remember_user_token` cookie and paste it into the `remember_user_token` field of the `storygraph` section in `shelfsync_config.lua`.
 
 ### Hardcover authentication

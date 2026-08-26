@@ -31,6 +31,14 @@ jobs:
           cp -r "$GITHUB_WORKSPACE" shelfsync.koplugin
           zip -r shelfsync.koplugin.zip shelfsync.koplugin -x '*/*.git*' '*/spec/*' '*/lua_modules/*' '*/.luarocks/*' '*/lua' '*/luarocks' '*/.tool-versions' '*/*.rockspec' '*/tools/*' '*/README.md' '*/CHANGELOG.md' '*/LICENSE'
 
+      - name: Zip cookie-fetch scripts
+        run: |
+          cd ..
+          mkdir -p shelfsync-fetch-cookies/support
+          cp "$GITHUB_WORKSPACE"/tools/fetch-cookies.sh "$GITHUB_WORKSPACE"/tools/fetch-cookies.bat shelfsync-fetch-cookies/
+          cp "$GITHUB_WORKSPACE"/tools/support/fetch_cookies.py shelfsync-fetch-cookies/support/
+          zip -r shelfsync-fetch-cookies.zip shelfsync-fetch-cookies
+
       - name: Determine changelog anchor
         id: changelog
         run: |
@@ -46,4 +54,6 @@ jobs:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           body: |
             See [CHANGELOG.md](${{ github.server_url }}/${{ github.repository }}/blob/main/CHANGELOG.md#${{ steps.changelog.outputs.anchor }}) for changes in this release.
-          files: ../shelfsync.koplugin.zip
+          files: |
+            ../shelfsync.koplugin.zip
+            ../shelfsync-fetch-cookies.zip
