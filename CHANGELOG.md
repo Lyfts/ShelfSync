@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.1.1
+- Add cross-platform scripts (`fetch-cookies.sh`/`fetch-cookies.bat`, packaged in their own release zip) that grab your StoryGraph/Goodreads session cookies straight from a locally logged-in browser and write them into `shelfsync_config.lua`, as an alternative to copying them out of devtools by hand — see the README's Installation section.
+
 ## 1.1.0
 - Add Goodreads sync support alongside StoryGraph and Hardcover, using the same session-cookie based approach as StoryGraph since Goodreads has no official API for this either — see the README for setup instructions. Goodreads has a couple of inherent limitations compared to the other two services: its website doesn't expose a way to read back your current page position, so "Jump to linked book position" isn't available and background sync always pushes progress forward instead of detecting when local progress is behind; Paused/Did Not Finish statuses can be set but aren't reliably read back either.
 - When multiple services are linked for the same book, prefer Hardcover's page count for progress tracking over StoryGraph's or Goodreads', since it's the most precise (edition-level, first-party); Goodreads' is scraped and not always available, so it's now used only as a last resort.
