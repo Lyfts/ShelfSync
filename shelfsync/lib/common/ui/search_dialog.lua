@@ -4,7 +4,6 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
-local Menu = require("ui/widget/menu")
 local SearchMenu = require("shelfsync/lib/common/ui/search_menu")
 local Size = require("ui/size")
 local UIManager = require("ui/uimanager")
@@ -25,8 +24,6 @@ local BookSearchDialog = InputContainer:extend {
   left_icon = nil,
   search_value = nil,
   close_callback = nil,
-
-  compatibility_mode = true
 }
 
 function BookSearchDialog:createListItem(book, active_item)
@@ -116,22 +113,8 @@ function BookSearchDialog:createListItem(book, active_item)
   end
   local details_str = table.concat(details_lines, "\n")
 
-  if self.compatibility_mode then
-    result.text = result.title
-    result.dim = result.highlight
-    if book.book_id then
-      if details_str ~= "" then
-        result.text = result.text .. "\n" .. details_str
-      end
-    else
-      if result.authors and result.authors ~= "" then
-        result.text = result.text .. " - " .. result.authors
-      end
-    end
-  else
-    if book.book_id and details_str ~= "" then
-      result.authors = details_str
-    end
+  if book.book_id and details_str ~= "" then
+    result.authors = details_str
   end
 
   if book.filetype then
@@ -175,9 +158,7 @@ function BookSearchDialog:init()
     left_icon = self.left_icon
     left_icon_callback = self.left_icon_callback
   end
-  local menu_class = self.compatibility_mode and Menu or SearchMenu
-
-  self.menu = menu_class:new {
+  self.menu = SearchMenu:new {
     single_line = false,
     multilines_show_more_text = true,
     title = self.title or "Select book",

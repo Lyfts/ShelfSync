@@ -69,7 +69,7 @@ Each service has its own **Settings** submenu for linking and account options:
 - **Automatically link by ISBN/Title** (Hardcover also offers matching by its own identifiers): Attempt to find matching books automatically when opening a new document.
 - **Account**: Cookies/tokens for that service.
 
-Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Compatibility mode", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Common settings**, since it applies to the whole plugin rather than one service:
+Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Common settings**, since it applies to the whole plugin rather than one service:
 - **Include location info in regular notes**: Automatically append Chapter, Page, and % info to your regular notes.
 - **Enable wifi on demand**: Briefly enable wifi for background syncs to preserve battery life.
 - **Confirm changes to book read status**: Prompt for confirmation before changing a book's status (e.g., Want to Read -> Read).

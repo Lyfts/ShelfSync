@@ -1,7 +1,6 @@
 local Settings = {
   ALWAYS_SYNC = "always_sync",
   BOOKS = "books",
-  COMPATIBILITY_MODE = "compatibility_mode",
   ENABLE_WIFI = "enable_wifi",
   LINK_BY_ISBN = "link_by_isbn",
   LINK_BY_TITLE = "link_by_title",

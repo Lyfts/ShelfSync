@@ -39,7 +39,6 @@ function DialogManager:buildSearchDialog(title, items, active_item, book_callbac
   end
 
   self.search_dialog = SearchDialog:new {
-    compatibility_mode = self.settings:compatibilityMode(),
     title = title,
     items = items,
     active_item = active_item,
@@ -83,7 +82,6 @@ function DialogManager:buildBookListDialog(title, items, icon_callback, disable_
   end
 
   self.search_dialog = SearchDialog:new {
-    compatibility_mode = self.settings:compatibilityMode(),
     title = title,
     items = items,
     left_icon_callback = icon_callback,
