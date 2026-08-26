@@ -126,9 +126,18 @@ def fetch_storygraph(browser):
     return cookies.get("_storygraph_session"), cookies.get("remember_user_token")
 
 
+# Cookies that exist in the browser's store but shouldn't be replayed:
+# jwt_token is a short-lived (~5 minute) token minted for individual
+# requests, so by the time it's read from storage and written to the
+# config it's almost always already expired -- and a stale jwt_token
+# makes goodreads.com reject the whole request instead of just ignoring
+# it, even though a real browser request works fine without it.
+GOODREADS_SKIP_COOKIES = {"jwt_token"}
+
+
 def fetch_goodreads(browser):
     cj = load_cookiejar(browser, "goodreads.com")
-    by_name = {c.name: c.value for c in cj}
+    by_name = {c.name: c.value for c in cj if c.name not in GOODREADS_SKIP_COOKIES}
     if not by_name:
         return None
     # Rebuild the same 'Cookie' request header a browser would send to
