@@ -51,12 +51,25 @@ local function get_headers(self, custom_headers)
     logger.info("Goodreads: Using session cookie (length: " .. #cookie .. ")")
   end
 
+  -- Defaults model a plain browser navigation (page load via address bar /
+  -- link click), which is what every GET in this file is. Real browsers
+  -- never send Origin on those, and omitting Referer/Sec-Fetch-*/
+  -- Upgrade-Insecure-Requests -- confirmed via direct testing -- makes
+  -- goodreads.com treat the request as suspicious and get stuck in an
+  -- infinite self-redirect loop instead of ever serving the page. Write
+  -- endpoints are real XHR calls, so they override these with their own
+  -- Origin/Sec-Fetch-Mode: cors/Sec-Fetch-Dest: empty via custom_headers.
   local headers = {
     ["User-Agent"] = "Mozilla/5.0 (X11; Linux x86_64; rv:154.0) Gecko/20100101 Firefox/154.0",
     ["Cookie"] = cookie,
     ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     ["Accept-Language"] = "en-US,en;q=0.9",
-    ["Origin"] = "https://www.goodreads.com",
+    ["Referer"] = base_url .. "/",
+    ["Sec-Fetch-Site"] = "same-origin",
+    ["Sec-Fetch-Mode"] = "navigate",
+    ["Sec-Fetch-Dest"] = "document",
+    ["Sec-Fetch-User"] = "?1",
+    ["Upgrade-Insecure-Requests"] = "1",
     ["DNT"] = "1",
   }
   if custom_headers then
@@ -100,6 +113,68 @@ local function urlencode(str)
   return str
 end
 
+local COOKIE_SKIP_ATTRS = {
+  path = true, domain = true, expires = true, ["max-age"] = true,
+  samesite = true, secure = true, httponly = true, version = true,
+}
+
+-- Goodreads' Rails session bootstrap issues a Set-Cookie for a fresh
+-- _session_id2/srb_10 pair alongside a same-URL redirect, and won't proceed
+-- past it until the client presents that exact cookie back -- confirmed via
+-- curl: replaying the redirect without also resending the newly issued
+-- cookies makes the same redirect repeat forever, always reissuing the same
+-- Set-Cookie. LuaSocket comma-folds repeated Set-Cookie headers together,
+-- and Expires values also contain commas, so this walks name=value pairs
+-- directly (skipping known non-cookie attribute keys) instead of trying to
+-- split into whole Set-Cookie statements first.
+local function merge_set_cookie(cookie_header, set_cookie_value)
+  if not set_cookie_value or set_cookie_value == "" then return cookie_header end
+
+  local jar = {}
+  local order = {}
+  for k, v in (cookie_header or ""):gmatch("([%w_%-%.]+)=([^;]*)") do
+    if not jar[k] then table.insert(order, k) end
+    jar[k] = v
+  end
+
+  for k, v in set_cookie_value:gmatch("([%w_%-%.]+)=([^;,]*)") do
+    if not COOKIE_SKIP_ATTRS[k:lower()] then
+      if not jar[k] then table.insert(order, k) end
+      jar[k] = v
+    end
+  end
+
+  local parts = {}
+  for _, k in ipairs(order) do
+    table.insert(parts, k .. "=" .. jar[k])
+  end
+  return table.concat(parts, "; ")
+end
+
+-- Every /book/show/{id} page carries a <script type="application/ld+json">
+-- block with a clean schema.org/Book object -- confirmed against a real
+-- page as a far more reliable source for title/author/cover than either the
+-- sparse OG tags (no author) or dereferencing the Next.js Apollo cache. Key
+-- order is server-templated and stable, so each field is anchored to the
+-- literal key that follows it in Goodreads' own output rather than
+-- attempting a general JSON parse.
+local function parse_ldjson_book(html)
+  local block = html:match('<script type="application/ld%+json">(.-)</script>')
+  if not block then return nil end
+
+  local title = block:match('"name":"(.-)","image"')
+  local image = block:match('"image":"(.-)","bookFormat"')
+  local author = block:match('"author":%[{"@type":"Person","name":"(.-)"')
+
+  if not title then return nil end
+
+  return {
+    title = decode_entities(title),
+    image = image,
+    author = author and decode_entities(author) or "Unknown Author",
+  }
+end
+
 -- Helper to extract authenticity token from HTML. Only the classic homepage
 -- carries this meta tag -- the book/search pages don't -- so this is always
 -- called against a homepage fetch (see refreshSession below).
@@ -128,8 +203,6 @@ function GoodreadsApi:request(url, method, data, custom_headers)
   local subprocess_fn = function()
     local maxtime = 15
     local timeout = 10
-    local sink = {}
-    socketutil:set_timeout(timeout, maxtime)
 
     local body = nil
     if data then
@@ -156,34 +229,90 @@ function GoodreadsApi:request(url, method, data, custom_headers)
       headers["Content-Length"] = tostring(#body)
     end
 
-    local request = {
-      url = url,
-      method = method or "GET",
-      headers = headers,
-      source = body and ltn12.source.string(body) or nil,
-      sink = socketutil.table_sink(sink),
-    }
+    -- Goodreads relies on a couple of real 30x redirects as part of normal
+    -- navigation, not just error handling: signing in bootstraps the Rails
+    -- session with a self-redirect back to the same URL, and a search with
+    -- exactly one match (eg. by ISBN) redirects straight to the book page
+    -- instead of returning a results list. Only GET/HEAD are auto-followed,
+    -- matching real browser behaviour for 301/302/303.
+    local current_url = url
+    local current_method = method or "GET"
+    local max_hops = 5
+    local code, _headers, response_body
 
-    if method == "POST" then
-      logger.info("Goodreads: POST URL: " .. url)
-      logger.info("Goodreads: POST Body: " .. (body or "nil"))
+    for hop = 0, max_hops do
+      local sink = {}
+      socketutil:set_timeout(timeout, maxtime)
+
+      local request = {
+        url = current_url,
+        method = current_method,
+        headers = headers,
+        source = (current_method == "POST" and body) and ltn12.source.string(body) or nil,
+        sink = socketutil.table_sink(sink),
+      }
+
+      if current_method == "POST" then
+        logger.info("Goodreads: POST URL: " .. current_url)
+        logger.info("Goodreads: POST Body: " .. (body or "nil"))
+      end
+
+      local ok
+      ok, code, _headers = http.request(request)
+      socketutil:reset_timeout()
+
+      if type(code) ~= "number" and self.settings then
+        self.settings:debugWarn("Goodreads: http.request to " .. current_url .. " failed - ok="
+          .. tostring(ok) .. " code=" .. tostring(code))
+      end
+
+      response_body = table.concat(sink)
+
+      -- Must happen before the redirect decision below: the bootstrap
+      -- redirect won't resolve unless its own newly issued cookie is
+      -- carried into the next hop's request.
+      local set_cookie = _headers and _headers["set-cookie"]
+      if set_cookie then
+        headers["Cookie"] = merge_set_cookie(headers["Cookie"], set_cookie)
+      end
+
+      local is_redirect = code == 301 or code == 302 or code == 303 or code == 307 or code == 308
+      local location = _headers and _headers["location"]
+      local waf_action = _headers and _headers["x-amzn-waf-action"]
+      logger.info("Goodreads: hop " .. hop .. " url=" .. current_url .. " code=" .. tostring(code)
+        .. " location=" .. tostring(location) .. " set_cookie=" .. tostring(set_cookie ~= nil)
+        .. " waf_action=" .. tostring(waf_action))
+      if waf_action then
+        logger.warn("Goodreads: request blocked by AWS WAF bot-challenge (not a code bug -- "
+          .. "the saved session cookie's challenge token is stale/rejected; needs a fresh "
+          .. "browser-solved cookie capture, retrying won't help)")
+      end
+
+      if is_redirect and location and hop < max_hops
+          and (current_method == "GET" or current_method == "HEAD") then
+        if location:match("^https?://") then
+          current_url = location
+        elseif location:sub(1, 1) == "/" then
+          local scheme_host = current_url:match("^(https?://[^/]+)")
+          current_url = (scheme_host or base_url) .. location
+        else
+          current_url = location
+        end
+      else
+        break
+      end
     end
 
-    local ok, code, _headers, _status = http.request(request)
-    socketutil:reset_timeout()
-
-    if type(code) ~= "number" and self.settings then
-      self.settings:debugWarn("Goodreads: http.request to " .. url .. " failed - ok="
-        .. tostring(ok) .. " code=" .. tostring(code))
-    end
-
-    local response_body = table.concat(sink)
     local header_str = ""
     if _headers then
       for k, v in pairs(_headers) do
         header_str = header_str .. k .. "=" .. tostring(v) .. "\n"
       end
     end
+    -- Smuggled through as a pseudo-header (rather than changing the "|"
+    -- delimited return format) so callers that care which URL a request
+    -- actually landed on after redirects can read headers["x-final-url"].
+    header_str = header_str .. "x-final-url=" .. current_url .. "\n"
     return (code or "error") .. "|" .. header_str .. "|" .. response_body
   end
 
@@ -260,11 +389,37 @@ function GoodreadsApi:findBooks(title, author, _userId)
   local query = title
   if author and author ~= "" then query = query .. " " .. author end
   local search_url = base_url .. "/search?q=" .. urlencode(query)
-  local code, html = self:request(search_url, "GET")
+  local code, html, resp_headers = self:request(search_url, "GET")
 
   if code ~= 200 or not html then
+    if resp_headers and resp_headers["x-amzn-waf-action"] then
+      return {}, "Search blocked by Goodreads bot-challenge (WAF) -- try a fresh session cookie"
+    end
     logger.warn("Goodreads search failed. Code:", code)
     return {}, "Search failed with code " .. (code or "unknown")
+  end
+
+  -- An exact single match (eg. an ISBN search) doesn't return a
+  -- search-results page at all -- Goodreads 302s straight to the book page,
+  -- which request() now follows transparently. Detect landing on
+  -- /book/show/{id} here and build a single result from that page's JSON-LD
+  -- data instead of running the search-results card parser below against
+  -- HTML that was never a results list to begin with.
+  local final_url = resp_headers and resp_headers["x-final-url"]
+  local redirected_book_id = final_url and final_url:match("/book/show/(%d+)")
+  if redirected_book_id then
+    local book_data = parse_ldjson_book(html)
+    if not book_data then return {} end
+    return {
+      {
+        book_id = redirected_book_id,
+        title = book_data.title,
+        contributions = { { author = { name = book_data.author } } },
+        cached_image = { url = book_data.image },
+        book_series = {},
+        description = "",
+      },
+    }
   end
 
   local results = {}
@@ -412,6 +567,10 @@ function GoodreadsApi:updateUserBook(book_id, status_id)
     ["Accept"] = "text/javascript, text/html, application/xml, text/xml, */*",
     ["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8",
     ["Referer"] = base_url .. "/",
+    ["Origin"] = base_url,
+    ["Sec-Fetch-Site"] = "same-origin",
+    ["Sec-Fetch-Mode"] = "cors",
+    ["Sec-Fetch-Dest"] = "empty",
   }
 
   local code, resp = self:request(base_url .. "/shelf/add_to_shelf", "POST", {
@@ -441,6 +600,10 @@ function GoodreadsApi:updatePage(book_id, page, note)
     ["Accept"] = "*/*",
     ["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8",
     ["Referer"] = base_url .. "/",
+    ["Origin"] = base_url,
+    ["Sec-Fetch-Site"] = "same-origin",
+    ["Sec-Fetch-Mode"] = "cors",
+    ["Sec-Fetch-Dest"] = "empty",
   }
 
   local code, resp = self:request(base_url .. "/user_status.json", "POST", {
