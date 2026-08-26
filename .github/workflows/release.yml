@@ -31,10 +31,19 @@ jobs:
           cp -r "$GITHUB_WORKSPACE" shelfsync.koplugin
           zip -r shelfsync.koplugin.zip shelfsync.koplugin -x '*/*.git*' '*/spec/*' '*/lua_modules/*' '*/.luarocks/*' '*/lua' '*/luarocks' '*/.tool-versions' '*/*.rockspec' '*/tools/*' '*/README.md' '*/CHANGELOG.md' '*/LICENSE'
 
+      - name: Determine changelog anchor
+        id: changelog
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          # CHANGELOG.md headings are plain version numbers (e.g. "## 1.0.3"),
+          # and GitHub's heading-anchor slugifier drops punctuation like dots,
+          # so "1.0.3" -> "#103". Strip a leading "v" too, for tags like v1.0.3.
+          echo "anchor=$(echo "$TAG" | sed -E 's/^v//; s/[^A-Za-z0-9]//g')" >> "$GITHUB_OUTPUT"
+
       - name: Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           body: |
-            See [CHANGELOG.md](${{ github.server_url }}/${{ github.repository }}/blob/main/CHANGELOG.md) for changes in this release.
+            See [CHANGELOG.md](${{ github.server_url }}/${{ github.repository }}/blob/main/CHANGELOG.md#${{ steps.changelog.outputs.anchor }}) for changes in this release.
           files: ../shelfsync.koplugin.zip
