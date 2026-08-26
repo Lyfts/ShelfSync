@@ -1,19 +1,22 @@
 # ShelfSync for KOReader
 
-A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com) and/or [Hardcover](https://hardcover.app). Both services can be linked and tracked independently, side by side, from the same install.
+A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com), [Hardcover](https://hardcover.app), and/or [Goodreads](https://goodreads.com). All services can be linked and tracked independently, side by side, from the same install.
 
 > [!NOTE]
 > This project combines the features of [storygraph.koplugin](https://github.com/burneracc0112/storygraph.koplugin) and [hardcoverapp.koplugin](https://github.com/Billiam/hardcoverapp.koplugin) into a single plugin, largely vibe coded, with changes made mostly for personal use. It isn't intended to be upstreamed, but may still be useful to others.
 
 > [!CAUTION]
-> **Disclaimer**: StoryGraph sync uses an unofficial API based on session cookies. Because of this, it is inherently brittle and may break if StoryGraph updates their website or cookie structure. If sync stops working, please ensure you are using the latest version of the plugin and try re-fetching your session tokens. Hardcover sync uses Hardcover's official API and does not have this issue.
+> **Disclaimer**: StoryGraph and Goodreads sync both use unofficial APIs based on session cookies. Because of this, they are inherently brittle and may break if either service updates their website or cookie structure. If sync stops working, please ensure you are using the latest version of the plugin and try re-fetching your session cookie(s). Hardcover sync uses Hardcover's official API and does not have this issue.
+
+> [!NOTE]
+> **Goodreads limitations**: Goodreads' website doesn't expose a way to read back your current page position, only your shelf (status), so "Jump to linked book position" isn't available and background sync can't detect when your local progress is behind what's on Goodreads — it always pushes forward. Paused/Did Not Finish statuses can be set but aren't reliably read back either. Posting reviews/ratings isn't supported yet.
 
 ## Installation
 
 1. Download the latest release and extract it to your KOReader `plugins/` folder.
-2. Set up authentication for whichever service(s) you want to use — both are optional and independent.
+2. Set up authentication for whichever service(s) you want to use — all are optional and independent.
 
-Both services share a single config file: rename `shelfsync_config.example.lua` to `shelfsync_config.lua`, then fill in whichever section(s) below you want — the `storygraph` and `hardcover` sections are both optional and independent, and leaving one blank (or the whole file missing) doesn't affect the other.
+All services share a single config file: rename `shelfsync_config.example.lua` to `shelfsync_config.lua`, then fill in whichever section(s) below you want — the `storygraph`, `hardcover`, and `goodreads` sections are all optional and independent, and leaving one blank (or the whole file missing) doesn't affect the others.
 - *Note: If you are upgrading from an older version, the plugin will automatically merge an existing `storygraph_config.lua` and/or `hardcover_config.lua` into `shelfsync_config.lua`.*
 
 ### StoryGraph authentication
@@ -27,9 +30,17 @@ Both services share a single config file: rename `shelfsync_config.example.lua` 
 2. Paste it into the `token` field of the `hardcover` section in `shelfsync_config.lua`.
    - Alternatively, you can paste the token directly into the **Hardcover** menu's **Settings > Account (API Token)** field from within KOReader instead of editing the config file.
 
+### Goodreads authentication
+Goodreads accounts are linked through Amazon, so a valid session is a bundle of cookies rather than one or two named values. Rather than copying each one individually from the cookie storage view, grab the browser's pre-assembled `Cookie` request header instead — it's the exact same cookies, already joined into the one string this plugin needs.
+1. Log in to [goodreads.com](https://goodreads.com) in your browser.
+2. Open Developer Tools (F12) -> Network tab, then reload the page.
+3. Click any request to `www.goodreads.com`, open its **Headers** panel, and find the `Cookie` row under **Request Headers** (not Storage/Application -> Cookies, and not `Set-Cookie` under Response Headers — this is a specific request's outgoing header). If it isn't shown, look for a "raw headers" toggle.
+4. Right-click it -> Copy Value, and paste the whole thing into the `cookie` field of the `goodreads` section in `shelfsync_config.lua`.
+   - Alternatively, you can paste it directly into the **Goodreads** menu's **Settings > Account (Cookie)** field from within KOReader instead of editing the config file.
+
 ## Usage
 
-Everything lives under a single **ShelfSync** menu in the **Bookmark** top menu when a document is active, with **StoryGraph** and **Hardcover** as sub-menus. They work the same way and can be used together or independently.
+Everything lives under a single **ShelfSync** menu in the **Bookmark** top menu when a document is active, with **StoryGraph**, **Hardcover**, and **Goodreads** as sub-menus. They work the same way and can be used together or independently.
 
 ### Updating Progress & Notes
 Each menu provides a unified **"Update progress: [XX]%"** item. This opens a powerful dialog where you can:
@@ -40,8 +51,8 @@ Each menu provides a unified **"Update progress: [XX]%"** item. This opens a pow
 ### Linking a Book
 Before updates can be sent, a document needs to be linked to a book on each service you want to sync to.
 - Use **"Link book"** to search by metadata or ISBN.
-- Use **"Change edition"** to switch to a different edition (StoryGraph) or select a specific edition (Hardcover).
-- Audio editions are filtered out of the search results.
+- Use **"Change edition"** to switch to a different edition (StoryGraph) or select a specific edition (Hardcover). Goodreads has no edition-switching concept, so it has no "Change edition" item — linking picks whichever edition its search returns.
+- Audio editions are filtered out of the search results (StoryGraph, Hardcover).
 - If a book is not currently tracked, the plugin will set its status to Currently Reading.
 - On StoryGraph, if another edition of the book is set as 'Currently Reading' or 'Want to Read' then the plugin will automatically link to that edition, but not change the status. You can use "Change edition" to link to a different edition if needed.
 
@@ -58,14 +69,14 @@ Each service has its own **Settings** submenu for linking and account options:
 - **Automatically link by ISBN/Title** (Hardcover also offers matching by its own identifiers): Attempt to find matching books automatically when opening a new document.
 - **Account**: Cookies/tokens for that service.
 
-Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Compatibility mode", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between both services and lives under **ShelfSync > Common settings**, since it applies to the whole plugin rather than one service:
+Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Compatibility mode", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Common settings**, since it applies to the whole plugin rather than one service:
 - **Include location info in regular notes**: Automatically append Chapter, Page, and % info to your regular notes.
 - **Enable wifi on demand**: Briefly enable wifi for background syncs to preserve battery life.
 - **Confirm changes to book read status**: Prompt for confirmation before changing a book's status (e.g., Want to Read -> Read).
 
 ## Versioning & Mandatory Updates
 
-To prevent data corruption and ensure compatibility with StoryGraph's unofficial API, the plugin includes a remote versioning system. This applies to the plugin as a whole (both StoryGraph and Hardcover sync).
+To prevent data corruption and ensure compatibility with StoryGraph's and Goodreads' unofficial APIs, the plugin includes a remote versioning system. This applies to the plugin as a whole (StoryGraph, Hardcover, and Goodreads sync).
 
 - **Automatic Checks**: The plugin periodically checks for mandatory updates via GitHub. If the StoryGraph API changes in a way that breaks older versions, the plugin will automatically disable sync to prevent errors.
 - **Blocking**: When a mandatory update is required, the plugin menus will be greyed out.
