@@ -1,8 +1,18 @@
 # Changelog
 
+## 1.1.2
+##### Plugin
+- Fixed Goodreads automatic and manual book linking silently finding no matches while logged in.
+- Fixed Goodreads syncing the wrong reading percentage when tracking by percentage rather than edition pages. Goodreads now sends the percentage directly instead of converting it to a page number first.
+- Fixed the reader freezing with no way to cancel while manually linking a book (or re-searching from within that dialog), for all three services.
+
+##### Scripts
+- Fixed the cookie-fetching script crashing (and writing nothing) when adding a service to a `shelfsync_config.lua` that didn't already have a section for it, e.g. filling in Goodreads cookies into a config that so far only had StoryGraph set up.
+- The cookie-fetching script's `--browser auto` mode now keeps whichever browser's copy of a cookie has the furthest-out expiry when the same cookie is found in more than one browser, instead of an arbitrary one.
+
 ## 1.1.1
+##### Scripts
 - Add cross-platform scripts (`fetch-cookies.sh`/`fetch-cookies.bat`, packaged in their own release zip) that grab your StoryGraph/Goodreads session cookies straight from a locally logged-in browser and write them into `shelfsync_config.lua`, as an alternative to copying them out of devtools by hand — see the README's Installation section.
-- Fixed the cookie-fetching script grabbing Goodreads' `jwt_token` cookie along with the session cookies; it's a short-lived (~5 minute) per-request token, so by the time it reached `shelfsync_config.lua` it was almost always expired, which made goodreads.com reject the whole request instead of just ignoring the stale token.
 
 ## 1.1.0
 - Add Goodreads sync support alongside StoryGraph and Hardcover, using the same session-cookie based approach as StoryGraph since Goodreads has no official API for this either — see the README for setup instructions. Goodreads has a couple of inherent limitations compared to the other two services: its website doesn't expose a way to read back your current page position, so "Jump to linked book position" isn't available and background sync always pushes progress forward instead of detecting when local progress is behind; Paused/Did Not Finish statuses can be set but aren't reliably read back either.
