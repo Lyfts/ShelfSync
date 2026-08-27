@@ -276,8 +276,17 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         headers["Cookie"] = merge_set_cookie(headers["Cookie"], set_cookie)
       end
 
-      local is_redirect = code == 301 or code == 302 or code == 303 or code == 307 or code == 308
       local location = _headers and _headers["location"]
+      -- Confirmed via live testing: an anonymous request gets a real 302 for
+      -- an exact single-result match (eg. by ISBN), but an authenticated
+      -- session -- what this plugin always sends -- gets a 200 with the
+      -- same Location header instead, seemingly meant for Goodreads' own
+      -- client-side router rather than a raw HTTP client. Treat that the
+      -- same as a real redirect so it's still followed to the actual book
+      -- page, instead of silently treating whatever body came with that 200
+      -- (never a results list) as one.
+      local is_redirect = code == 301 or code == 302 or code == 303 or code == 307 or code == 308
+        or (code == 200 and location and location ~= current_url)
       local waf_action = _headers and _headers["x-amzn-waf-action"]
       logger.info("Goodreads: hop " .. hop .. " url=" .. current_url .. " code=" .. tostring(code)
         .. " location=" .. tostring(location) .. " set_cookie=" .. tostring(set_cookie ~= nil)
