@@ -276,6 +276,87 @@ Goodreads accounts are linked through Amazon, so this cookie is a large bundle r
         }
         UIManager:show(dialog)
       end,
+    },
+    {
+      text = _("Cookie Auto-Refresh URL"),
+      keep_menu_open = true,
+      text_func = function()
+        local set = self.settings:readSetting(SETTING.COOKIE_REFRESH_URL)
+        return _("Cookie Auto-Refresh URL") .. (set and set ~= "" and _(" (set)") or _(" (optional)"))
+      end,
+      hold_callback = function()
+        UIManager:show(InfoMessage:new {
+          text = _([[Optional. If the Goodreads Cookie above goes stale, syncing normally just fails until you repaste a fresh one by hand.
+
+Instead, you can run a small local helper (see the separate goodreads-cookie-refresher repo) that keeps a real logged-in browser alive on your home network and hands out fresh cookies automatically. Point this at its base address, e.g. http://192.168.1.50:5080 -- no path needed, just leave blank to disable.]]),
+        })
+      end,
+      callback = function()
+        local InputDialog = require("ui/widget/inputdialog")
+        local dialog
+        dialog = InputDialog:new {
+          title = _("Cookie Auto-Refresh URL"),
+          input = self.settings:readSetting(SETTING.COOKIE_REFRESH_URL) or "",
+          input_hint = "http://192.168.1.50:5080",
+          buttons = {
+            {
+              {
+                text = _("Cancel"),
+                callback = function()
+                  UIManager:close(dialog)
+                end,
+              },
+              {
+                text = _("Save"),
+                callback = function()
+                  self.settings:updateSetting(SETTING.COOKIE_REFRESH_URL, dialog:getInputText())
+                  UIManager:close(dialog)
+                end,
+              },
+            },
+          },
+        }
+        UIManager:show(dialog)
+      end,
+    },
+    {
+      text = _("Cookie Auto-Refresh Token"),
+      keep_menu_open = true,
+      text_func = function()
+        local set = self.settings:readSetting(SETTING.COOKIE_REFRESH_TOKEN)
+        return _("Cookie Auto-Refresh Token") .. (set and set ~= "" and _(" (set)") or _(" (optional)"))
+      end,
+      hold_callback = function()
+        UIManager:show(InfoMessage:new {
+          text = _("Only needed if the refresher's REFRESHER_AUTH_TOKEN is set in its .env -- must match exactly. Leave blank if you didn't set one there."),
+        })
+      end,
+      callback = function()
+        local InputDialog = require("ui/widget/inputdialog")
+        local dialog
+        dialog = InputDialog:new {
+          title = _("Cookie Auto-Refresh Token"),
+          input = self.settings:readSetting(SETTING.COOKIE_REFRESH_TOKEN) or "",
+          buttons = {
+            {
+              {
+                text = _("Cancel"),
+                callback = function()
+                  UIManager:close(dialog)
+                end,
+              },
+              {
+                text = _("Save"),
+                callback = function()
+                  self.settings:updateSetting(SETTING.COOKIE_REFRESH_TOKEN, dialog:getInputText())
+                  UIManager:close(dialog)
+                end,
+              },
+            },
+          },
+        }
+        UIManager:show(dialog)
+      end,
     }
   }
 end

@@ -40,12 +40,18 @@ All services share a single config file: rename `shelfsync_config.example.lua` t
    - Alternatively, you can paste the token directly into the **Hardcover** menu's **Settings > Account (API Token)** field from within KOReader instead of editing the config file.
 
 ### Goodreads authentication
-Goodreads accounts are linked through Amazon, so a valid session is a bundle of cookies rather than one or two named values. Rather than copying each one individually from the cookie storage view, grab the browser's pre-assembled `Cookie` request header instead — it's the exact same cookies, already joined into the one string this plugin needs.
+Goodreads accounts are linked through Amazon, so a valid session is a bundle of cookies rather than one or two named values, and it can go stale periodically from an AWS WAF bot-challenge on Goodreads' side.
+
+[`goodreads-cookie-refresher`](https://github.com/Lyfts/goodreads-cookie-refresher) is an optional self-hosted Docker setup that handles both of those for you: it keeps a real logged-in browser session alive on your network and hands the plugin fresh cookies automatically, covering initial setup (leave the cookie field below blank) as well as every future refresh, so you never have to do the manual steps below at all.
+
+Without that setup, grab a cookie by hand instead. Rather than copying each one individually from the cookie storage view, grab the browser's pre-assembled `Cookie` request header instead — it's the exact same cookies, already joined into the one string this plugin needs.
 1. Log in to [goodreads.com](https://goodreads.com) in your browser.
 2. Open Developer Tools (F12) -> Network tab, then reload the page.
 3. Click any request to `www.goodreads.com`, open its **Headers** panel, and find the `Cookie` row under **Request Headers** (not Storage/Application -> Cookies, and not `Set-Cookie` under Response Headers — this is a specific request's outgoing header). If it isn't shown, look for a "raw headers" toggle.
 4. Right-click it -> Copy Value, and paste the whole thing into the `cookie` field of the `goodreads` section in `shelfsync_config.lua`.
    - Alternatively, you can paste it directly into the **Goodreads** menu's **Settings > Account (Cookie)** field from within KOReader instead of editing the config file.
+
+This cookie will go stale again periodically unless you set up the Docker refresher above — when that happens, syncing pauses until you repeat the steps above.
 
 ## Usage
 
