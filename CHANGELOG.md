@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.0
+##### Plugin
+- Add optional cookie auto-refresh support for Goodreads: point the new "Cookie Auto-Refresh URL" setting at a running `goodreads-cookie-refresher` Docker container (a separate, optional self-hosted setup — see the README's Goodreads authentication section) to have it supply a session cookie automatically, both for initial setup and whenever the saved cookie goes stale from Goodreads' AWS WAF bot-challenge, instead of syncing pausing until you paste in a fresh cookie by hand.
+- Fixed the reader sometimes freezing with no way to cancel — this time when automatically linking a book on opening it, auto-marking a book as Currently Reading, or picking a result while manually linking a book — if wifi had to reconnect first.
+
 ## 1.1.2
 ##### Plugin
 - Fixed Goodreads automatic and manual book linking silently finding no matches while logged in.
