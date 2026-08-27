@@ -113,6 +113,55 @@ local function urlencode(str)
   return str
 end
 
+-- Talks to the local cookie-refresher (see the separate
+-- goodreads-cookie-refresher repo) -- shared by the two escape hatches
+-- below, which only differ in HTTP method and endpoint. Best-effort
+-- throughout: any failure here (not configured, refresher unreachable,
+-- still logged out) just falls through to the caller's existing fallback.
+local function fetch_from_refresher(url, method, auth_token, timeout)
+  local sink = {}
+  socketutil:set_timeout(timeout, timeout)
+  local ok, code = http.request {
+    url = url,
+    method = method,
+    headers = (auth_token and auth_token ~= "") and { ["X-Auth-Token"] = auth_token } or nil,
+    sink = socketutil.table_sink(sink),
+  }
+  socketutil:reset_timeout()
+  if ok and code == 200 then
+    local cookie = table.concat(sink):gsub("^%s+", ""):gsub("%s+$", "")
+    if cookie ~= "" then return cookie, code end
+  end
+  return nil, code
+end
+
+-- Turns a cookie-refresher failure's HTTP status into an actionable log
+-- hint -- 401 (auth token mismatch) and "no cookie captured yet" used to
+-- both just say "still logged out?", which sent past debugging in circles
+-- cross-referencing docker logs to tell them apart.
+local function refresher_failure_hint(code)
+  if code == 401 then
+    return "check Cookie Auto-Refresh Token matches REFRESHER_AUTH_TOKEN in the refresher's .env"
+  end
+  return "still logged out? see its noVNC view"
+end
+
+-- Escape hatch for the WAF-challenge dead end below: hits the refresher's
+-- /refresh endpoint to force a freshly browser-solved cookie.
+local function fetch_refreshed_cookie(refresh_url, auth_token, timeout)
+  return fetch_from_refresher(refresh_url, "POST", auth_token, timeout)
+end
+
+-- Escape hatch for a never-configured cookie (fresh install, or
+-- shelfsync_config.lua just never filled in): hits the refresher's /cookie
+-- endpoint, which returns whatever it already has cached from a prior
+-- noVNC login instead of forcing a new browser round-trip -- cheaper than
+-- /refresh for something that would otherwise run on every request until a
+-- cookie is actually found.
+local function fetch_cached_cookie(cookie_url, auth_token, timeout)
+  return fetch_from_refresher(cookie_url, "GET", auth_token, timeout)
+end
+
 local COOKIE_SKIP_ATTRS = {
   path = true, domain = true, expires = true, ["max-age"] = true,
   samesite = true, secure = true, httponly = true, version = true,
@@ -218,6 +267,30 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     end
 
     local headers = get_headers(self, custom_headers)
+    local refreshed_cookie -- surfaced to the parent via a pseudo-header below
+
+    -- No cookie configured at all yet (fresh install, or shelfsync_config.lua
+    -- never filled in) -- try the local cookie-refresher's cached cookie
+    -- before ever making a request, instead of failing until the user
+    -- manually pastes one in.
+    if not headers["Cookie"] or headers["Cookie"] == "" then
+      local refresh_base = self.settings and self.settings:readSetting(SETTING.COOKIE_REFRESH_URL)
+      if refresh_base and refresh_base ~= "" then
+        local refresh_token = self.settings and self.settings:readSetting(SETTING.COOKIE_REFRESH_TOKEN)
+        local cookie_url = refresh_base:gsub("/+$", "") .. "/cookie"
+        logger.info("Goodreads: no session cookie configured, trying local cookie-refresher at " .. cookie_url)
+        local cookie, refresher_code = fetch_cached_cookie(cookie_url, refresh_token, timeout)
+        if cookie then
+          headers["Cookie"] = cookie
+          refreshed_cookie = cookie
+          logger.info("Goodreads: bootstrapped session cookie from local cookie-refresher")
+        else
+          logger.warn("Goodreads: cookie-refresher at " .. cookie_url .. " didn't return a cookie (HTTP "
+            .. tostring(refresher_code) .. " -- " .. refresher_failure_hint(refresher_code) .. ")")
+        end
+      end
+    end
+
     if headers["Cookie"] then
       logger.info("Goodreads: Final Cookie length: " .. #headers["Cookie"])
     end
@@ -239,6 +312,7 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     local current_method = method or "GET"
     local max_hops = 5
     local code, _headers, response_body
+    local waf_retried = false
 
     for hop = 0, max_hops do
       local sink = {}
@@ -291,10 +365,32 @@ function GoodreadsApi:request(url, method, data, custom_headers)
       logger.info("Goodreads: hop " .. hop .. " url=" .. current_url .. " code=" .. tostring(code)
         .. " location=" .. tostring(location) .. " set_cookie=" .. tostring(set_cookie ~= nil)
         .. " waf_action=" .. tostring(waf_action))
+      local waf_retry_now = false
       if waf_action then
-        logger.warn("Goodreads: request blocked by AWS WAF bot-challenge (not a code bug -- "
-          .. "the saved session cookie's challenge token is stale/rejected; needs a fresh "
-          .. "browser-solved cookie capture, retrying won't help)")
+        -- Stored setting is just the refresher's base URL (e.g.
+        -- http://192.168.1.50:5080) -- the /refresh path is always the
+        -- same, so there's no reason to make the user type it.
+        local refresh_base = self.settings and self.settings:readSetting(SETTING.COOKIE_REFRESH_URL)
+        local refresh_url = refresh_base and refresh_base ~= "" and (refresh_base:gsub("/+$", "") .. "/refresh")
+        local refresh_token = self.settings and self.settings:readSetting(SETTING.COOKIE_REFRESH_TOKEN)
+        if refresh_url and not waf_retried then
+          waf_retried = true
+          logger.info("Goodreads: WAF challenge hit, trying local cookie-refresher at " .. refresh_url)
+          local fresh_cookie, refresher_code = fetch_refreshed_cookie(refresh_url, refresh_token, timeout)
+          if fresh_cookie and fresh_cookie ~= headers["Cookie"] then
+            headers["Cookie"] = fresh_cookie
+            refreshed_cookie = fresh_cookie
+            waf_retry_now = true
+            logger.info("Goodreads: got a refreshed cookie, retrying")
+          else
+            logger.warn("Goodreads: cookie-refresher at " .. refresh_url .. " didn't return a usable cookie (HTTP "
+              .. tostring(refresher_code) .. " -- " .. refresher_failure_hint(refresher_code) .. ")")
+          end
+        else
+          logger.warn("Goodreads: request blocked by AWS WAF bot-challenge (not a code bug -- "
+            .. "the saved session cookie's challenge token is stale/rejected; needs a fresh "
+            .. "browser-solved cookie capture, retrying won't help)")
+        end
       end
 
       if is_redirect and location and hop < max_hops
@@ -307,6 +403,8 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         else
           current_url = location
         end
+      elseif waf_retry_now and hop < max_hops then
+        -- current_url/current_method unchanged: same request, fresh cookie
       else
         break
       end
@@ -318,11 +416,22 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         header_str = header_str .. k .. "=" .. tostring(v) .. "\n"
       end
     end
-    -- Smuggled through as a pseudo-header (rather than changing the "|"
-    -- delimited return format) so callers that care which URL a request
-    -- actually landed on after redirects can read headers["x-final-url"].
+    -- Smuggled through as a pseudo-header so callers that care which URL a
+    -- request actually landed on after redirects can read
+    -- headers["x-final-url"].
     header_str = header_str .. "x-final-url=" .. current_url .. "\n"
-    return (code or "error") .. "|" .. header_str .. "|" .. response_body
+    -- Same trick: a cookie pulled from the local refresher above was only
+    -- ever applied to this subprocess's own copy of `headers` -- surface it
+    -- so the parent (which owns self.settings) can persist it for next time.
+    if refreshed_cookie then
+      header_str = header_str .. "x-refreshed-cookie=" .. refreshed_cookie .. "\n"
+    end
+    -- header_str's length is prefixed (rather than relying on a "|"
+    -- delimiter to find where it ends) because it can itself contain "|" --
+    -- e.g. the refreshed-cookie value above, which per RFC 6265 is legally
+    -- allowed to contain one, and real Amazon-linked session tokens do.
+    -- Scanning for the next "|" would silently truncate it mid-cookie.
+    return (code or "error") .. "|" .. #header_str .. "|" .. header_str .. response_body
   end
 
   -- One retry recovers most transient subprocess-fork failures, mirroring
@@ -338,7 +447,13 @@ function GoodreadsApi:request(url, method, data, custom_headers)
   end
 
   if completed and content then
-    local code, header_str, response = string.match(content, "^([^|]*)|([^|]*)|(.*)")
+    local code, header_len, rest = string.match(content, "^([^|]*)|(%d+)|(.*)")
+    local header_str, response
+    if header_len then
+      header_len = tonumber(header_len)
+      header_str = rest:sub(1, header_len)
+      response = rest:sub(header_len + 1)
+    end
     local headers = {}
     if header_str then
       for line in header_str:gmatch("[^\r\n]+") do
@@ -352,6 +467,15 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     if code_num == 401 or redirect:match("signin") or redirect:match("sign_in") then
       self:notifyAuthFailure()
       return code_num, response, headers, "Unauthorized"
+    end
+
+    -- self.settings only exists here in the parent, not inside the forked
+    -- subprocess above -- so a cookie the local refresher handed us mid-hop
+    -- gets persisted here instead, mirroring StoryGraph's own refreshed-
+    -- session save.
+    if headers["x-refreshed-cookie"] and self.settings then
+      logger.info("Goodreads: saving refreshed cookie from local cookie-refresher")
+      self.settings:updateSetting(SETTING.SESSION_COOKIE, headers["x-refreshed-cookie"])
     end
 
     return code_num, response, headers

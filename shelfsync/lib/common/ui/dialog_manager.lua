@@ -32,7 +32,14 @@ end
 function DialogManager:buildSearchDialog(title, items, active_item, book_callback, search_callback, search)
   local callback = function(book)
     self.search_dialog:onClose()
-    book_callback(book)
+    -- Tapping a result fires this straight from the menu widget's own event
+    -- dispatch, not from inside showLinkBookDialog's Trapper:wrap() (that
+    -- coroutine already returned once the dialog was shown) -- so
+    -- book_callback's linkBook() network call needs its own wrap here, same
+    -- reasoning as updateSearchResults above.
+    Trapper:wrap(function()
+      book_callback(book)
+    end)
   end
 
   if self.search_dialog then

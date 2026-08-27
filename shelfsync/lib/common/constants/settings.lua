@@ -16,6 +16,8 @@ local Settings = {
   },
   USER_ID = "user_id",
   SESSION_COOKIE = "session_cookie",
+  COOKIE_REFRESH_URL = "cookie_refresh_url",
+  COOKIE_REFRESH_TOKEN = "cookie_refresh_token",
   REMEMBER_TOKEN = "remember_token",
   API_TOKEN = "api_token",
   INCLUDE_LOCATION_IN_NOTES = "include_location_in_notes",
