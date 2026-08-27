@@ -2,9 +2,6 @@
 
 A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com), [Hardcover](https://hardcover.app), and/or [Goodreads](https://goodreads.com). All services can be linked and tracked independently, side by side, from the same install.
 
-> [!NOTE]
-> This project combines the features of [storygraph.koplugin](https://github.com/burneracc0112/storygraph.koplugin) and [hardcoverapp.koplugin](https://github.com/Billiam/hardcoverapp.koplugin) into a single plugin, largely vibe coded, with changes made mostly for personal use. It isn't intended to be upstreamed, but may still be useful to others.
-
 > [!CAUTION]
 > **Disclaimer**: StoryGraph and Goodreads sync both use unofficial APIs based on session cookies. Because of this, they are inherently brittle and may break if either service updates their website or cookie structure. If sync stops working, please ensure you are using the latest version of the plugin and try re-fetching your session cookie(s). Hardcover sync uses Hardcover's official API and does not have this issue.
 
@@ -81,7 +78,7 @@ When enabled (per service), the plugin will periodically sync your progress:
 ## Settings
 
 Each service has its own **Settings** submenu for linking and account options:
-- **Automatically link by ISBN/Title** (Hardcover also offers matching by its own identifiers): Attempt to find matching books automatically when opening a new document. Enabled by default; disable here if you'd rather link books manually.
+- **Automatically link by ISBN/Title**: Attempt to find matching books automatically when opening a new document. Enabled by default; disable here if you'd rather link books manually.
 - **Account**: Cookies/tokens for that service.
 
 Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Common settings**, since it applies to the whole plugin rather than one service:
