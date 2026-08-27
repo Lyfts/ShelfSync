@@ -6,6 +6,7 @@ storygraph_config.lua
 /lua_modules
 /.luarocks
 .DS_STORE
+__pycache__/
 graphify-out/
 .serena
 /build

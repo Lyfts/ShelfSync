@@ -95,16 +95,28 @@ def load_cookiejar(browser, domain):
         # path lookup returns None instead of raising that, which blows up
         # the whole scan with a bare TypeError. Try each browser ourselves
         # and just skip whichever ones don't work.
-        cj = http.cookiejar.CookieJar()
+        #
+        # If the same cookie exists in more than one browser, keep whichever
+        # copy has the furthest-out expiry rather than whichever browser
+        # happens to be scanned last -- cookies don't carry a creation time,
+        # but a later expiry is the best available signal that it was issued
+        # by a more recent login.
+        best = {}
         for name in BROWSERS[1:]:
             fn = get_browser_fn(browser_cookie3, name)
             if fn is None:
                 continue
             try:
                 for cookie in fn(domain_name=domain):
-                    cj.set_cookie(cookie)
+                    key = (cookie.domain, cookie.path, cookie.name)
+                    current = best.get(key)
+                    if current is None or (cookie.expires or -1) >= (current.expires or -1):
+                        best[key] = cookie
             except Exception:
                 continue
+        cj = http.cookiejar.CookieJar()
+        for cookie in best.values():
+            cj.set_cookie(cookie)
         return cj
 
     fn = get_browser_fn(browser_cookie3, browser)
@@ -145,12 +157,30 @@ def fetch_goodreads(browser):
     return "; ".join(f"{name}={value}" for name, value in by_name.items())
 
 
+def insert_section(text, section, field, escaped_value):
+    # The section doesn't exist yet -- e.g. an older, hand-trimmed config
+    # that never filled in this service. Add a fresh section just inside
+    # the top-level table's closing brace instead of failing outright.
+    depth = 0
+    i = text.index("{")
+    while i < len(text):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                insertion = f"  {section} = {{\n    {field} = '{escaped_value}',\n  }},\n"
+                return text[:i] + insertion + text[i:]
+        i += 1
+    raise ValueError("couldn't find the end of the config file's top-level table")
+
+
 def set_field(text, section, field, value):
     escaped = value.replace("\\", "\\\\").replace("'", "\\'")
     section_re = re.compile(r"(" + re.escape(section) + r"\s*=\s*\{)(.*?)(\n[ \t]*\})", re.S)
     m = section_re.search(text)
     if not m:
-        raise ValueError(f"couldn't find a '{section}' section in the config file")
+        return insert_section(text, section, field, escaped)
 
     block = m.group(2)
     field_re = re.compile(r"(^[ \t]*" + re.escape(field) + r"[ \t]*=[ \t]*)'(?:[^'\\]|\\.)*'", re.M)
