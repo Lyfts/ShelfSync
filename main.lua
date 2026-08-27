@@ -64,9 +64,9 @@ local HardcoverApi = require("shelfsync/lib/hardcover/api")
 local GoodreadsApi = require("shelfsync/lib/goodreads/api")
 local AutoWifi = require("shelfsync/lib/common/auto_wifi")
 local Cache = require("shelfsync/lib/common/cache")
-local StoryGraph = require("shelfsync/lib/storygraph/business")
-local Hardcover = require("shelfsync/lib/hardcover/business")
-local Goodreads = require("shelfsync/lib/goodreads/business")
+local StoryGraph = require("shelfsync/lib/storygraph/provider")
+local Hardcover = require("shelfsync/lib/hardcover/provider")
+local Goodreads = require("shelfsync/lib/goodreads/provider")
 local StoryGraphSettings = require("shelfsync/lib/storygraph/settings")
 local HardcoverSettings = require("shelfsync/lib/hardcover/settings")
 local GoodreadsSettings = require("shelfsync/lib/goodreads/settings")
@@ -106,10 +106,9 @@ local PROVIDERS = {
     key = "storygraph",
     prefix = "StoryGraph",
     label = "StoryGraph",
-    business_field = "storygraph",
     constants = STORYGRAPH,
     api = Api,
-    business_class = StoryGraph,
+    provider_class = StoryGraph,
     settings_class = StoryGraphSettings,
     settings_filename = "storygraphsync_settings.lua",
     menu_class = StoryGraphMenu,
@@ -129,10 +128,9 @@ Re-enable syncing afterwards from the StoryGraph menu.]]),
     key = "hardcover",
     prefix = "Hardcover",
     label = "Hardcover",
-    business_field = "hardcover",
     constants = HARDCOVER,
     api = HardcoverApi,
-    business_class = Hardcover,
+    provider_class = Hardcover,
     settings_class = HardcoverSettings,
     settings_filename = "hardcoversync_settings.lua",
     menu_class = HardcoverMenu,
@@ -151,10 +149,9 @@ Re-enable syncing afterwards from the Hardcover menu.]]),
     key = "goodreads",
     prefix = "Goodreads",
     label = "Goodreads",
-    business_field = "goodreads",
     constants = GOODREADS,
     api = GoodreadsApi,
-    business_class = Goodreads,
+    provider_class = Goodreads,
     settings_class = GoodreadsSettings,
     settings_filename = "goodreadssync_settings.lua",
     menu_class = GoodreadsMenu,
@@ -215,7 +212,7 @@ for _, provider in ipairs(PROVIDERS) do
 end
 
 -- Builds the full per-provider object graph (settings/user/cache/page_mapper/
--- wifi/dialog_manager/business/menu) and wraps it in a SyncEngine. `settings`
+-- wifi/dialog_manager/provider/menu) and wraps it in a SyncEngine. `settings`
 -- and `plugin_settings` are constructed by the caller so the StoryGraph and
 -- Hardcover engines can be pointed at the same plugin-wide settings instance
 -- (see ShelfSyncApp:init).
@@ -241,7 +238,8 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
     ui = self.ui,
     wifi = wifi,
   }
-  local business = provider.business_class:new {
+  local provider_instance = provider.provider_class:new {
+    label = provider.label,
     api = provider.api,
     user = user,
     cache = cache,
@@ -263,7 +261,7 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
     page_mapper = page_mapper,
     wifi = wifi,
     dialog_manager = dialog_manager,
-    business = business,
+    provider = provider_instance,
     settings = settings,
     plugin_settings = plugin_settings,
     ui = self.ui,
@@ -278,7 +276,7 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
     user = user,
     cache = cache,
     dialog_manager = dialog_manager,
-    [provider.business_field] = business,
+    [provider.key] = provider_instance,
     page_mapper = page_mapper,
     settings = settings,
     plugin_settings = plugin_settings,

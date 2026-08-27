@@ -2,7 +2,7 @@
 -- (StoryGraph or Hardcover) from KOReader's reader lifecycle events. All
 -- provider-specific behavior is injected: `label` (display name), `constants`
 -- (STATUS/STATUS_NAME table), `api`/`user`/`cache`/`page_mapper`/`wifi`/
--- `dialog_manager`/`settings`/`menu` instances, and a `business` object
+-- `dialog_manager`/`settings`/`menu` instances, and a `provider` object
 -- (StoryGraph or Hardcover) implementing tryAutolink/getRemoteProgress/
 -- getRemotePercent/pushProgress. `plugin_settings` is always the single
 -- shared (StoryGraph) settings instance, since plugin-update bookkeeping is
@@ -60,7 +60,7 @@ function SyncEngine:disable()
 end
 
 function SyncEngine:onLink()
-  self.business:showLinkBookDialog(false, function(book)
+  self.provider:showLinkBookDialog(false, function(book)
     UIManager:show(Notification:new {
       text = _("Linked to: " .. book.title),
     })
@@ -95,7 +95,7 @@ function SyncEngine:onPullPosition()
 
   self.wifi:withWifi(function()
     local status = self.api:findUserBook(book_id, self.user:getId())
-    local remote_percent = status and self.business:getRemotePercent(status)
+    local remote_percent = status and self.provider:getRemotePercent(status)
     if not status or not remote_percent then
       UIManager:show(InfoMessage:new {
         text = _("Could not fetch position from " .. self.label .. "."),
@@ -170,12 +170,12 @@ function SyncEngine:onNote(note_params)
   if not self:isActive() then return end
 
   local book_id = self.settings:getLinkedBookId()
-  local remote_percent = self.business:getRemotePercent(self.state.book_status) or 0
+  local remote_percent = self.provider:getRemotePercent(self.state.book_status) or 0
 
   if book_id then
     self.wifi:wifiPrompt(function()
       local latest_status = self.api:findUserBook(book_id, self.user:getId())
-      local latest_percent = latest_status and self.business:getRemotePercent(latest_status)
+      local latest_percent = latest_status and self.provider:getRemotePercent(latest_status)
       if latest_percent then
         remote_percent = latest_percent
         self.state.book_status = latest_status
@@ -227,7 +227,7 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
     self:initializePageUpdate()
   elseif field == SETTING.LINK_BY_ISBN or field == SETTING.LINK_BY_TITLE then
     if change then
-      self.business:tryAutolink()
+      self.provider:tryAutolink()
     end
   elseif field == self.auth_setting_key then
     if change and change ~= "" and not self.enabled then
@@ -317,7 +317,7 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
     return
   end
 
-  local remote_value = self.business:getRemoteProgress(self.state.book_status, update_type)
+  local remote_value = self.provider:getRemoteProgress(self.state.book_status, update_type)
   if not immediate and value < remote_value then
     logger.info(self.label .. ": Local progress (" .. value .. " " .. update_type .. ") is behind remote (" .. remote_value .. "). Skipping auto-update.")
     return
@@ -325,14 +325,14 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
 
   local reads = self.state.book_status.user_book_reads
   local current_read = reads and reads[#reads]
-  if not current_read and not self.business.allows_new_read then
+  if not current_read and not self.provider.allows_new_read then
     self.settings:debugLog(self.label .. ": _handlePageUpdate - no user_book_reads on book_status, skipping")
     return bail(_("No active reading session found on " .. self.label))
   end
 
   local immediate_update = function()
     self.wifi:withWifi(function()
-      local result, reason = self.business:pushProgress(current_read, value, update_type, filename)
+      local result, reason = self.provider:pushProgress(current_read, value, update_type, filename)
       if result then
         self.state.book_status = result
         self:registerHighlight()
@@ -437,7 +437,7 @@ function SyncEngine:pageUpdateEvent(page)
 
     if should_sync then
       local percentage = math.floor(current_percent * 100 + 0.5)
-      local remote_percent = self.business:getRemoteProgress(self.state.book_status, "percentage")
+      local remote_percent = self.provider:getRemoteProgress(self.state.book_status, "percentage")
       -- Compare the raw (unrounded) percents here, not values rounded to a
       -- whole percent -- should_sync above can legitimately fire on a
       -- sub-1%-point crossing (e.g. a fine trackPercentageInterval, or a
@@ -774,7 +774,7 @@ function SyncEngine:startReadCache()
           -- autolink not enabled) isn't a transient failure worth retrying,
           -- so it's not routed through fail() -- same as the synchronous
           -- no-match case, this chain simply ends here.
-          self.business:tryAutolink(function()
+          self.provider:tryAutolink(function()
             if self.settings:bookLinked() and self.settings:syncEnabled() then
               restart(2)
             end

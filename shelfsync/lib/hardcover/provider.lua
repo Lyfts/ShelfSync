@@ -1,60 +1,24 @@
 -- wrapper around hardcover_api to add higher level methods
 local _ = require("gettext")
 local logger = require("logger")
-local util = require("util")
 
 local UIManager = require("ui/uimanager")
-local Trapper = require("ui/trapper")
 
 local Notification = require("ui/widget/notification")
 local InfoMessage = require("ui/widget/infomessage")
 
 local Book = require("shelfsync/lib/common/book")
 
-local SETTING = require("shelfsync/lib/common/constants/settings")
+local BaseProvider = require("shelfsync/lib/common/base_provider")
 local HARDCOVER = require("shelfsync/lib/hardcover/constants")
 
 -- Unlike StoryGraph, Hardcover can start a brand new read session on demand
 -- (see pushProgress below), so SyncEngine shouldn't bail out of a page update
 -- just because there's no existing user_book_reads entry yet.
-local Hardcover = {
+local Hardcover = setmetatable({
   allows_new_read = true,
-}
+}, { __index = BaseProvider })
 Hardcover.__index = Hardcover
-
-function Hardcover:new(o)
-  return setmetatable(o, self)
-end
-
-function Hardcover:showLinkBookDialog(force_search, link_callback)
-  Trapper:wrap(function()
-    local search_value, books, err = self:findBookOptions(force_search)
-
-    if err then
-      logger.err(err)
-      return
-    end
-
-    self.dialog_manager:buildSearchDialog(
-      "Select book",
-      books,
-      {
-        book_id = self.settings:getLinkedBookId()
-      },
-      function(book)
-        self:linkBook(book)
-        if link_callback then
-          link_callback()
-        end
-      end,
-      function(search)
-        self.dialog_manager:updateSearchResults(search)
-        return true
-      end,
-      search_value
-    )
-  end)
-end
 
 function Hardcover:cacheRandomBooks()
   local user_id = self.user:getId()
@@ -122,13 +86,7 @@ end
 function Hardcover:linkBook(book)
   local filename = self.ui.document.file
 
-  local delete = {}
-  local clear_keys = { "book_id", "edition_id", "edition_format", "pages", "title" }
-  for _, key in ipairs(clear_keys) do
-    if book[key] == nil then
-      table.insert(delete, key)
-    end
-  end
+  local delete = self:_deletedKeys(book, { "book_id", "edition_id", "edition_format", "pages", "title" })
 
   local new_settings = {
     book_id = book.book_id,
@@ -173,99 +131,6 @@ function Hardcover:linkBook(book)
   end
 
   return true
-end
-
--- could be moved to book search model
-function Hardcover:findBookOptions(force_search)
-  local props = self.ui.document:getProps()
-  local identifiers = Book:parseIdentifiers(props.identifiers)
-  local user_id = self.user:getId()
-
-  if not force_search then
-    local book_lookup = self.api:findBookByIdentifiers(identifiers, user_id)
-    if book_lookup then
-      return nil, { book_lookup }
-    end
-  end
-
-  local title = props.title
-  if not title or title == "" then
-    local _dir, path = util.splitFilePathName(self.ui.document.file)
-    local filename, _suffix = util.splitFileNameSuffix(path)
-
-    title = filename:gsub("_", " ")
-  end
-  local result, err = self.api:findBooks(title, props.authors, user_id)
-  return title, result, err
-end
-
-function Hardcover:autolinkBook(book)
-  if not book then
-    return
-  end
-
-  local linked = self:linkBook(book)
-  if linked then
-    UIManager:show(Notification:new {
-      text = _("Linked to: " .. book.title),
-    })
-  end
-end
-
-function Hardcover:linkBookByIsbn(identifiers)
-  if identifiers.isbn_10 or identifiers.isbn_13 then
-    local user_id = self.user:getId()
-    local book_lookup = self.api:findBookByIdentifiers({
-      isbn_10 = identifiers.isbn_10,
-      isbn_13 = identifiers.isbn_13
-    },
-      user_id
-    )
-    if book_lookup then
-      self:autolinkBook(book_lookup)
-      return true
-    end
-  end
-end
-
-function Hardcover:linkBookByTitle()
-  local props = self.ui.document:getProps()
-
-  local results = self.api:findBooks(props.title, props.authors, self.user:getId())
-  if results and #results > 0 then
-    self:autolinkBook(results[1])
-    return true
-  end
-end
-
--- `done` (optional) is called once the attempt is fully resolved, whether or
--- not it found a match -- including when `withWifi` has to wait on a wifi
--- restore before it can run. Callers that need to know the outcome (e.g.
--- SyncEngine's startReadCache retry chain) MUST use `done` rather than
--- checking bookLinked() immediately after calling this, since a wifi wait
--- means linking can finish well after this function itself returns.
-function Hardcover:tryAutolink(done)
-  if self.settings:bookLinked() then
-    if done then done() end
-    return
-  end
-
-  local props = self.ui.document:getProps()
-
-  local identifiers = Book:parseIdentifiers(props.identifiers)
-  local should_attempt = ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.LINK_BY_ISBN) ~= false)
-    or (props.title and self.settings:readSetting(SETTING.LINK_BY_TITLE) ~= false)
-  self.settings:debugLog("Hardcover: tryAutolink - should_attempt=" .. tostring(should_attempt)
-    .. " isbn_10=" .. tostring(identifiers.isbn_10) .. " isbn_13=" .. tostring(identifiers.isbn_13)
-    .. " title=" .. tostring(props.title))
-  if should_attempt then
-    self.wifi:withWifi(function()
-      self:_runAutolink(identifiers)
-      if done then done() end
-    end)
-  elseif done then
-    done()
-  end
 end
 
 -- Hardcover's API only stores progress as an absolute page number, so both
@@ -340,23 +205,6 @@ function Hardcover:pushProgress(current_read, value, update_type, _filename)
   end
 
   return self.api:createRead(self.state.book_status.id, edition_id, page, os.date("%Y-%m-%d"))
-end
-
-function Hardcover:_runAutolink(identifiers)
-  local linked = false
-  if self.settings:readSetting(SETTING.LINK_BY_ISBN) ~= false then
-    linked = self:linkBookByIsbn(identifiers)
-    self.settings:debugLog("Hardcover: _runAutolink - linkBookByIsbn linked=" .. tostring(linked))
-  end
-
-  if not linked and self.settings:readSetting(SETTING.LINK_BY_TITLE) ~= false then
-    linked = self:linkBookByTitle()
-    self.settings:debugLog("Hardcover: _runAutolink - linkBookByTitle linked=" .. tostring(linked))
-  end
-
-  if not linked then
-    self.settings:debugLog("Hardcover: _runAutolink - no method found a match, book stays unlinked")
-  end
 end
 
 return Hardcover

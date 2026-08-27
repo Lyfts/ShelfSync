@@ -20,8 +20,8 @@ local UIManager, NetworkMgr, Clock = mocks.UIManager, mocks.NetworkMgr, mocks.Cl
 local SETTING = require("shelfsync/lib/common/constants/settings")
 local AutoWifi = require("shelfsync/lib/common/auto_wifi")
 local SyncEngine = require("shelfsync/lib/common/sync_engine")
-local HardcoverBusiness = require("shelfsync/lib/hardcover/business")
-local StoryGraphBusiness = require("shelfsync/lib/storygraph/business")
+local HardcoverProvider = require("shelfsync/lib/hardcover/provider")
+local StoryGraphProvider = require("shelfsync/lib/storygraph/provider")
 local HardcoverSettings = require("shelfsync/lib/hardcover/settings")
 local StoryGraphSettings = require("shelfsync/lib/storygraph/settings")
 local HARDCOVER_CONST = require("shelfsync/lib/hardcover/constants")
@@ -52,7 +52,7 @@ describe("SyncEngine autolink race (StoryGraph + Hardcover sharing one wifi rest
 
   -- Mirrors main.lua's _buildEngine, trimmed to what startReadCache /
   -- tryAutolink actually touch.
-  local function buildEngine(label, settings_class, filename, business_class, constants)
+  local function buildEngine(label, settings_class, filename, provider_class, constants)
     local settings = settings_class:new("/settings/" .. filename, ui, nil)
     settings:updateSetting(SETTING.LINK_BY_ISBN, true)
     settings:updateSetting(SETTING.LINK_BY_TITLE, true)
@@ -78,7 +78,8 @@ describe("SyncEngine autolink race (StoryGraph + Hardcover sharing one wifi rest
     }
     local dialog_manager = {}
 
-    local business = business_class:new {
+    local provider_instance = provider_class:new {
+      label = label,
       api = api, user = user, cache = cache, dialog_manager = dialog_manager,
       settings = settings, state = state, ui = ui, wifi = wifi,
     }
@@ -91,7 +92,7 @@ describe("SyncEngine autolink race (StoryGraph + Hardcover sharing one wifi rest
       api = api, user = user, cache = cache,
       page_mapper = { cachePageMap = function() end },
       wifi = wifi, dialog_manager = dialog_manager,
-      business = business, settings = settings,
+      provider = provider_instance, settings = settings,
       plugin_settings = settings,
       ui = ui, view = {}, state = state,
     }
@@ -114,8 +115,8 @@ describe("SyncEngine autolink race (StoryGraph + Hardcover sharing one wifi rest
 
   describe("when wifi starts off", function()
     it("links and arms periodic sync for both engines when Hardcover goes first", function()
-      local hardcover = buildEngine("Hardcover", HardcoverSettings, "hardcover.lua", HardcoverBusiness, HARDCOVER_CONST)
-      local storygraph = buildEngine("StoryGraph", StoryGraphSettings, "storygraph.lua", StoryGraphBusiness, STORYGRAPH_CONST)
+      local hardcover = buildEngine("Hardcover", HardcoverSettings, "hardcover.lua", HardcoverProvider, HARDCOVER_CONST)
+      local storygraph = buildEngine("StoryGraph", StoryGraphSettings, "storygraph.lua", StoryGraphProvider, STORYGRAPH_CONST)
 
       runScenario({ hardcover, storygraph })
 
@@ -126,8 +127,8 @@ describe("SyncEngine autolink race (StoryGraph + Hardcover sharing one wifi rest
     end)
 
     it("links and arms periodic sync for both engines when StoryGraph goes first", function()
-      local storygraph = buildEngine("StoryGraph", StoryGraphSettings, "storygraph.lua", StoryGraphBusiness, STORYGRAPH_CONST)
-      local hardcover = buildEngine("Hardcover", HardcoverSettings, "hardcover.lua", HardcoverBusiness, HARDCOVER_CONST)
+      local storygraph = buildEngine("StoryGraph", StoryGraphSettings, "storygraph.lua", StoryGraphProvider, STORYGRAPH_CONST)
+      local hardcover = buildEngine("Hardcover", HardcoverSettings, "hardcover.lua", HardcoverProvider, HARDCOVER_CONST)
 
       runScenario({ storygraph, hardcover })
 
@@ -150,8 +151,8 @@ describe("SyncEngine autolink race (StoryGraph + Hardcover sharing one wifi rest
         return real_restore(...)
       end
 
-      local hardcover = buildEngine("Hardcover", HardcoverSettings, "hardcover.lua", HardcoverBusiness, HARDCOVER_CONST)
-      local storygraph = buildEngine("StoryGraph", StoryGraphSettings, "storygraph.lua", StoryGraphBusiness, STORYGRAPH_CONST)
+      local hardcover = buildEngine("Hardcover", HardcoverSettings, "hardcover.lua", HardcoverProvider, HARDCOVER_CONST)
+      local storygraph = buildEngine("StoryGraph", StoryGraphSettings, "storygraph.lua", StoryGraphProvider, STORYGRAPH_CONST)
 
       runScenario({ hardcover, storygraph })
 

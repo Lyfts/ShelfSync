@@ -1,6 +1,6 @@
 -- Minimal but faithful mocks of the KOReader modules plugin code requires,
 -- wired into package.loaded so require() picks them up. Lets specs run the
--- REAL plugin source (sync_engine.lua, business.lua, auto_wifi.lua,
+-- REAL plugin source (sync_engine.lua, provider.lua, auto_wifi.lua,
 -- base_settings.lua, scheduler.lua, ...) under a fake event loop that mimics
 -- UIManager's scheduling semantics closely enough to reproduce
 -- timing/ordering-dependent behavior (e.g. the wifi-restore race between the
