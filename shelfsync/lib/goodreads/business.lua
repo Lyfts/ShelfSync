@@ -1,7 +1,6 @@
 -- wrapper around goodreads_api to add higher level methods
 local _ = require("gettext")
 local logger = require("logger")
-local math = require("math")
 local util = require("util")
 
 local UIManager = require("ui/uimanager")
@@ -184,13 +183,6 @@ function Goodreads:tryAutolink(done)
   end
 end
 
-local function percentToPage(percent, total_pages)
-  if not percent or not total_pages or total_pages <= 0 then
-    return nil
-  end
-  return math.floor((percent / 100) * total_pages + 0.5)
-end
-
 -- Goodreads' book page doesn't expose the viewer's current reading position
 -- anywhere (confirmed absent from the SSR payload -- only shelf status is
 -- available, see api.lua's findUserBook), so there's no remote progress
@@ -205,40 +197,37 @@ function Goodreads:getRemotePercent(_status)
   return nil
 end
 
--- Writes a page-progress update to Goodreads and returns the refreshed
--- status, or nil plus an error reason on failure. `value` may be a page
--- number or a percentage depending on `update_type`; it's always converted
--- to a page number before writing, since that's all /user_status.json
--- accepts. Automatically moves the book to "Read" once the pushed page
--- reaches the known total (Goodreads has no percent_finished field to key
--- this off of like StoryGraph does).
+-- Writes a progress update to Goodreads and returns the refreshed status, or
+-- nil plus an error reason on failure. `value` is sent as-is, in
+-- `update_type`'s unit -- /user_status.json takes a percent field directly,
+-- so there's no local percent<->page conversion needed, and no dependence
+-- on knowing the edition's page count (which findUserBook's numPages scrape
+-- often fails to find). Automatically moves the book to "Read" once the
+-- pushed progress reaches its known total (Goodreads has no percent_finished
+-- field to key this off of like StoryGraph does).
 function Goodreads:pushProgress(_current_read, value, update_type, filename)
   local book_id = self.settings:readBookSetting(filename, "book_id")
   if not book_id then
     return nil, "No linked book found on Goodreads"
   end
 
-  local page = value
-  if update_type ~= "pages" then
-    page = percentToPage(value, tonumber(self.settings:pages()))
-    if not page then
-      return nil, "Goodreads: linked book has no known page count"
-    end
-  else
-    page = math.floor(page + 0.5)
-  end
-
-  local result = self.api:updatePage(book_id, page)
+  local result = self.api:updateProgress(book_id, value, update_type)
   if not result then
     return nil
   end
 
-  if result.status_id == GOODREADS.STATUS.READING
-      and tonumber(result.book_num_of_pages) and result.book_num_of_pages > 0
-      and page >= result.book_num_of_pages then
-    local finished = self.api:updateUserBook(book_id, GOODREADS.STATUS.FINISHED)
-    if finished then
-      result = finished
+  local finished
+  if update_type == "pages" then
+    finished = tonumber(result.book_num_of_pages) and result.book_num_of_pages > 0
+      and value >= result.book_num_of_pages
+  else
+    finished = value >= 100
+  end
+
+  if result.status_id == GOODREADS.STATUS.READING and finished then
+    local finished_result = self.api:updateUserBook(book_id, GOODREADS.STATUS.FINISHED)
+    if finished_result then
+      result = finished_result
     end
   end
 

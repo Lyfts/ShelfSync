@@ -587,7 +587,11 @@ function GoodreadsApi:updateUserBook(book_id, status_id)
   return nil
 end
 
-function GoodreadsApi:updatePage(book_id, page, note)
+-- /user_status.json takes either field directly, so a percentage update
+-- doesn't need a known page count to convert against -- unlike the old
+-- percentToPage route, this works even for editions where the numPages
+-- scrape in findUserBook comes back 0.
+function GoodreadsApi:updateProgress(book_id, value, update_type, note)
   local csrf = self:refreshSession()
   if not csrf then
     logger.warn("Goodreads: Could not extract CSRF token for progress update")
@@ -606,38 +610,31 @@ function GoodreadsApi:updatePage(book_id, page, note)
     ["Sec-Fetch-Dest"] = "empty",
   }
 
+  local progress_field = update_type == "pages" and "user_status[page]" or "user_status[percent]"
+
   local code, resp = self:request(base_url .. "/user_status.json", "POST", {
     ["user_status[book_id]"] = book_id,
-    ["user_status[page]"] = page,
+    [progress_field] = value,
     ["user_status[body]"] = note or "",
   }, custom_headers)
-  self.settings:debugLog("Goodreads: updatePage POST response code=" .. tostring(code))
+  self.settings:debugLog("Goodreads: updateProgress POST response code=" .. tostring(code))
 
   if code and code >= 200 and code < 300 then
     return self:findUserBook(book_id)
   end
-  self.settings:debugWarn("Goodreads: updatePage failed - code=" .. tostring(code) .. " resp=" .. tostring(resp))
+  self.settings:debugWarn("Goodreads: updateProgress failed - code=" .. tostring(code) .. " resp=" .. tostring(resp))
   return nil
 end
 
 -- Goodreads' "status update" (/user_status.json's `body` field) is a short
--- feed-post note attached to a page-progress update, not a book review, so
--- this is really just updatePage with a note attached -- there's no richer
+-- feed-post note attached to a progress update, not a book review, so this
+-- is really just updateProgress with a note attached -- there's no richer
 -- journal concept to map onto here.
 function GoodreadsApi:createJournalEntry(data)
   local book_id = data.book_id
   if not book_id then return nil end
 
-  local page = tonumber(data.progress) or 0
-  if data.progress_type ~= "pages" then
-    local status = self:findUserBook(book_id)
-    local total = status and tonumber(status.book_num_of_pages) or 0
-    page = total > 0 and math.floor((page / 100) * total + 0.5) or 0
-  else
-    page = math.floor(page + 0.5)
-  end
-
-  return self:updatePage(book_id, page, data.entry)
+  return self:updateProgress(book_id, tonumber(data.progress) or 0, data.progress_type, data.entry)
 end
 
 return GoodreadsApi
