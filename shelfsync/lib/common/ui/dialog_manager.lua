@@ -1,6 +1,7 @@
 local _ = require("gettext")
 
 local UIManager = require("ui/uimanager")
+local Trapper = require("ui/trapper")
 
 local ConfirmBox = require("ui/widget/confirmbox")
 local InfoMessage = require("ui/widget/infomessage")
@@ -109,17 +110,19 @@ function DialogManager:buildBookListDialog(title, items, icon_callback, disable_
 end
 
 function DialogManager:updateSearchResults(search)
-  local books, error = self.api:findBooks(search, nil, self.user:getId())
-  if error then
-    if not self.api.enabled then
-      UIManager:close(self.search_dialog)
+  Trapper:wrap(function()
+    local books, error = self.api:findBooks(search, nil, self.user:getId())
+    if error then
+      if not self.api.enabled then
+        UIManager:close(self.search_dialog)
+      end
+
+      return
     end
 
-    return
-  end
-
-  self.search_dialog:setItems(self.search_dialog.title, books, self.search_dialog.active_item)
-  self.search_dialog.search_value = search
+    self.search_dialog:setItems(self.search_dialog.title, books, self.search_dialog.active_item)
+    self.search_dialog.search_value = search
+  end)
 end
 
 function DialogManager:updateRandomBooks(books)

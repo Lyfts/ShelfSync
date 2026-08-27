@@ -4,6 +4,7 @@ local logger = require("logger")
 local util = require("util")
 
 local UIManager = require("ui/uimanager")
+local Trapper = require("ui/trapper")
 
 local Notification = require("ui/widget/notification")
 local InfoMessage = require("ui/widget/infomessage")
@@ -27,31 +28,33 @@ function Goodreads:new(o)
 end
 
 function Goodreads:showLinkBookDialog(force_search, link_callback)
-  local search_value, books, err = self:findBookOptions(force_search)
+  Trapper:wrap(function()
+    local search_value, books, err = self:findBookOptions(force_search)
 
-  if err then
-    logger.err(err)
-    return
-  end
+    if err then
+      logger.err(err)
+      return
+    end
 
-  self.dialog_manager:buildSearchDialog(
-    "Select book",
-    books,
-    {
-      book_id = self.settings:getLinkedBookId()
-    },
-    function(book)
-      self:linkBook(book)
-      if link_callback then
-        link_callback()
-      end
-    end,
-    function(search)
-      self.dialog_manager:updateSearchResults(search)
-      return true
-    end,
-    search_value
-  )
+    self.dialog_manager:buildSearchDialog(
+      "Select book",
+      books,
+      {
+        book_id = self.settings:getLinkedBookId()
+      },
+      function(book)
+        self:linkBook(book)
+        if link_callback then
+          link_callback()
+        end
+      end,
+      function(search)
+        self.dialog_manager:updateSearchResults(search)
+        return true
+      end,
+      search_value
+    )
+  end)
 end
 
 function Goodreads:linkBook(book)
