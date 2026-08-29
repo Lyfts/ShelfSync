@@ -54,6 +54,7 @@ local math = require("math")
 
 local UIManager = require("ui/uimanager")
 
+local ConfirmBox = require("ui/widget/confirmbox")
 local InfoMessage = require("ui/widget/infomessage")
 local Notification = require("ui/widget/notification")
 
@@ -67,6 +68,7 @@ local User = require("shelfsync/lib/common/user")
 
 local DialogManager = require("shelfsync/lib/common/ui/dialog_manager")
 local CommonMenu = require("shelfsync/lib/common/menu")
+local ReviewMenu = require("shelfsync/lib/common/review_menu")
 
 local SETTING = require("shelfsync/lib/common/constants/settings")
 local PROVIDERS = require("shelfsync/lib/common/constants/providers")
@@ -167,6 +169,7 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
     ui = self.ui,
     wifi = wifi,
   }
+  cache.provider = provider_instance
 
   local engine = SyncEngine:new {
     label = provider.label,
@@ -238,7 +241,7 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
 end
 
 function ShelfSyncApp:init()
-  self.state = {}
+  self.state = { review_prompted = {} }
   self.engines = {}
 
   -- StoryGraph's settings double as the plugin-wide settings: version-check
@@ -263,6 +266,7 @@ function ShelfSyncApp:init()
   end
 
   self.common_menu = CommonMenu:new { settings = plugin_settings, app = self }
+  self.review_menu = ReviewMenu:new { settings = plugin_settings, app = self }
 
   self:onDispatcherRegisterActions()
   self.ui.menu:registerToMainMenu(self)
@@ -414,6 +418,30 @@ function ShelfSyncApp:onDocSettingsItemsChanged(file, doc_settings)
   end
 end
 
+-- Fired by BaseProvider:notifyBookFinished, broadcast independently by
+-- whichever provider engine(s) transition a book to Finished (see
+-- base_provider.lua). Guarded per-filename since up to 4 engines could each
+-- reach Finished for the same book and would otherwise each trigger their
+-- own popup.
+function ShelfSyncApp:onShelfSyncBookFinished(filename)
+  if self.state.review_prompted[filename] then
+    return
+  end
+  self.state.review_prompted[filename] = true
+
+  if #self.review_menu:_eligibleEngines() == 0 then
+    return
+  end
+
+  UIManager:show(ConfirmBox:new {
+    text = _("You finished this book! Would you like to submit a review?"),
+    ok_text = _("Review"),
+    ok_callback = function()
+      self.review_menu:show()
+    end,
+  })
+end
+
 function ShelfSyncApp:addToMainMenu(menu_items)
   local provider_items = {}
   for _, provider in ipairs(PROVIDERS) do
@@ -425,6 +453,16 @@ function ShelfSyncApp:addToMainMenu(menu_items)
     text = _("Providers"),
     sub_item_table = provider_items,
   })
+
+  if self.ui.document then
+    table.insert(sub_items, {
+      text = _("Review"),
+      keep_menu_open = true,
+      callback = function()
+        self.review_menu:show()
+      end,
+    })
+  end
 
   table.insert(sub_items, {
     text = _("Settings"),

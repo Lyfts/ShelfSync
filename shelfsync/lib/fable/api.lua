@@ -546,6 +546,59 @@ function FableApi:updateProgress(book_id, value, update_type)
   return self:findUserBook(book_id)
 end
 
+-- The viewer's own review of a book, or nil if they haven't reviewed it yet
+-- (confirmed via HAR: 404 before a review exists, 200 with the full review
+-- object after). Used by setRating to echo back review/labels/spoilers/DNF
+-- unchanged rather than blanking them out when only the rating changes.
+function FableApi:getReview(book_id)
+  local user_id = self.settings and self.settings:readSetting(SETTING.USER_ID)
+  if not user_id then
+    return nil
+  end
+
+  local code, data = self:request("/api/users/" .. user_id .. "/reviews/" .. book_id, "GET")
+  if code == 200 and data then
+    return data
+  end
+  return nil
+end
+
+-- Pushes a rating and/or review text to Fable. Fable accepts fractional
+-- ratings (no known granularity floor), so `rating` is passed through as-is
+-- with no rounding. Confirmed via HAR: POST /api/books/{id}/reviews with a
+-- full review body ({rating, labels, review, contains_spoilers,
+-- did_not_finish}) creates a review when none exists yet; only a create was
+-- captured, so reusing the same endpoint for an update is inferred by
+-- symmetry (same assumption updateProgress makes about page-based
+-- tracking), not independently confirmed against a capture. Any field left
+-- nil (rating or review_text) is filled in from the existing review so
+-- calling this to set only one of them doesn't blank out the other.
+function FableApi:setReview(book_id, rating, review_text)
+  local existing = self:getReview(book_id)
+
+  local labels = existing and existing.labels
+  if not labels or #labels == 0 then
+    -- An empty Lua table is ambiguous to the JSON encoder (could mean `{}`
+    -- or `[]`) -- same issue updateProgress's social_accounts hits.
+    labels = json.util.InitArray({})
+  end
+
+  local body = {
+    rating = rating ~= nil and tonumber(rating) or (existing and existing.rating),
+    labels = labels,
+    review = review_text ~= nil and review_text or ((existing and existing.review) or ""),
+    contains_spoilers = (existing and existing.contains_spoilers) or false,
+    did_not_finish = (existing and existing.did_not_finish) or false,
+  }
+
+  local code = self:request("/api/books/" .. book_id .. "/reviews", "POST", body)
+  return code and code >= 200 and code < 300
+end
+
+function FableApi:setRating(book_id, rating)
+  return self:setReview(book_id, rating, nil)
+end
+
 -- Fable's reading_progress endpoint (unlike Goodreads' /user_status.json)
 -- carries no note/body field in any captured request -- there's no
 -- confirmed way to persist journal text to Fable at all, so `data.entry` is

@@ -97,10 +97,39 @@ function Goodreads:pushProgress(_current_read, value, update_type, filename)
     local finished_result = self.api:updateUserBook(book_id, GOODREADS.STATUS.FINISHED)
     if finished_result then
       result = finished_result
+      self:onMarkedFinished(book_id, filename)
     end
   end
 
   return result
+end
+
+-- Stamps today as the Goodreads "date read" -- called by Cache:updateBookStatus
+-- for Finished transitions that go through the shared status menu/SyncEngine,
+-- and directly above for the auto-track-to-100% finished path (which
+-- bypasses Cache since it needs updateUserBook's return value inline).
+function Goodreads:onMarkedFinished(book_id, filename)
+  self:notifyBookFinished(filename)
+  self.api:setDateFinished(book_id)
+end
+
+-- ReviewMenu entry point: submits a star rating and/or free-text review from
+-- the unified Review menu. Goodreads only accepts whole-star ratings, so a
+-- quarter/half-star value is rounded to the nearest whole number here.
+function Goodreads:submitReview(filename, rating, text)
+  local book_id = self.settings:readBookSetting(filename, "book_id")
+  if not book_id then
+    return false, "No linked book found on Goodreads"
+  end
+
+  local success = true
+  if rating and rating > 0 then
+    success = self.api:setRating(book_id, math.floor(rating + 0.5)) ~= nil and success
+  end
+  if text and text ~= "" then
+    success = self.api:setReviewText(book_id, text) ~= nil and success
+  end
+  return success
 end
 
 return Goodreads

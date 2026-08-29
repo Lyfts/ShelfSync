@@ -625,6 +625,79 @@ function HardcoverApi:updateRating(user_book_id, rating)
   end
 end
 
+-- Hardcover stores reviews as a Slate.js rich-text document (`review_slate`,
+-- jsonb); `review_raw`/`review` are read-only plain-text/HTML mirrors
+-- derived from it server-side, not writable input fields (confirmed against
+-- github.com/Billiam/hardcoverapp.koplugin PR #55). Splits on blank lines
+-- into one paragraph block per line, matching that reference implementation.
+local function paragraph_block(text)
+  return {
+    data = {},
+    type = "paragraph",
+    object = "block",
+    children = { { text = text, object = "text" } },
+  }
+end
+
+local function build_slate_document(plain_text)
+  if not plain_text or plain_text:match("^%s*$") then
+    return nil
+  end
+
+  local children = {}
+  local last_end = 1
+  while true do
+    local start_idx, end_idx = plain_text:find("\n\n", last_end, true)
+    if not start_idx then
+      local segment = plain_text:sub(last_end)
+      if not segment:match("^%s*$") then
+        table.insert(children, paragraph_block(segment))
+      end
+      break
+    end
+    local segment = plain_text:sub(last_end, start_idx - 1)
+    if not segment:match("^%s*$") then
+      table.insert(children, paragraph_block(segment))
+    end
+    last_end = end_idx + 1
+  end
+
+  return { document = { object = "document", children = children } }
+end
+
+-- Rating + review text in one mutation, for the unified Review menu.
+function HardcoverApi:updateReview(user_book_id, rating, review_text)
+  local query = [[
+    mutation ($id: Int!, $rating: numeric, $review: jsonb) {
+      update_user_book(id: $id, object: { rating: $rating, review_slate: $review }) {
+        error
+        user_book {
+          ...UserBookParts
+        }
+      }
+    }
+  ]] .. user_book_fragment
+
+  if rating == 0 or rating == nil then
+    rating = json.util.null
+  end
+
+  local slate = build_slate_document(review_text) or json.util.null
+
+  local result, err = self:query(query, { id = user_book_id, rating = rating, review = slate })
+  if result and result.update_user_book then
+    if result.update_user_book.error then
+      logger.warn("Hardcover: updateReview failed - " .. tostring(result.update_user_book.error))
+      return nil
+    end
+    return result.update_user_book.user_book
+  end
+
+  if err then
+    logger.warn("Hardcover: updateReview failed - " .. json.encode(err))
+  end
+end
+
 function HardcoverApi:removeRead(user_book_id)
   local query = [[
     mutation($id: Int!) {

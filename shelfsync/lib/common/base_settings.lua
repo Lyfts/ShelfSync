@@ -213,6 +213,22 @@ function BaseSettings:setProviderEnabled(value)
   self:updateSetting(SETTING.PROVIDER_ENABLED, value == true)
 end
 
+-- KOReader's own Book Status rating (1-5 stars; 0/unset reads back as nil),
+-- read the same way summary.status is read elsewhere -- via the live
+-- doc_settings when this is the currently open document, otherwise straight
+-- off the sidecar on disk.
+function BaseSettings:getKoreaderRating(filename)
+  if not filename then
+    return nil
+  end
+  local summary = self:getDocSettings(filename):readSetting("summary")
+  local rating = summary and tonumber(summary.rating)
+  if rating and rating > 0 then
+    return rating
+  end
+  return nil
+end
+
 function BaseSettings:autolinkEnabled()
   for _, setting in ipairs(SETTING.AUTOLINK_OPTIONS) do
     -- Must go through self:readSetting (not self.settings:readSetting)
