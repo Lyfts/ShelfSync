@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+##### Plugin
+- Add an "Enabled" toggle to each service's menu (StoryGraph, Hardcover, Goodreads), on by default. Turning it off fully pauses that service — no linking, syncing, or other actions — without losing your saved cookie/API token, and turning it back on resumes right where it left off. A service is now also treated as off until you've actually saved a cookie/token for it, instead of quietly trying (and failing) in the background.
+
 ## 1.2.0
 ##### Plugin
 - Add optional cookie auto-refresh support for Goodreads: point the new "Cookie Auto-Refresh URL" setting at a running `goodreads-cookie-refresher` Docker container (a separate, optional self-hosted setup — see the README's Goodreads authentication section) to have it supply a session cookie automatically, both for initial setup and whenever the saved cookie goes stale from Goodreads' AWS WAF bot-challenge, instead of syncing pausing until you paste in a fresh cookie by hand.
