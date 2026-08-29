@@ -31,11 +31,15 @@ Settings.SHARED = {
   TRACK_FREQUENCY = "track_frequency",
   TRACK_PERCENTAGE = "track_percentage",
   TRACK_PAGE_STEP = "track_page_step",
+  LINK_BY_IDENTIFIER = "link_by_identifier",
   LINK_BY_ISBN = "link_by_isbn",
   LINK_BY_TITLE = "link_by_title",
 }
 
-Settings.AUTOLINK_OPTIONS = { Settings.SHARED.LINK_BY_ISBN, Settings.SHARED.LINK_BY_TITLE }
+-- Order here doubles as the priority BaseProvider:_runAutolink tries each
+-- method in: provider identifier first (most specific), then ISBN, then
+-- title+author (least specific, most prone to false matches).
+Settings.AUTOLINK_OPTIONS = { Settings.SHARED.LINK_BY_IDENTIFIER, Settings.SHARED.LINK_BY_ISBN, Settings.SHARED.LINK_BY_TITLE }
 
 -- Lookup set derived from Settings.SHARED, used by base_settings.lua to test
 -- membership in O(1) without listing every key twice.

@@ -30,22 +30,38 @@ function Book:parseIdentifiers(identifiers)
   end
 
   for line in string.lower(identifiers):gmatch("%s*([^%s]+)%s*") do
-    -- check for hardcover: or storygraph: prefixes
-    local hc = string.match(line, "hardcover:([%w_-]+)") or 
-               string.match(line, "hardcover%-slug:([%w_-]+)") or
-               string.match(line, "storygraph:([%w_-]+)")
+    -- Goodreads' own book id, as surfaced by Calibre's standard "goodreads"
+    -- OPF identifier scheme (see goodreads.koplugin's goodreads_identifiers.lua).
+    local gr = string.match(line, "goodreads:(%d+)") or
+               string.match(line, "goodreads%-id:(%d+)") or
+               string.match(line, "gr:(%d+)")
+    if gr then
+      result.goodreads_id = gr
+    end
+
+    -- Hardcover's own scheme, kept as book_slug -- consumed only by
+    -- HardcoverApi:findBookByIdentifiers.
+    local hc = string.match(line, "hardcover:([%w_-]+)") or
+               string.match(line, "hardcover%-slug:([%w_-]+)")
     if hc then
       result.book_slug = hc
     end
 
-    local hc_edition = string.match(line, "hardcover%-edition:(%d+)") or
-                       string.match(line, "storygraph%-edition:(%d+)")
-
+    local hc_edition = string.match(line, "hardcover%-edition:(%d+)")
     if hc_edition then
       result.book_slug = hc_edition
     end
 
-    if not hc and not hc_edition then
+
+    local sg = string.match(line, "storygraph:([%w_-]+)")
+    local sg_edition = string.match(line, "storygraph%-edition:(%d+)")
+    if sg_edition then
+      result.storygraph_slug = sg_edition
+    elseif sg then
+      result.storygraph_slug = sg
+    end
+
+    if not hc and not hc_edition and not sg and not sg_edition and not gr then
       -- strip prefix
       local str = string.gsub(line, "^[^%s]+%s*:%s*", "")
       str = string.gsub(str, "-", "")

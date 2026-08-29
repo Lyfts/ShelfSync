@@ -87,7 +87,7 @@ When enabled (per service), the plugin will periodically sync your progress:
 ## Settings
 
 Each service has its own **Settings** submenu for linking and account options:
-- **Automatically link by ISBN/Title**: Attempt to find matching books automatically when opening a new document. Enabled by default; disable here if you'd rather link books manually.
+- **Automatically link by provider identifier/ISBN/Title**: Attempt to find matching books automatically when opening a new document, in that priority order — a provider identifier embedded in the book's metadata first, then ISBN, then title+author. Each method can be toggled independently, and all are enabled by default; disable any of them here if you'd rather link books manually. Identifier-based linking is supported for Goodreads (`goodreads:` tag), Hardcover (`hardcover:`/`hardcover-slug:`/`hardcover-edition:` tags), and StoryGraph (`storygraph:`/`storygraph-edition:` tags); Fable currently doesn't expose a matching identifier scheme, so that method has no effect there yet.
 - **Account**: Cookies/tokens/login for that service.
 
 Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Settings**, since it applies to the whole plugin rather than one service:

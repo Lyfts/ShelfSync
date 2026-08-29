@@ -234,7 +234,7 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
   elseif field == SETTING.SHARED.TRACK_METHOD then
     self:cancelPendingUpdates()
     self:initializePageUpdate()
-  elseif field == SETTING.SHARED.LINK_BY_ISBN or field == SETTING.SHARED.LINK_BY_TITLE then
+  elseif field == SETTING.SHARED.LINK_BY_IDENTIFIER or field == SETTING.SHARED.LINK_BY_ISBN or field == SETTING.SHARED.LINK_BY_TITLE then
     if change and self:isActive() then
       self.provider:tryAutolink()
     end

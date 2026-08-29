@@ -108,6 +108,32 @@ function BaseProvider:autolinkBook(book)
   end
 end
 
+-- Provider identifier (e.g. a Goodreads book id, a Hardcover slug/edition
+-- id, or a StoryGraph slug) embedded in the book's own metadata -- more
+-- specific than an ISBN lookup since it names an exact remote record rather
+-- than an edition that has to be searched for, so it's tried first (see
+-- AUTOLINK_OPTIONS' order). Each field is its own scheme (see book.lua) and
+-- every provider's findBookByIdentifiers only ever reads the field(s) that
+-- belong to it, so passing the full set through unconditionally can't cause
+-- e.g. a StoryGraph slug to be mistaken for a Hardcover one.
+function BaseProvider:linkBookByIdentifier(identifiers)
+  if identifiers.book_slug or identifiers.edition_id or identifiers.goodreads_id or identifiers.storygraph_slug then
+    local user_id = self.user:getId()
+    local book_lookup = self.api:findBookByIdentifiers({
+      book_slug = identifiers.book_slug,
+      edition_id = identifiers.edition_id,
+      goodreads_id = identifiers.goodreads_id,
+      storygraph_slug = identifiers.storygraph_slug,
+    },
+      user_id
+    )
+    if book_lookup then
+      self:autolinkBook(book_lookup)
+      return true
+    end
+  end
+end
+
 function BaseProvider:linkBookByIsbn(identifiers)
   if identifiers.isbn_10 or identifiers.isbn_13 then
     local user_id = self.user:getId()
@@ -149,9 +175,12 @@ function BaseProvider:tryAutolink(done)
   local props = self.ui.document:getProps()
 
   local identifiers = Book:parseIdentifiers(props.identifiers)
-  local should_attempt = ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false)
+  local should_attempt = ((identifiers.book_slug or identifiers.edition_id or identifiers.goodreads_id or identifiers.storygraph_slug) and self.settings:readSetting(SETTING.SHARED.LINK_BY_IDENTIFIER) ~= false)
+    or ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false)
     or (props.title and self.settings:readSetting(SETTING.SHARED.LINK_BY_TITLE) ~= false)
   self.settings:debugLog(self.label .. ": tryAutolink - should_attempt=" .. tostring(should_attempt)
+    .. " book_slug=" .. tostring(identifiers.book_slug) .. " goodreads_id=" .. tostring(identifiers.goodreads_id)
+    .. " storygraph_slug=" .. tostring(identifiers.storygraph_slug)
     .. " isbn_10=" .. tostring(identifiers.isbn_10) .. " isbn_13=" .. tostring(identifiers.isbn_13)
     .. " title=" .. tostring(props.title))
   if should_attempt then
@@ -176,7 +205,12 @@ end
 
 function BaseProvider:_runAutolink(identifiers)
   local linked = false
-  if self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false then
+  if self.settings:readSetting(SETTING.SHARED.LINK_BY_IDENTIFIER) ~= false then
+    linked = self:linkBookByIdentifier(identifiers)
+    self.settings:debugLog(self.label .. ": _runAutolink - linkBookByIdentifier linked=" .. tostring(linked))
+  end
+
+  if not linked and self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false then
     linked = self:linkBookByIsbn(identifiers)
     self.settings:debugLog(self.label .. ": _runAutolink - linkBookByIsbn linked=" .. tostring(linked))
   end

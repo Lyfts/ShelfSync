@@ -180,6 +180,16 @@ end
 function CommonMenu:getAutoLinkSubMenuItems()
   return {
     {
+      text = _("Automatically link by provider identifier"),
+      checked_func = function()
+        return self.settings:readSetting(SETTING.SHARED.LINK_BY_IDENTIFIER) ~= false
+      end,
+      callback = function()
+        local setting = self.settings:readSetting(SETTING.SHARED.LINK_BY_IDENTIFIER) ~= false
+        self.settings:updateSetting(SETTING.SHARED.LINK_BY_IDENTIFIER, not setting)
+      end
+    },
+    {
       text = _("Automatically link by ISBN"),
       checked_func = function()
         return self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false

@@ -679,7 +679,31 @@ function GoodreadsApi:findUserBook(book_id, _user_id)
 end
 
 function GoodreadsApi:findBookByIdentifiers(identifiers, user_id)
-  local isbn = identifiers and (identifiers.isbn_13 or identifiers.isbn_10)
+  if not identifiers then return nil end
+
+  -- A Goodreads book id names an exact book page directly, so it's fetched
+  -- straight from /book/show/<id> (same endpoint findUserBook polls status
+  -- from) instead of going through a search -- same JSON-LD scrape findBooks
+  -- uses for its own ISBN-redirect case.
+  if identifiers.goodreads_id then
+    local book_url = base_url .. "/book/show/" .. identifiers.goodreads_id
+    local code, html = self:request(book_url, "GET")
+    if code == 200 and html then
+      local book_data = parse_ldjson_book(html)
+      if book_data then
+        return {
+          book_id = identifiers.goodreads_id,
+          title = book_data.title,
+          contributions = { { author = { name = book_data.author } } },
+          cached_image = { url = book_data.image },
+          book_series = {},
+          description = "",
+        }
+      end
+    end
+  end
+
+  local isbn = identifiers.isbn_13 or identifiers.isbn_10
   if not isbn then return nil end
 
   local results = self:findBooks(isbn, nil, user_id)

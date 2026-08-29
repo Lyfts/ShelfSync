@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+##### Plugin
+- Add an "Automatically link by provider identifier" setting, which takes priority over ISBN and title+author matching when auto-linking a book: Goodreads via a `goodreads:<id>` metadata tag, Hardcover via its existing `hardcover:`/`hardcover-edition:` tags, StoryGraph via its existing `storygraph:`/`storygraph-edition:` tags. New auto-link priority order is identifier -> ISBN -> title+author. Fable has no matching identifier scheme yet.
+
 ## 1.3.0
 ##### Plugin
 - Add Fable sync support alongside StoryGraph, Hardcover, and Goodreads (linking, progress/note updates, and background sync), using Fable's official API. Unlike the other services, Fable has a real login API, so the plugin logs in directly with your Fable email and password rather than a cookie/token fetched by hand — see the README's Fable authentication section, including a note for accounts that signed up via Google/Apple.

@@ -965,9 +965,28 @@ function StoryGraphApi:setFavorite(book_id, favorite)
   return code == 200 or code == 302
 end
 function StoryGraphApi:findBookByIdentifiers(identifiers, user_id)
-  local isbn = identifiers and (identifiers.isbn_13 or identifiers.isbn_10)
+  if not identifiers then return nil end
+
+  -- StoryGraph's own slug names an exact book, but there's no single-book
+  -- fetch that also returns a title (findUserBook's /books/<id> page is
+  -- scraped for reading-status controls, not the title) -- findEditions'
+  -- /books/<id>/editions listing already does, and always includes the
+  -- queried book itself, so it's reused here instead of adding a second,
+  -- untested HTML scrape just for this. Matched case-insensitively since
+  -- the slug was lowercased going into `identifiers` (see book.lua) but the
+  -- page's own data-book-id attribute wasn't.
+  if identifiers.storygraph_slug then
+    local editions = self:findEditions(identifiers.storygraph_slug, user_id)
+    for _, edition in ipairs(editions) do
+      if edition.book_id and edition.book_id:lower() == identifiers.storygraph_slug then
+        return edition
+      end
+    end
+  end
+
+  local isbn = identifiers.isbn_13 or identifiers.isbn_10
   if not isbn then return nil end
-  
+
   local results, err = self:findBooks(isbn, nil, user_id)
   if results and #results > 0 then
     return results[1]
