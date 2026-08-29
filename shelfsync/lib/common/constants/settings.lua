@@ -29,6 +29,7 @@ local Settings = {
   TRACK_PAGE_STEP = "track_page_step",
   SYNC_ON_OPEN = "sync_on_open",
   VERBOSE_LOGGING = "verbose_logging",
+  PROVIDER_ENABLED = "provider_enabled",
 }
 
 Settings.AUTOLINK_OPTIONS = { Settings.LINK_BY_ISBN, Settings.LINK_BY_TITLE }

@@ -59,6 +59,20 @@ local function get_headers(self, custom_headers)
   return headers
 end
 
+-- Mirrors get_headers()'s session cookie resolution (setting, then legacy
+-- config fallback) so callers can check for a usable credential without
+-- triggering a network request or the "no session cookie" warning log.
+-- remember_user_token is a supplementary refresh cookie, not itself
+-- sufficient, so only the session cookie is checked here.
+function StoryGraphApi:hasCredential()
+  local session = ""
+  if self.settings then
+    session = self.settings:readSetting(SETTING.SESSION_COOKIE)
+  end
+  if not session or session == "" then session = config.session_cookie or "" end
+  return session ~= ""
+end
+
 -- Helper to decode HTML entities
 local function decode_entities(str)
   local entities = {

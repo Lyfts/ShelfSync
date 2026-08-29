@@ -48,7 +48,9 @@ function SyncEngine:_bookSettingChanged(setting, key)
 end
 
 function SyncEngine:isActive()
-  return self.enabled or self.plugin_settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true
+  return self.settings:providerEnabled()
+    and self.api:hasCredential()
+    and (self.enabled or self.plugin_settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true)
 end
 
 function SyncEngine:disable()
@@ -60,6 +62,8 @@ function SyncEngine:disable()
 end
 
 function SyncEngine:onLink()
+  if not self:isActive() then return end
+
   self.provider:showLinkBookDialog(false, function(book)
     UIManager:show(Notification:new {
       text = _("Linked to: " .. book.title),
@@ -68,6 +72,8 @@ function SyncEngine:onLink()
 end
 
 function SyncEngine:onTrack()
+  if not self:isActive() then return end
+
   self.settings:setSync(true)
   UIManager:nextTick(function()
     UIManager:show(Notification:new {
@@ -77,6 +83,8 @@ function SyncEngine:onTrack()
 end
 
 function SyncEngine:onStopTrack()
+  if not self:isActive() then return end
+
   self.settings:setSync(false)
   UIManager:show(Notification:new {
     text = _("Progress tracking disabled")
@@ -84,6 +92,7 @@ function SyncEngine:onStopTrack()
 end
 
 function SyncEngine:onPullPosition()
+  if not self:isActive() then return end
   if not self.ui.document or not self.settings:bookLinked() then return end
 
   local book_id = self.settings:getLinkedBookId()
@@ -226,8 +235,25 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
     self:cancelPendingUpdates()
     self:initializePageUpdate()
   elseif field == SETTING.LINK_BY_ISBN or field == SETTING.LINK_BY_TITLE then
-    if change then
+    if change and self:isActive() then
       self.provider:tryAutolink()
+    end
+  elseif field == SETTING.PROVIDER_ENABLED then
+    if change then
+      self:registerHighlight()
+      if self.ui.document then
+        self:startReadCache()
+      end
+    else
+      self:cancelPendingUpdates()
+      Scheduler:clear()
+      -- Mirrors onSuspend/onNetworkDisconnecting: without resetting this,
+      -- startReadCache() on re-enable just aborts as "already started" (it
+      -- was never actually torn down), so process_page_turns never gets set
+      -- back to true and tracking silently stays dead after a re-enable.
+      self.state.read_cache_started = false
+      self.state.process_page_turns = false
+      self:registerHighlight()
     end
   elseif field == self.auth_setting_key then
     if change and change ~= "" and not self.enabled then
@@ -302,6 +328,11 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
     if immediate and callback then
       callback(nil, reason)
     end
+  end
+
+  if not self:isActive() then
+    self.settings:debugLog(self.label .. ": _handlePageUpdate - provider disabled, skipping")
+    return bail(_(self.label .. " is disabled"))
   end
 
   if not self:syncFileUpdates(filename) then
@@ -585,6 +616,8 @@ function SyncEngine:onNetworkConnected()
 end
 
 function SyncEngine:onEndOfBook()
+  if not self:isActive() then return end
+
   local file_path = self.ui.document.file
 
   if not self:syncFileUpdates(file_path) then
@@ -644,7 +677,7 @@ function SyncEngine:syncFileUpdates(filename)
 end
 
 function SyncEngine:onDocSettingsItemsChanged(file, doc_settings)
-  if not self:syncFileUpdates(file) or not doc_settings then
+  if not self:isActive() or not self:syncFileUpdates(file) or not doc_settings then
     return
   end
 

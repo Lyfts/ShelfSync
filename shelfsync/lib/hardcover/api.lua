@@ -43,6 +43,18 @@ local function get_headers(self)
   }
 end
 
+-- Mirrors get_headers()'s token resolution (setting, then legacy config
+-- fallback) so callers can check for a usable credential without triggering
+-- a network request or the "no API token" warning log.
+function HardcoverApi:hasCredential()
+  local token = ""
+  if self.settings then
+    token = self.settings:readSetting(SETTING.API_TOKEN)
+  end
+  if not token or token == "" then token = config.token or "" end
+  return token ~= ""
+end
+
 local book_fragment = [[
 fragment BookParts on books {
   book_id: id

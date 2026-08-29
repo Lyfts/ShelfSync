@@ -43,7 +43,9 @@ local privacy_labels = {
 -- (self.plugin_settings, injected by main.lua) rather than Hardcover's own
 -- settings file, which has no "Plugin Updates" section of its own.
 function HardcoverMenu:isActive()
-  return self.enabled or self.plugin_settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true
+  return self.settings:providerEnabled()
+    and self.api:hasCredential()
+    and (self.enabled or self.plugin_settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true)
 end
 
 function HardcoverMenu:mainMenu()
@@ -63,6 +65,16 @@ end
 
 function HardcoverMenu:getSubMenuItems(book_view)
   local menu_items = {
+    {
+      text = _("Enabled"),
+      checked_func = function()
+        return self.settings:providerEnabled()
+      end,
+      callback = function()
+        self.settings:setProviderEnabled(not self.settings:providerEnabled())
+      end,
+      separator = true,
+    },
     book_view and {
       text_func = function()
         if self.settings:bookLinked() then
@@ -173,6 +185,9 @@ function HardcoverMenu:getSubMenuItems(book_view)
     },
     {
       text = _("Suggest a book"),
+      enabled_func = function()
+        return self:isActive()
+      end,
       callback = function()
         self.hardcover:showRandomBookDialog()
       end,

@@ -215,6 +215,17 @@ function BaseSettings:syncEnabled()
   return self:fileSyncEnabled(self:getFilePath())
 end
 
+-- Per-provider on/off switch, deliberately not a SHARED_KEY (see above) so
+-- StoryGraph/Hardcover/Goodreads can each be toggled off independently.
+-- Defaults to true (unset) so existing installs keep working as before.
+function BaseSettings:providerEnabled()
+  return self:readSetting(SETTING.PROVIDER_ENABLED) ~= false
+end
+
+function BaseSettings:setProviderEnabled(value)
+  self:updateSetting(SETTING.PROVIDER_ENABLED, value == true)
+end
+
 function BaseSettings:autolinkEnabled()
   for _, setting in ipairs(SETTING.AUTOLINK_OPTIONS) do
     -- Must go through self:readSetting (not self.settings:readSetting)

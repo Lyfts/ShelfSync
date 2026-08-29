@@ -80,6 +80,18 @@ local function get_headers(self, custom_headers)
   return headers
 end
 
+-- Mirrors get_headers()'s cookie resolution (setting, then legacy config
+-- fallback) so callers can check for a usable credential without triggering
+-- a network request or the "no session cookie" warning log.
+function GoodreadsApi:hasCredential()
+  local cookie = ""
+  if self.settings then
+    cookie = self.settings:readSetting(SETTING.SESSION_COOKIE)
+  end
+  if not cookie or cookie == "" then cookie = config.cookie or "" end
+  return cookie ~= ""
+end
+
 -- Helper to decode HTML entities
 local function decode_entities(str)
   local entities = {

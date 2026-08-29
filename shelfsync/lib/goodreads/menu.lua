@@ -30,7 +30,9 @@ function GoodreadsMenu:new(o)
 end
 
 function GoodreadsMenu:isActive()
-  return self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true
+  return self.settings:providerEnabled()
+    and self.api:hasCredential()
+    and (self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true)
 end
 
 function GoodreadsMenu:mainMenu()
@@ -50,6 +52,16 @@ end
 
 function GoodreadsMenu:getSubMenuItems(book_view)
   local menu_items = {
+    {
+      text = _("Enabled"),
+      checked_func = function()
+        return self.settings:providerEnabled()
+      end,
+      callback = function()
+        self.settings:setProviderEnabled(not self.settings:providerEnabled())
+      end,
+      separator = true,
+    },
     book_view and {
       text_func = function()
         if self.settings:bookLinked() then

@@ -31,7 +31,9 @@ function StoryGraphMenu:new(o)
 end
 
 function StoryGraphMenu:isActive()
-  return self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true
+  return self.settings:providerEnabled()
+    and self.api:hasCredential()
+    and (self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true)
 end
 
 function StoryGraphMenu:mainMenu()
@@ -51,6 +53,16 @@ end
 
 function StoryGraphMenu:getSubMenuItems(book_view)
   local menu_items = {
+    {
+      text = _("Enabled"),
+      checked_func = function()
+        return self.settings:providerEnabled()
+      end,
+      callback = function()
+        self.settings:setProviderEnabled(not self.settings:providerEnabled())
+      end,
+      separator = true,
+    },
     book_view and {
       text_func = function()
         if self.settings:bookLinked() then
@@ -200,7 +212,7 @@ function StoryGraphMenu:getStatusSubMenuItems()
     {
       text = _(ICON.TRASH .. " Remove"),
       enabled_func = function()
-        return self.enabled and self.state.book_status.status_id ~= nil
+        return self:isActive() and self.state.book_status.status_id ~= nil
       end,
       callback = function(menu_instance)
         self.dialog_manager:maybeConfirm({
@@ -220,7 +232,7 @@ function StoryGraphMenu:getStatusSubMenuItems()
     {
       text = _("Owned"),
       enabled_func = function()
-        return self.state.book_status.id ~= nil
+        return self:isActive() and self.state.book_status.id ~= nil
       end,
       checked_func = function()
         return self.state.book_status.is_owned == true
@@ -238,7 +250,7 @@ function StoryGraphMenu:getStatusSubMenuItems()
     {
       text = _("Favorite"),
       enabled_func = function()
-        return self.state.book_status.id ~= nil
+        return self:isActive() and self.state.book_status.id ~= nil
       end,
       checked_func = function()
         return self.state.book_status.is_favorite == true
@@ -295,6 +307,9 @@ function StoryGraphMenu:getStatusSubMenuItems()
   if status and (status == STORYGRAPH.STATUS.FINISHED or status == STORYGRAPH.STATUS.DNF or self.state.book_status.can_review) then
     table.insert(items, {
       text = _("Review"),
+      enabled_func = function()
+        return self:isActive()
+      end,
       sub_item_table_func = function(menu_instance)
         return self:getReviewSubMenuItems(menu_instance)
       end,

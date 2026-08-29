@@ -63,6 +63,7 @@ describe("SyncEngine autolink race (StoryGraph + Hardcover sharing one wifi rest
 
     local user = { getId = function() return 1 end }
     local api = {
+      hasCredential = function() return true end,
       findBookByIdentifiers = function(_, identifiers, user_id)
         mocks.log("[" .. label .. "] api:findBookByIdentifiers called at t=" .. Clock.now)
         return { book_id = 42, title = "Test Book", pages = 300 }
