@@ -104,10 +104,23 @@ function Fable:pushProgress(_current_read, value, update_type, filename)
     local finished_result = self.api:updateUserBook(book_id, FABLE.STATUS.FINISHED)
     if finished_result then
       result = finished_result
+      self:onMarkedFinished(book_id, filename)
     end
   end
 
   return result
+end
+
+-- ReviewMenu entry point. Fable accepts fractional ratings, so the
+-- quarter-star value is passed through unrounded.
+function Fable:submitReview(filename, rating, text)
+  local book_id = self.settings:readBookSetting(filename, "book_id")
+  if not book_id then
+    return false, "No linked book found on Fable"
+  end
+
+  local review_rating = rating and rating > 0 and rating or nil
+  return self.api:setReview(book_id, review_rating, text) == true
 end
 
 return Fable

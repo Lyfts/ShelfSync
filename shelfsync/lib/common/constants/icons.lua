@@ -21,6 +21,10 @@ return {
   HALF_STAR = "\u{F089}",
   -- nf-fa-link
   LINK = "\u{F0C1}",
+  -- nf-fa-check_square
+  CHECKBOX_CHECKED = "\u{F14A}",
+  -- nf-fa-square_o
+  CHECKBOX_UNCHECKED = "\u{F096}",
   -- nf-fa-pause
   PAUSE = "\u{F04C}",
 }

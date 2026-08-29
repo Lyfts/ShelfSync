@@ -15,6 +15,7 @@ local _ = require("gettext")
 local logger = require("logger")
 local util = require("util")
 
+local Event = require("ui/event")
 local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
 local Notification = require("ui/widget/notification")
@@ -201,6 +202,35 @@ function BaseProvider:tryAutolink(done)
   elseif done then
     done()
   end
+end
+
+-- Called by Cache:updateBookStatus (and, for Goodreads/StoryGraph/Fable,
+-- their own pushProgress) whenever a book is successfully marked Finished,
+-- from any of the ways that can happen (auto-track completion, EndOfBook,
+-- KOReader's own Book Status dialog, or the "Update status" menu). Default
+-- behavior is just the notifyBookFinished broadcast below; only Goodreads
+-- overrides this, to also stamp its date-finished field.
+function BaseProvider:onMarkedFinished(_book_id, filename)
+  self:notifyBookFinished(filename)
+end
+
+-- Broadcasts a plugin-wide "book finished" signal, picked up by
+-- ShelfSyncApp:onShelfSyncBookFinished (main.lua) to (once per book, across
+-- however many of the 4 provider engines independently reach Finished) offer
+-- to open the Review menu. This is the only place a KOReader Book Status
+-- rating gets pushed to a provider now -- via the Review menu that popup
+-- leads to, pre-filled from getKoreaderRating -- rather than an automatic,
+-- silent sync on Finished.
+function BaseProvider:notifyBookFinished(filename)
+  UIManager:broadcastEvent(Event:new("ShelfSyncBookFinished", filename))
+end
+
+-- Submits a rating/review to this provider. Providers that don't support one
+-- of `rating`/`text` should just ignore that argument. Returns true/false
+-- (or a message on failure) rather than raising, so ReviewMenu can report
+-- per-provider results without partial submissions killing the others.
+function BaseProvider:submitReview(_filename, _rating, _text)
+  return false, "Not supported for this provider"
 end
 
 function BaseProvider:_runAutolink(identifiers)
