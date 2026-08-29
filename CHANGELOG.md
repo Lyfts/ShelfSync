@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.1
 ##### Plugin
 - Add an "Automatically link by provider identifier" setting, which takes priority over ISBN and title+author matching when auto-linking a book: Goodreads via a `goodreads:<id>` metadata tag, Hardcover via its existing `hardcover:`/`hardcover-edition:` tags, StoryGraph via its existing `storygraph:`/`storygraph-edition:` tags. New auto-link priority order is identifier -> ISBN -> title+author. Fable has no matching identifier scheme yet.
 
