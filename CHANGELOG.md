@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+##### Plugin
+- Add Fable sync support alongside StoryGraph, Hardcover, and Goodreads (linking, progress/note updates, and background sync), using Fable's official API. Unlike the other services, Fable has a real login API, so the plugin logs in directly with your Fable email and password rather than a cookie/token fetched by hand — see the README's Fable authentication section, including a note for accounts that signed up via Google/Apple.
+- The StoryGraph, Hardcover, Goodreads, and Fable sub-menus are now combined into a single **Providers** sub-menu (previously listed directly under ShelfSync), and **Common settings** is renamed to **Settings**.
+
 ## 1.2.1
 ##### Plugin
 - Add an "Enabled" toggle to each service's menu (StoryGraph, Hardcover, Goodreads), on by default. Turning it off fully pauses that service — no linking, syncing, or other actions — without losing your saved cookie/API token, and turning it back on resumes right where it left off. A service is now also treated as off until you've actually saved a cookie/token for it, instead of quietly trying (and failing) in the background.

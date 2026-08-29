@@ -32,17 +32,17 @@ function CommonMenu:getTrackingSubMenuItems()
       end,
       callback = function()
         local setting = self.settings:syncByRemotePages()
-        self.settings:updateSetting(SETTING.SYNC_BY_REMOTE_PAGES, not setting)
+        self.settings:updateSetting(SETTING.SHARED.SYNC_BY_REMOTE_PAGES, not setting)
       end,
     },
     {
       text = _("Always track progress by default"),
       checked_func = function()
-        return self.settings:readSetting(SETTING.ALWAYS_SYNC) ~= false
+        return self.settings:readSetting(SETTING.SHARED.ALWAYS_SYNC) ~= false
       end,
       callback = function()
-        local setting = self.settings:readSetting(SETTING.ALWAYS_SYNC) ~= false
-        self.settings:updateSetting(SETTING.ALWAYS_SYNC, not setting)
+        local setting = self.settings:readSetting(SETTING.SHARED.ALWAYS_SYNC) ~= false
+        self.settings:updateSetting(SETTING.SHARED.ALWAYS_SYNC, not setting)
       end,
     },
     {
@@ -52,7 +52,7 @@ function CommonMenu:getTrackingSubMenuItems()
       end,
       callback = function()
         local setting = self.settings:syncOnOpen()
-        self.settings:updateSetting(SETTING.SYNC_ON_OPEN, not setting)
+        self.settings:updateSetting(SETTING.SHARED.SYNC_ON_OPEN, not setting)
       end,
       hold_callback = function()
         UIManager:show(InfoMessage:new {
@@ -90,7 +90,7 @@ Disable this if you'd rather sync only follow the usual periodic/threshold patte
           ok_text = _("Save"),
           title_text = _("Set track frequency"),
           callback = function(spin)
-            self.settings:updateSetting(SETTING.TRACK_FREQUENCY, spin.value)
+            self.settings:updateSetting(SETTING.SHARED.TRACK_FREQUENCY, spin.value)
             menu_instance:updateItems()
           end
         }
@@ -165,7 +165,7 @@ Disable this if you'd rather sync only follow the usual periodic/threshold patte
           ok_text = _("Save"),
           title_text = _("Set track pages"),
           callback = function(spin)
-            self.settings:updateSetting(SETTING.TRACK_PAGE_STEP, spin.value)
+            self.settings:updateSetting(SETTING.SHARED.TRACK_PAGE_STEP, spin.value)
             menu_instance:updateItems()
           end
         }
@@ -182,21 +182,21 @@ function CommonMenu:getAutoLinkSubMenuItems()
     {
       text = _("Automatically link by ISBN"),
       checked_func = function()
-        return self.settings:readSetting(SETTING.LINK_BY_ISBN) ~= false
+        return self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false
       end,
       callback = function()
-        local setting = self.settings:readSetting(SETTING.LINK_BY_ISBN) ~= false
-        self.settings:updateSetting(SETTING.LINK_BY_ISBN, not setting)
+        local setting = self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false
+        self.settings:updateSetting(SETTING.SHARED.LINK_BY_ISBN, not setting)
       end
     },
     {
       text = _("Automatically link by title and author"),
       checked_func = function()
-        return self.settings:readSetting(SETTING.LINK_BY_TITLE) ~= false
+        return self.settings:readSetting(SETTING.SHARED.LINK_BY_TITLE) ~= false
       end,
       callback = function()
-        local setting = self.settings:readSetting(SETTING.LINK_BY_TITLE) ~= false
-        self.settings:updateSetting(SETTING.LINK_BY_TITLE, not setting)
+        local setting = self.settings:readSetting(SETTING.SHARED.LINK_BY_TITLE) ~= false
+        self.settings:updateSetting(SETTING.SHARED.LINK_BY_TITLE, not setting)
       end
     },
   }
@@ -303,14 +303,14 @@ function CommonMenu:getSubMenuItems()
     {
       text = _("Enable wifi on demand"),
       checked_func = function()
-        return self.settings:readSetting(SETTING.ENABLE_WIFI) == true
+        return self.settings:readSetting(SETTING.SHARED.ENABLE_WIFI) == true
       end,
       enabled_func = function()
         return Device:hasWifiRestore()
       end,
       callback = function()
-        local setting = self.settings:readSetting(SETTING.ENABLE_WIFI) == true
-        self.settings:updateSetting(SETTING.ENABLE_WIFI, not setting)
+        local setting = self.settings:readSetting(SETTING.SHARED.ENABLE_WIFI) == true
+        self.settings:updateSetting(SETTING.SHARED.ENABLE_WIFI, not setting)
       end
     },
     {
@@ -326,11 +326,11 @@ function CommonMenu:getSubMenuItems()
     {
       text = _("Include location info in regular notes"),
       checked_func = function()
-        return self.settings:readSetting(SETTING.INCLUDE_LOCATION_IN_NOTES) == true
+        return self.settings:readSetting(SETTING.SHARED.INCLUDE_LOCATION_IN_NOTES) == true
       end,
       callback = function()
-        local setting = self.settings:readSetting(SETTING.INCLUDE_LOCATION_IN_NOTES) == true
-        self.settings:updateSetting(SETTING.INCLUDE_LOCATION_IN_NOTES, not setting)
+        local setting = self.settings:readSetting(SETTING.SHARED.INCLUDE_LOCATION_IN_NOTES) == true
+        self.settings:updateSetting(SETTING.SHARED.INCLUDE_LOCATION_IN_NOTES, not setting)
       end,
       hold_callback = function()
         UIManager:show(InfoMessage:new {
@@ -347,7 +347,7 @@ Quotes always include this info.]],
       end,
       callback = function()
         local setting = self.settings:verboseLogging()
-        self.settings:updateSetting(SETTING.VERBOSE_LOGGING, not setting)
+        self.settings:updateSetting(SETTING.SHARED.VERBOSE_LOGGING, not setting)
       end,
       hold_callback = function()
         UIManager:show(InfoMessage:new {

@@ -38,7 +38,7 @@ function AutoWifi:withWifi(callback)
     return
   end
 
-  local enable_wifi_setting = self.settings:readSetting(SETTING.ENABLE_WIFI)
+  local enable_wifi_setting = self.settings:readSetting(SETTING.SHARED.ENABLE_WIFI)
   local has_wifi_restore = Device:hasWifiRestore()
   local not_airplane_mode = G_reader_settings:nilOrFalse("airplanemode")
   if enable_wifi_setting
@@ -100,7 +100,7 @@ function AutoWifi:wifiPrompt(callback)
 
   local network_callback = callback and function() callback(true) end or nil
 
-  if self.settings:readSetting(SETTING.ENABLE_WIFI) then
+  if self.settings:readSetting(SETTING.SHARED.ENABLE_WIFI) then
     NetworkMgr:turnOnWifiAndWaitForConnection(network_callback)
   else
     NetworkMgr:promptWifiOn(network_callback)
@@ -108,7 +108,7 @@ function AutoWifi:wifiPrompt(callback)
 end
 
 function AutoWifi:wifiDisablePrompt()
-  if self.settings:readSetting(SETTING.ENABLE_WIFI) and Device:hasWifiRestore() then
+  if self.settings:readSetting(SETTING.SHARED.ENABLE_WIFI) and Device:hasWifiRestore() then
     self:wifiDisableSilent()
   else
     NetworkMgr:toggleWifiOff()

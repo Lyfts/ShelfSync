@@ -40,9 +40,9 @@ describe("Provider enable/credential gating", function()
     }
 
     settings = HardcoverSettings:new("/settings/hardcover.lua", ui, nil)
-    settings:updateSetting(SETTING.LINK_BY_ISBN, true)
-    settings:updateSetting(SETTING.LINK_BY_TITLE, true)
-    settings:updateSetting(SETTING.ENABLE_WIFI, true)
+    settings:updateSetting(SETTING.SHARED.LINK_BY_ISBN, true)
+    settings:updateSetting(SETTING.SHARED.LINK_BY_TITLE, true)
+    settings:updateSetting(SETTING.SHARED.ENABLE_WIFI, true)
 
     calls = {
       findBookByIdentifiers = 0,

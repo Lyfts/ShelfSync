@@ -54,9 +54,9 @@ describe("SyncEngine autolink race (StoryGraph + Hardcover sharing one wifi rest
   -- tryAutolink actually touch.
   local function buildEngine(label, settings_class, filename, provider_class, constants)
     local settings = settings_class:new("/settings/" .. filename, ui, nil)
-    settings:updateSetting(SETTING.LINK_BY_ISBN, true)
-    settings:updateSetting(SETTING.LINK_BY_TITLE, true)
-    settings:updateSetting(SETTING.ENABLE_WIFI, true)
+    settings:updateSetting(SETTING.SHARED.LINK_BY_ISBN, true)
+    settings:updateSetting(SETTING.SHARED.LINK_BY_TITLE, true)
+    settings:updateSetting(SETTING.SHARED.ENABLE_WIFI, true)
 
     local state = { page = nil, pos = nil, search_results = {}, book_status = {} }
     local wifi = AutoWifi:new { settings = settings, label = label }
