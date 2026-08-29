@@ -1,9 +1,9 @@
 # ShelfSync for KOReader
 
-A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com), [Hardcover](https://hardcover.app), and/or [Goodreads](https://goodreads.com). All services can be linked and tracked independently, side by side, from the same install.
+A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com), [Hardcover](https://hardcover.app), [Goodreads](https://goodreads.com), and/or [Fable](https://fable.co). All services can be linked and tracked independently, side by side, from the same install.
 
 > [!CAUTION]
-> **Disclaimer**: StoryGraph and Goodreads sync both use unofficial APIs based on session cookies. Because of this, they are inherently brittle and may break if either service updates their website or cookie structure. If sync stops working, please ensure you are using the latest version of the plugin and try re-fetching your session cookie(s). Hardcover sync uses Hardcover's official API and does not have this issue.
+> **Disclaimer**: StoryGraph and Goodreads sync both use unofficial APIs based on session cookies. Because of this, they are inherently brittle and may break if either service updates their website or cookie structure. If sync stops working, please ensure you are using the latest version of the plugin and try re-fetching your session cookie(s). Hardcover and Fable sync use their services' official APIs and do not have this issue.
 
 > [!NOTE]
 > **Goodreads limitations**: Goodreads' website doesn't expose a way to read back your current page position, only your shelf (status), so "Jump to linked book position" isn't available and background sync can't detect when your local progress is behind what's on Goodreads — it always pushes forward. Paused/Did Not Finish statuses can be set but aren't reliably read back either. Posting reviews/ratings isn't supported yet.
@@ -13,7 +13,7 @@ A KOReader plugin to synchronize your reading progress, notes, and status to [Th
 1. Download the latest release and extract it to your KOReader `plugins/` folder.
 2. Set up authentication for whichever service(s) you want to use — all are optional and independent.
 
-All services share a single config file: rename `shelfsync_config.example.lua` to `shelfsync_config.lua`, then fill in whichever section(s) below you want — the `storygraph`, `hardcover`, and `goodreads` sections are all optional and independent, and leaving one blank (or the whole file missing) doesn't affect the others.
+StoryGraph, Hardcover, and Goodreads share a single config file: rename `shelfsync_config.example.lua` to `shelfsync_config.lua`, then fill in whichever section(s) below you want — the `storygraph`, `hardcover`, and `goodreads` sections are all optional and independent, and leaving one blank (or the whole file missing) doesn't affect the others. Fable has no config file section — it's set up entirely from within KOReader (see below).
 - *Note: If you are upgrading from an older version, the plugin will automatically merge an existing `storygraph_config.lua` and/or `hardcover_config.lua` into `shelfsync_config.lua`.*
 
 > [!TIP]
@@ -50,9 +50,18 @@ Without that setup, grab a cookie by hand instead. Rather than copying each one 
 
 This cookie will go stale again periodically unless you set up the Docker refresher above — when that happens, syncing pauses until you repeat the steps above.
 
+### Fable authentication
+Unlike the other services, Fable has a real login API, so the plugin logs in directly with your Fable email and password rather than a cookie/token you have to fetch by hand.
+
+1. In KOReader, open **Fable** menu -> **Account** -> **Log in**, and enter your Fable email and password.
+2. Your password itself is never stored — only the access/refresh token pair Fable's own login returns, the same thing its official app keeps. That pair refreshes itself automatically from then on; if it's ever revoked (e.g. after changing your password), just log in again the same way.
+
+> [!TIP]
+> If you signed up to Fable with **Google or Apple**, there's no password to log in with here. Convert the account to a regular email/password account first: in the Fable app, go to **Account settings** and set/add a password for your account. Once that's done, log in above using that email and password like any other account.
+
 ## Usage
 
-Everything lives under a single **ShelfSync** menu in **Tools > More tools** when a document is active, with **StoryGraph**, **Hardcover**, and **Goodreads** as sub-menus. They work the same way and can be used together or independently.
+Everything lives under a single **ShelfSync** menu in **Tools > More tools** when a document is active, with a **Providers** sub-menu containing **StoryGraph**, **Hardcover**, **Goodreads**, and **Fable**. They work the same way and can be used together or independently.
 
 ### Updating Progress & Notes
 Each menu provides a unified **"Update progress: [XX]%"** item. This opens a powerful dialog where you can:
@@ -63,7 +72,7 @@ Each menu provides a unified **"Update progress: [XX]%"** item. This opens a pow
 ### Linking a Book
 Before updates can be sent, a document needs to be linked to a book on each service you want to sync to.
 - Use **"Link book"** to search by metadata or ISBN. The plugin automatically tries to link the correct edition (e.g. by matching ISBN) — "Change edition" and the other settings below are mostly for changing which specific edition ends up linked, when you want something other than what was auto-selected.
-- Use **"Change edition"** to switch to a different edition (StoryGraph) or select a specific edition (Hardcover). Goodreads has no edition-switching concept, so it has no "Change edition" item — linking picks whichever edition its search returns.
+- Use **"Change edition"** to switch to a different edition (StoryGraph) or select a specific edition (Hardcover). Goodreads and Fable have no edition-switching concept, so they have no "Change edition" item — linking picks whichever edition the search returns.
 - Audio editions are filtered out of the search results (StoryGraph, Hardcover).
 - If a book is not currently tracked, the plugin will set its status to Currently Reading.
 - On StoryGraph, if another edition of the book is set as 'Currently Reading' or 'Want to Read' then the plugin will automatically link to that edition, but not change the status. You can use "Change edition" to link to a different edition if needed.
@@ -79,16 +88,16 @@ When enabled (per service), the plugin will periodically sync your progress:
 
 Each service has its own **Settings** submenu for linking and account options:
 - **Automatically link by ISBN/Title**: Attempt to find matching books automatically when opening a new document. Enabled by default; disable here if you'd rather link books manually.
-- **Account**: Cookies/tokens for that service.
+- **Account**: Cookies/tokens/login for that service.
 
-Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Common settings**, since it applies to the whole plugin rather than one service:
+Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Settings**, since it applies to the whole plugin rather than one service:
 - **Include location info in regular notes**: Automatically append Chapter, Page, and % info to your regular notes.
 - **Enable wifi on demand**: Briefly enable wifi for background syncs to preserve battery life.
 - **Confirm changes to book read status**: Prompt for confirmation before changing a book's status (e.g., Want to Read -> Read).
 
 ## Versioning & Mandatory Updates
 
-To prevent data corruption and ensure compatibility with StoryGraph's and Goodreads' unofficial APIs, the plugin includes a remote versioning system. This applies to the plugin as a whole (StoryGraph, Hardcover, and Goodreads sync).
+To prevent data corruption and ensure compatibility with StoryGraph's and Goodreads' unofficial APIs, the plugin includes a remote versioning system. This applies to the plugin as a whole (StoryGraph, Hardcover, Goodreads, and Fable sync).
 
 - **Automatic Checks**: The plugin periodically checks for mandatory updates via GitHub. If the StoryGraph API changes in a way that breaks older versions, the plugin will automatically disable sync to prevent errors.
 - **Blocking**: When a mandatory update is required, the plugin menus will be greyed out.
