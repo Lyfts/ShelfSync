@@ -732,6 +732,38 @@ function GoodreadsApi:updateUserBook(book_id, status_id)
   return nil
 end
 
+-- Unshelves a book entirely (confirmed via HAR of the classic "Edit review"
+-- page's remove action -- /review/destroy/{id}, a plain Rails form POST, not
+-- the WAF-gated GraphQL unshelveBook mutation the modern shelf grid uses for
+-- the same action). The `{id}` here is the book id, not a separate review
+-- id: the captured request used the same numeric id as the book's own
+-- /book/show/ page and cover image, so there's no distinct review id to look
+-- up first.
+function GoodreadsApi:removeRead(book_id)
+  local csrf = self:refreshSession()
+  if not csrf then
+    logger.warn("Goodreads: Could not extract CSRF token for remove")
+    return nil
+  end
+
+  local custom_headers = {
+    ["Content-Type"] = "application/x-www-form-urlencoded",
+    ["Referer"] = base_url .. "/review/edit/" .. book_id,
+    ["Origin"] = base_url,
+  }
+
+  local code = self:request(base_url .. "/review/destroy/" .. book_id, "POST", {
+    _method = "post",
+    authenticity_token = csrf,
+  }, custom_headers)
+
+  if code == 200 or code == 302 then
+    return { id = book_id }
+  end
+  self.settings:debugWarn("Goodreads: removeRead failed - code=" .. tostring(code))
+  return nil
+end
+
 -- /user_status.json takes either field directly, so a percentage update
 -- doesn't need a known page count to convert against -- unlike the old
 -- percentToPage route, this works even for editions where the numPages
