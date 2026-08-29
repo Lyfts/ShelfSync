@@ -415,13 +415,19 @@ function ShelfSyncApp:onDocSettingsItemsChanged(file, doc_settings)
 end
 
 function ShelfSyncApp:addToMainMenu(menu_items)
-  local sub_items = {}
+  local provider_items = {}
   for _, provider in ipairs(PROVIDERS) do
-    table.insert(sub_items, self.engines[provider.key].menu:mainMenu())
+    table.insert(provider_items, self.engines[provider.key].menu:mainMenu())
   end
 
+  local sub_items = {}
   table.insert(sub_items, {
-    text = _("Common settings"),
+    text = _("Providers"),
+    sub_item_table = provider_items,
+  })
+
+  table.insert(sub_items, {
+    text = _("Settings"),
     sub_item_table_func = function()
       return self.common_menu:getSubMenuItems()
     end,
