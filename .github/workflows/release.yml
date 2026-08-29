@@ -39,21 +39,37 @@ jobs:
           cp "$GITHUB_WORKSPACE"/tools/support/fetch_cookies.py shelfsync-fetch-cookies/support/
           zip -r shelfsync-fetch-cookies.zip shelfsync-fetch-cookies
 
-      - name: Determine changelog anchor
-        id: changelog
+      - name: Extract changelog section
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
           # CHANGELOG.md headings are plain version numbers (e.g. "## 1.0.3"),
           # and GitHub's heading-anchor slugifier drops punctuation like dots,
-          # so "1.0.3" -> "#103". Strip a leading "v" too, for tags like v1.0.3.
-          echo "anchor=$(echo "$TAG" | sed -E 's/^v//; s/[^A-Za-z0-9]//g')" >> "$GITHUB_OUTPUT"
+          # so "1.0.3" -> "#103".
+          ANCHOR="$(echo "$VERSION" | sed -E 's/[^A-Za-z0-9]//g')"
+
+          awk -v ver="$VERSION" '
+            $0 == "## " ver { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+
+          if [ ! -s release_notes.md ]; then
+            echo "_No changelog entry found for $VERSION._" > release_notes.md
+          fi
+
+          {
+            echo
+            echo "---"
+            echo
+            echo "Full changelog: [CHANGELOG.md](${{ github.server_url }}/${{ github.repository }}/blob/main/CHANGELOG.md#$ANCHOR)"
+          } >> release_notes.md
 
       - name: Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          body: |
-            See [CHANGELOG.md](${{ github.server_url }}/${{ github.repository }}/blob/main/CHANGELOG.md#${{ steps.changelog.outputs.anchor }}) for changes in this release.
+          body_path: release_notes.md
           files: |
             ../shelfsync.koplugin.zip
             ../shelfsync-fetch-cookies.zip
