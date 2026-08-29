@@ -254,6 +254,11 @@ function FableApi:request(path, method, body)
     if ok then data = decoded end
   end
 
+  if self.settings and code_num and (code_num < 200 or code_num >= 300) then
+    self.settings:debugWarn("Fable: " .. (method or "GET") .. " " .. path .. " returned "
+      .. tostring(code_num) .. " body=" .. tostring(response_body))
+  end
+
   return code_num, data
 end
 
@@ -261,6 +266,9 @@ function FableApi:me()
   local code, data = self:request("/api/settings/profile/", "GET")
   if code == 200 and data then
     return { id = data.id }
+  end
+  if self.settings then
+    self.settings:debugWarn("Fable: me() failed - code=" .. tostring(code))
   end
   return {}
 end
@@ -324,13 +332,12 @@ function FableApi:findBookByIdentifiers(identifiers, user_id)
 end
 
 -- The book-detail endpoint doubles as the per-viewer status lookup: its
--- embedded `status` field (confirmed via HAR across 4 captured calls: null
--- before shelving, "current_reading"/"finished" after) reflects the
--- caller's own shelving state directly, so no separate book_lists lookup is
--- needed just to read status. Deliberately doesn't resolve a page count
--- here (that needs a second, paginated editions/ call -- see
--- findEditionPageCount) since findUserBook is called far more often than a
--- book is first linked.
+-- embedded `response.status` field (confirmed live: nil before shelving,
+-- "current_reading"/"finished" after) reflects the caller's own shelving
+-- state directly, so no separate book_lists lookup is needed just to read
+-- status. Deliberately doesn't resolve a page count here (that needs a
+-- second, paginated editions/ call -- see findEditionPageCount) since
+-- findUserBook is called far more often than a book is first linked.
 function FableApi:findUserBook(book_id, _user_id)
   if not book_id then
     return {}
@@ -341,10 +348,12 @@ function FableApi:findUserBook(book_id, _user_id)
     return {}, "Failed to fetch book"
   end
 
+  local status = _t.dig(data, "response", "status")
+
   return {
     id = book_id,
     book_id = book_id,
-    status_id = STATUS_BY_SYSTEM_TYPE[data.status],
+    status_id = STATUS_BY_SYSTEM_TYPE[status],
   }
 end
 
@@ -403,6 +412,10 @@ function FableApi:_systemListIds(user_id)
     "/api/v2/users/" .. user_id .. "/book_lists?limit=20&offset=0&media_type=book", "GET"
   )
   if code ~= 200 or not data or not data.results then
+    if self.settings then
+      self.settings:debugWarn("Fable: _systemListIds failed - code=" .. tostring(code)
+        .. " has_data=" .. tostring(data ~= nil) .. " has_results=" .. tostring(data and data.results ~= nil))
+    end
     return nil
   end
 
@@ -411,6 +424,14 @@ function FableApi:_systemListIds(user_id)
     if list.type == "system" and list.system_type then
       by_type[list.system_type] = list.id
     end
+  end
+
+  if self.settings then
+    local types = {}
+    for system_type in pairs(by_type) do
+      table.insert(types, system_type)
+    end
+    self.settings:debugLog("Fable: _systemListIds resolved types=" .. table.concat(types, ","))
   end
 
   self._system_lists = { user_id = user_id, by_type = by_type }
@@ -426,11 +447,19 @@ function FableApi:updateUserBook(book_id, status_id)
   local user_id = self.settings and self.settings:readSetting(SETTING.USER_ID)
   local target_type = FABLE.SYSTEM_TYPE[status_id]
   if not user_id or not target_type then
+    if self.settings then
+      self.settings:debugWarn("Fable: updateUserBook aborted - user_id="
+        .. tostring(user_id) .. " target_type=" .. tostring(target_type))
+    end
     return nil
   end
 
   local by_type = self:_systemListIds(user_id)
   if not by_type or not by_type[target_type] then
+    if self.settings then
+      self.settings:debugWarn("Fable: updateUserBook aborted - system list for '"
+        .. target_type .. "' not found (by_type=" .. tostring(by_type) .. ")")
+    end
     return nil
   end
 
@@ -459,6 +488,33 @@ function FableApi:updateUserBook(book_id, status_id)
   return nil
 end
 
+-- Confirmed via HAR: unlike updateUserBook, removal doesn't need the
+-- per-account system list ids resolved first -- the RemoveFromLibrary
+-- request type takes only the book_id and a remove_from_all_lists flag, and
+-- Fable's API strips the book off every list (system and custom alike)
+-- itself.
+function FableApi:removeRead(book_id)
+  local user_id = self.settings and self.settings:readSetting(SETTING.USER_ID)
+  if not user_id then
+    return nil
+  end
+
+  local code = self:request(
+    "/api/v2/users/" .. user_id .. "/book_lists/book",
+    "POST",
+    {
+      type = "co.fable.data.BookListRequest.RemoveFromLibrary",
+      book_id = book_id,
+      remove_from_all_lists = true,
+    }
+  )
+
+  if code and code >= 200 and code < 300 then
+    return { id = book_id }
+  end
+  return nil
+end
+
 -- Confirmed via HAR (percentage mode only -- the capture never exercised
 -- page-based tracking): the POST body is
 -- {current_percentage, status="reading", social_accounts={}, selected_mode}.
@@ -470,7 +526,10 @@ end
 -- reading-session vocabulary like "reading", not the shelving vocabulary
 -- STATUS_BY_SYSTEM_TYPE expects) -- same pattern as Goodreads' updateProgress.
 function FableApi:updateProgress(book_id, value, update_type)
-  local body = { status = "reading", social_accounts = {} }
+  -- Fable rejects an empty social_accounts encoded as a JSON object ("{}")
+  -- with a 400 -- it must be an empty array ("[]"). An empty Lua table is
+  -- ambiguous to the JSON encoder, so it has to be marked explicitly.
+  local body = { status = "reading", social_accounts = json.util.InitArray({}) }
   if update_type == "pages" then
     body.current_page = math.floor(value)
     body.selected_mode = "page"

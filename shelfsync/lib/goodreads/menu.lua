@@ -152,10 +152,7 @@ end
 
 -- Builds a radio menu item that marks the current book with `status_id` on
 -- Goodreads (after confirmation), used for every entry in the status list
--- below. Unlike StoryGraph/Hardcover, there's no "Remove" entry here --
--- available HAR captures never covered a legacy unshelve action, so it's
--- left out rather than guessed at; users can remove a shelf from the
--- Goodreads website directly.
+-- below except "Remove", which has no status_id of its own to set.
 function GoodreadsMenu:_statusMenuItem(icon, status_id)
   return {
     text = _(icon .. " " .. GOODREADS.STATUS_NAME[status_id]),
@@ -186,6 +183,26 @@ function GoodreadsMenu:getStatusSubMenuItems()
     self:_statusMenuItem(ICON.CHECKMARK, GOODREADS.STATUS.FINISHED),
     self:_statusMenuItem(ICON.PAUSE, GOODREADS.STATUS.PAUSED),
     self:_statusMenuItem(ICON.STOP_CIRCLE, GOODREADS.STATUS.DNF),
+    {
+      text = _(ICON.TRASH .. " Remove"),
+      enabled_func = function()
+        return self:isActive() and self.state.book_status.status_id ~= nil
+      end,
+      callback = function(menu_instance)
+        self.dialog_manager:maybeConfirm({
+          text = "Remove current book status?",
+          ok_callback = function()
+            local result = self.api:removeRead(self.state.book_status.id)
+            if result then
+              self.state.book_status = {}
+              menu_instance.item_table = self:getStatusSubMenuItems()
+              menu_instance:updateItems()
+            end
+          end
+        })
+      end,
+      keep_menu_open = true,
+    },
   }
 
   local status = self.state.book_status.status_id

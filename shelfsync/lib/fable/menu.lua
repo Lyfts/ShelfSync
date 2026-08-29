@@ -146,9 +146,11 @@ function FableMenu:getSubMenuItems(book_view)
 end
 
 -- Builds a radio menu item that marks the current book with `status_id` on
--- Fable (after confirmation). Only 4 entries -- unlike Goodreads/Hardcover,
--- there's no Paused entry, since Fable has no "paused" system list to shelve
--- it on (confirmed via HAR, see fable/constants.lua's SYSTEM_TYPE).
+-- Fable (after confirmation), used for every entry in the status list below
+-- except "Remove", which has no status_id of its own to set. Unlike
+-- Goodreads/Hardcover, there's no Paused entry, since Fable has no "paused"
+-- system list to shelve it on (confirmed via HAR, see fable/constants.lua's
+-- SYSTEM_TYPE).
 function FableMenu:_statusMenuItem(icon, status_id)
   return {
     text = _(icon .. " " .. FABLE.STATUS_NAME[status_id]),
@@ -178,6 +180,26 @@ function FableMenu:getStatusSubMenuItems()
     self:_statusMenuItem(ICON.OPEN_BOOK, FABLE.STATUS.READING),
     self:_statusMenuItem(ICON.CHECKMARK, FABLE.STATUS.FINISHED),
     self:_statusMenuItem(ICON.STOP_CIRCLE, FABLE.STATUS.DNF),
+    {
+      text = _(ICON.TRASH .. " Remove"),
+      enabled_func = function()
+        return self:isActive() and self.state.book_status.status_id ~= nil
+      end,
+      callback = function(menu_instance)
+        self.dialog_manager:maybeConfirm({
+          text = "Remove current book status?",
+          ok_callback = function()
+            local result = self.api:removeRead(self.state.book_status.id)
+            if result then
+              self.state.book_status = {}
+              menu_instance.item_table = self:getStatusSubMenuItems()
+              menu_instance:updateItems()
+            end
+          end
+        })
+      end,
+      keep_menu_open = true,
+    },
   }
 
   local status = self.state.book_status.status_id
