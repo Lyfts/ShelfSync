@@ -606,7 +606,7 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
     {
       text = _("StoryGraph Session Cookie"),
       text_func = function()
-        local set = self.settings:readSetting(SETTING.SESSION_COOKIE)
+        local set = self.settings:readSetting(SETTING.STORYGRAPH.SESSION_COOKIE)
         if not set or set == "" then set = legacy_config.session_cookie end
         return _("StoryGraph Session Cookie") .. (set and set ~= "" and _(" (set)") or _(" (not set)"))
       end,
@@ -622,7 +622,7 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
           title = _("StoryGraph Session Cookie"),
           fields = {
             {
-              text = self.settings:readSetting(SETTING.SESSION_COOKIE) or legacy_config.session_cookie or "",
+              text = self.settings:readSetting(SETTING.STORYGRAPH.SESSION_COOKIE) or legacy_config.session_cookie or "",
             },
           },
           buttons = {
@@ -637,7 +637,7 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
                 text = _("Save"),
                 callback = function()
                   local value = dialog:getFields()[1]
-                  self.settings:updateSetting(SETTING.SESSION_COOKIE, value)
+                  self.settings:updateSetting(SETTING.STORYGRAPH.SESSION_COOKIE, value)
                   UIManager:close(dialog)
                 end,
               },
@@ -650,7 +650,7 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
     {
       text = _("StoryGraph Remember Token"),
       text_func = function()
-        local set = self.settings:readSetting(SETTING.REMEMBER_TOKEN)
+        local set = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN)
         if not set or set == "" then set = legacy_config.remember_user_token end
         return _("StoryGraph Remember Token") .. (set and set ~= "" and _(" (set)") or _(" (not set)"))
       end,
@@ -666,7 +666,7 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
           title = _("StoryGraph Remember Token"),
           fields = {
             {
-              text = self.settings:readSetting(SETTING.REMEMBER_TOKEN) or legacy_config.remember_user_token or "",
+              text = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN) or legacy_config.remember_user_token or "",
             },
           },
           buttons = {
@@ -681,7 +681,7 @@ The session cookie expires periodically (StoryGraph, not this plugin, decides wh
                 text = _("Save"),
                 callback = function()
                   local value = dialog:getFields()[1]
-                  self.settings:updateSetting(SETTING.REMEMBER_TOKEN, value)
+                  self.settings:updateSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN, value)
                   UIManager:close(dialog)
                 end,
               },

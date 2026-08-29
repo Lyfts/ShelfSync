@@ -493,7 +493,7 @@ The token does not expire automatically, but can be regenerated (which invalidat
     {
       text = _("Hardcover API Token"),
       text_func = function()
-        local set = self.settings:readSetting(SETTING.API_TOKEN)
+        local set = self.settings:readSetting(SETTING.HARDCOVER.API_TOKEN)
         if not set or set == "" then set = legacy_config.token end
         return _("Hardcover API Token") .. (set and set ~= "" and _(" (set)") or _(" (not set)"))
       end,
@@ -509,7 +509,7 @@ The token does not expire automatically, but can be regenerated (which invalidat
           title = _("Hardcover API Token"),
           fields = {
             {
-              text = self.settings:readSetting(SETTING.API_TOKEN) or legacy_config.token or "",
+              text = self.settings:readSetting(SETTING.HARDCOVER.API_TOKEN) or legacy_config.token or "",
             },
           },
           buttons = {
@@ -524,7 +524,7 @@ The token does not expire automatically, but can be regenerated (which invalidat
                 text = _("Save"),
                 callback = function()
                   local value = dialog:getFields()[1]
-                  self.settings:updateSetting(SETTING.API_TOKEN, value)
+                  self.settings:updateSetting(SETTING.HARDCOVER.API_TOKEN, value)
                   UIManager:close(dialog)
                 end,
               },

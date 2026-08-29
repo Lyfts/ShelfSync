@@ -27,7 +27,7 @@ local HardcoverApi = {
 local function get_headers(self)
   local token = ""
   if self.settings then
-    token = self.settings:readSetting(SETTING.API_TOKEN)
+    token = self.settings:readSetting(SETTING.HARDCOVER.API_TOKEN)
   end
   if not token or token == "" then token = config.token or "" end
 
@@ -49,7 +49,7 @@ end
 function HardcoverApi:hasCredential()
   local token = ""
   if self.settings then
-    token = self.settings:readSetting(SETTING.API_TOKEN)
+    token = self.settings:readSetting(SETTING.HARDCOVER.API_TOKEN)
   end
   if not token or token == "" then token = config.token or "" end
   return token ~= ""

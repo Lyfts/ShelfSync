@@ -32,21 +32,8 @@ BaseSettings.__index = BaseSettings
 -- independently per service (see shelfsync/lib/common/menu.lua, which is the
 -- only place these are surfaced in the UI). Any instance other than `shared`
 -- itself transparently redirects reads/writes of these keys to `shared`.
-local SHARED_KEYS = {
-  [SETTING.ENABLE_WIFI] = true,
-  [SETTING.MENU_CONFIRMATION] = true,
-  [SETTING.INCLUDE_LOCATION_IN_NOTES] = true,
-  [SETTING.VERBOSE_LOGGING] = true,
-  [SETTING.SYNC_BY_REMOTE_PAGES] = true,
-  [SETTING.ALWAYS_SYNC] = true,
-  [SETTING.SYNC_ON_OPEN] = true,
-  [SETTING.TRACK_METHOD] = true,
-  [SETTING.TRACK_FREQUENCY] = true,
-  [SETTING.TRACK_PERCENTAGE] = true,
-  [SETTING.TRACK_PAGE_STEP] = true,
-  [SETTING.LINK_BY_ISBN] = true,
-  [SETTING.LINK_BY_TITLE] = true,
-}
+-- See SETTING.SHARED_KEYS for the list.
+local SHARED_KEYS = SETTING.SHARED_KEYS
 
 function BaseSettings:new(path, ui, sidecar_key, shared)
   local o = {}
@@ -243,12 +230,14 @@ end
 
 -- Preferred order for picking a page count when a book is linked on more
 -- than one provider: Hardcover exposes a real edition-level page count (the
--- most precise), StoryGraph's is book-level but still first-party, and
+-- most precise), Fable's is also edition-level but resolved via a heuristic
+-- match rather than an explicit user pick (see fable/provider.lua's
+-- linkBook), StoryGraph's is book-level but still first-party, and
 -- Goodreads' is scraped off a page it doesn't always successfully fetch (see
 -- the 0-vs-nil handling in pages() below) -- so it's used only as a last
 -- resort. Matches each settings class's sidecar_key (see storygraph/
--- hardcover/goodreads settings.lua).
-local PAGE_COUNT_PROVIDERS = { "hardcover", "storygraph", "goodreads" }
+-- hardcover/goodreads/fable settings.lua).
+local PAGE_COUNT_PROVIDERS = { "hardcover", "fable", "storygraph", "goodreads" }
 
 -- Reads a *different* provider's "pages" book setting directly off the
 -- sidecar, bypassing this instance's own sidecar_key. Doesn't fall back to

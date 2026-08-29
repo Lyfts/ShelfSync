@@ -112,7 +112,7 @@ describe("Provider enable/credential gating", function()
 
   describe("baseline (enabled and credentialed)", function()
     it("is active and actually attempts an autolink lookup", function()
-      settings:updateSetting(SETTING.API_TOKEN, "a-real-token")
+      settings:updateSetting(SETTING.HARDCOVER.API_TOKEN, "a-real-token")
 
       assert.is_true(engine:isActive())
 
@@ -125,7 +125,7 @@ describe("Provider enable/credential gating", function()
 
   describe("when the provider is disabled", function()
     before_each(function()
-      settings:updateSetting(SETTING.API_TOKEN, "a-real-token")
+      settings:updateSetting(SETTING.HARDCOVER.API_TOKEN, "a-real-token")
       settings:setProviderEnabled(false)
     end)
 
@@ -207,7 +207,7 @@ describe("Provider enable/credential gating", function()
     end)
 
     it("becomes active again once a token is set", function()
-      settings:updateSetting(SETTING.API_TOKEN, "a-real-token")
+      settings:updateSetting(SETTING.HARDCOVER.API_TOKEN, "a-real-token")
 
       assert.is_true(api:hasCredential())
       assert.is_true(engine:isActive())
@@ -216,7 +216,7 @@ describe("Provider enable/credential gating", function()
 
   describe("re-enabling after having been disabled", function()
     it("resumes periodic tracking instead of getting stuck as \"already started\"", function()
-      settings:updateSetting(SETTING.API_TOKEN, "a-real-token")
+      settings:updateSetting(SETTING.HARDCOVER.API_TOKEN, "a-real-token")
       settings:updateBookSetting(ui.document.file, { book_id = 42, edition_id = 7, pages = 300 })
       engine.state.book_status = { id = 42, status_id = HARDCOVER_CONST.STATUS.READING }
 
