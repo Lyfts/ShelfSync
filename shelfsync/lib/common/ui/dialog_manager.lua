@@ -150,7 +150,7 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
   end
 
   -- Augment text with location info
-  local include_location = (event_type == "quote") or (self.settings:readSetting(SETTING.INCLUDE_LOCATION_IN_NOTES) == true)
+  local include_location = (event_type == "quote") or (self.settings:readSetting(SETTING.SHARED.INCLUDE_LOCATION_IN_NOTES) == true)
 
   if include_location then
     local chapter

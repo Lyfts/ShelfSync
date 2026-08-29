@@ -149,8 +149,8 @@ function BaseProvider:tryAutolink(done)
   local props = self.ui.document:getProps()
 
   local identifiers = Book:parseIdentifiers(props.identifiers)
-  local should_attempt = ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.LINK_BY_ISBN) ~= false)
-    or (props.title and self.settings:readSetting(SETTING.LINK_BY_TITLE) ~= false)
+  local should_attempt = ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false)
+    or (props.title and self.settings:readSetting(SETTING.SHARED.LINK_BY_TITLE) ~= false)
   self.settings:debugLog(self.label .. ": tryAutolink - should_attempt=" .. tostring(should_attempt)
     .. " isbn_10=" .. tostring(identifiers.isbn_10) .. " isbn_13=" .. tostring(identifiers.isbn_13)
     .. " title=" .. tostring(props.title))
@@ -176,12 +176,12 @@ end
 
 function BaseProvider:_runAutolink(identifiers)
   local linked = false
-  if self.settings:readSetting(SETTING.LINK_BY_ISBN) ~= false then
+  if self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false then
     linked = self:linkBookByIsbn(identifiers)
     self.settings:debugLog(self.label .. ": _runAutolink - linkBookByIsbn linked=" .. tostring(linked))
   end
 
-  if not linked and self.settings:readSetting(SETTING.LINK_BY_TITLE) ~= false then
+  if not linked and self.settings:readSetting(SETTING.SHARED.LINK_BY_TITLE) ~= false then
     linked = self:linkBookByTitle()
     self.settings:debugLog(self.label .. ": _runAutolink - linkBookByTitle linked=" .. tostring(linked))
   end

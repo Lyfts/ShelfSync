@@ -231,10 +231,10 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
     if self:_bookSettingChanged(book_settings, "book_id") then
       self:registerHighlight()
     end
-  elseif field == SETTING.TRACK_METHOD then
+  elseif field == SETTING.SHARED.TRACK_METHOD then
     self:cancelPendingUpdates()
     self:initializePageUpdate()
-  elseif field == SETTING.LINK_BY_ISBN or field == SETTING.LINK_BY_TITLE then
+  elseif field == SETTING.SHARED.LINK_BY_ISBN or field == SETTING.SHARED.LINK_BY_TITLE then
     if change and self:isActive() then
       self.provider:tryAutolink()
     end
@@ -560,7 +560,7 @@ function SyncEngine:onSuspend()
 end
 
 function SyncEngine:onResume()
-  -- Deliberately doesn't gate on SETTING.ENABLE_WIFI (the "auto-manage wifi"
+  -- Deliberately doesn't gate on SETTING.SHARED.ENABLE_WIFI (the "auto-manage wifi"
   -- toggle) -- onSuspend always resets read_cache_started regardless of that
   -- setting, so this needs to always be willing to restart it too, or tracking
   -- stays permanently disarmed after a suspend on devices that manage their
@@ -591,7 +591,7 @@ function SyncEngine:updatePageNow(callback, value, update_type)
 end
 
 function SyncEngine:onNetworkDisconnecting()
-  if self.settings:readSetting(SETTING.ENABLE_WIFI) then
+  if self.settings:readSetting(SETTING.SHARED.ENABLE_WIFI) then
     return
   end
 

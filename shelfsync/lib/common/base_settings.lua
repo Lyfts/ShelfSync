@@ -167,7 +167,7 @@ function BaseSettings:setSync(value)
 end
 
 function BaseSettings:setTrackMethod(method)
-  self:updateSetting(SETTING.TRACK_METHOD, method)
+  self:updateSetting(SETTING.SHARED.TRACK_METHOD, method)
 end
 
 function BaseSettings:bookLinked()
@@ -193,7 +193,7 @@ function BaseSettings:fileSyncEnabled(file)
 
   local sync_value = self:readBookSetting(file, "sync")
   if sync_value == nil then
-    sync_value = self:readSetting(SETTING.ALWAYS_SYNC)
+    sync_value = self:readSetting(SETTING.SHARED.ALWAYS_SYNC)
   end
   return sync_value ~= false
 end
@@ -281,24 +281,24 @@ function BaseSettings:pages()
 end
 
 function BaseSettings:trackFrequency()
-  return self:readSetting(SETTING.TRACK_FREQUENCY) or 5
+  return self:readSetting(SETTING.SHARED.TRACK_FREQUENCY) or 5
 end
 
 function BaseSettings:trackPercentageInterval()
-  return self:readSetting(SETTING.TRACK_PERCENTAGE) or 10
+  return self:readSetting(SETTING.SHARED.TRACK_PERCENTAGE) or 10
 end
 
 function BaseSettings:trackMethod()
-  return self:readSetting(SETTING.TRACK_METHOD) or SETTING.TRACK.FREQUENCY
+  return self:readSetting(SETTING.SHARED.TRACK_METHOD) or SETTING.TRACK.FREQUENCY
 end
 
 function BaseSettings:trackByTime()
-  local setting = self:readSetting(SETTING.TRACK_METHOD)
+  local setting = self:readSetting(SETTING.SHARED.TRACK_METHOD)
   return setting == nil or setting == SETTING.TRACK.FREQUENCY
 end
 
 function BaseSettings:trackByProgress()
-  local method = self:readSetting(SETTING.TRACK_METHOD)
+  local method = self:readSetting(SETTING.SHARED.TRACK_METHOD)
   -- Fallback if pages tracking is selected but remote page count is missing
   if method == SETTING.TRACK.PAGES then
     local pages = self:pages()
@@ -310,27 +310,27 @@ function BaseSettings:trackByProgress()
 end
 
 function BaseSettings:changeTrackPercentageInterval(percent)
-  self:updateSetting(SETTING.TRACK_PERCENTAGE, percent)
+  self:updateSetting(SETTING.SHARED.TRACK_PERCENTAGE, percent)
 end
 
 function BaseSettings:setMenuConfirm(status)
-  self:updateSetting(SETTING.MENU_CONFIRMATION, status)
+  self:updateSetting(SETTING.SHARED.MENU_CONFIRMATION, status)
 end
 
 function BaseSettings:menuConfirm()
-  return self:readSetting(SETTING.MENU_CONFIRMATION) == true
+  return self:readSetting(SETTING.SHARED.MENU_CONFIRMATION) == true
 end
 
 function BaseSettings:syncByRemotePages()
-  return self:readSetting(SETTING.SYNC_BY_REMOTE_PAGES) == true
+  return self:readSetting(SETTING.SHARED.SYNC_BY_REMOTE_PAGES) == true
 end
 
 function BaseSettings:syncOnOpen()
-  return self:readSetting(SETTING.SYNC_ON_OPEN) == true
+  return self:readSetting(SETTING.SHARED.SYNC_ON_OPEN) == true
 end
 
 function BaseSettings:verboseLogging()
-  return self:readSetting(SETTING.VERBOSE_LOGGING) == true
+  return self:readSetting(SETTING.SHARED.VERBOSE_LOGGING) == true
 end
 
 -- Easy way to add logging that only shows up with "Verbose logging" enabled
@@ -351,11 +351,11 @@ end
 
 function BaseSettings:trackByPages()
   local pages = self:pages()
-  return self:readSetting(SETTING.TRACK_METHOD) == SETTING.TRACK.PAGES and (pages and pages > 0)
+  return self:readSetting(SETTING.SHARED.TRACK_METHOD) == SETTING.TRACK.PAGES and (pages and pages > 0)
 end
 
 function BaseSettings:trackPageStep()
-  return self:readSetting(SETTING.TRACK_PAGE_STEP) or 10
+  return self:readSetting(SETTING.SHARED.TRACK_PAGE_STEP) or 10
 end
 
 return BaseSettings
