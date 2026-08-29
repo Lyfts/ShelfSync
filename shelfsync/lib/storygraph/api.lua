@@ -24,8 +24,8 @@ local function get_headers(self, custom_headers)
   local remember = ""
   
   if self.settings then
-    session = self.settings:readSetting(SETTING.SESSION_COOKIE)
-    remember = self.settings:readSetting(SETTING.REMEMBER_TOKEN)
+    session = self.settings:readSetting(SETTING.STORYGRAPH.SESSION_COOKIE)
+    remember = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN)
   end
   
   if not session or session == "" then session = config.session_cookie or "" end
@@ -67,7 +67,7 @@ end
 function StoryGraphApi:hasCredential()
   local session = ""
   if self.settings then
-    session = self.settings:readSetting(SETTING.SESSION_COOKIE)
+    session = self.settings:readSetting(SETTING.STORYGRAPH.SESSION_COOKIE)
   end
   if not session or session == "" then session = config.session_cookie or "" end
   return session ~= ""
@@ -295,7 +295,7 @@ function StoryGraphApi:request(url, method, data, custom_headers)
       local session_val = headers["set-cookie"]:match("_storygraph_session=([^;]+)")
       if session_val and self.settings then
         logger.info("StoryGraph: Automatically saving refreshed session from response")
-        self.settings:updateSetting(SETTING.SESSION_COOKIE, session_val)
+        self.settings:updateSetting(SETTING.STORYGRAPH.SESSION_COOKIE, session_val)
       end
     end
 
@@ -711,7 +711,7 @@ function StoryGraphApi:updateUserBook(book_id, status_id)
     .. " html_present=" .. tostring(html ~= nil) .. " html_length=" .. tostring(html and #html or 0))
 
   -- Handle session refresh from GET
-  local current_session = self.settings:readSetting(SETTING.SESSION_COOKIE)
+  local current_session = self.settings:readSetting(SETTING.STORYGRAPH.SESSION_COOKIE)
   local new_cookie = get_resp_headers and get_resp_headers["set-cookie"]
   if new_cookie then
     local session_val = new_cookie:match("_storygraph_session=([^;]+)")
@@ -737,7 +737,7 @@ function StoryGraphApi:updateUserBook(book_id, status_id)
     ["Referer"] = book_url
   }
   if current_session then
-    local remember = self.settings:readSetting(SETTING.REMEMBER_TOKEN)
+    local remember = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN)
     custom_headers["Cookie"] = "remember_user_token=" .. (remember or "") .. "; cookies_popup_seen=yes; plus_popup_seen=yes; _storygraph_session=" .. current_session
   end
 
@@ -781,7 +781,7 @@ function StoryGraphApi:updatePage(user_read_id, value, started_at, update_type)
     .. " html_present=" .. tostring(html ~= nil) .. " html_length=" .. tostring(html and #html or 0))
 
   -- Handle session refresh from GET
-  local current_session = self.settings:readSetting(SETTING.SESSION_COOKIE)
+  local current_session = self.settings:readSetting(SETTING.STORYGRAPH.SESSION_COOKIE)
   local new_cookie = get_resp_headers and get_resp_headers["set-cookie"]
   if new_cookie then
     local session_val = new_cookie:match("_storygraph_session=([^;]+)")
@@ -814,7 +814,7 @@ function StoryGraphApi:updatePage(user_read_id, value, started_at, update_type)
     ["Referer"] = book_url
   }
   if current_session then
-    local remember = self.settings:readSetting(SETTING.REMEMBER_TOKEN)
+    local remember = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN)
     custom_headers["Cookie"] = "remember_user_token=" .. (remember or "") .. "; cookies_popup_seen=yes; plus_popup_seen=yes; _storygraph_session=" .. current_session
   end
 
@@ -1090,7 +1090,7 @@ function StoryGraphApi:switchEdition(from_book_id, to_book_id)
 
   -- Update session cookie if server sent a new one
   local new_cookie = get_headers and get_headers["set-cookie"]
-  local current_session = self.settings:readSetting(SETTING.SESSION_COOKIE)
+  local current_session = self.settings:readSetting(SETTING.STORYGRAPH.SESSION_COOKIE)
   if new_cookie then
     local session_val = new_cookie:match("_storygraph_session=([^;]+)")
     if session_val then
@@ -1147,7 +1147,7 @@ function StoryGraphApi:switchEdition(from_book_id, to_book_id)
     ["Referer"] = url
   }
   if current_session then
-    local remember = self.settings:readSetting(SETTING.REMEMBER_TOKEN)
+    local remember = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN)
     custom_headers["Cookie"] = T("_storygraph_session=%1; remember_user_token=%2; cookies_popup_seen=yes; plus_popup_seen=yes", current_session, remember)
   end
 
@@ -1183,7 +1183,7 @@ function StoryGraphApi:saveReview(book_id, review_data, review_url)
   local csrf = self:extract_csrf(html)
   
   -- Handle session refresh
-  local current_session = self.settings:readSetting(SETTING.SESSION_COOKIE)
+  local current_session = self.settings:readSetting(SETTING.STORYGRAPH.SESSION_COOKIE)
   local new_cookie = headers and headers["set-cookie"]
   if new_cookie then
     local session_val = new_cookie:match("_storygraph_session=([^;]+)")
@@ -1248,7 +1248,7 @@ function StoryGraphApi:saveReview(book_id, review_data, review_url)
   }
   
   if current_session then
-    local remember = self.settings:readSetting(SETTING.REMEMBER_TOKEN)
+    local remember = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN)
     custom_headers["Cookie"] = T("_storygraph_session=%1; remember_user_token=%2; cookies_popup_seen=yes; plus_popup_seen=yes", current_session, remember)
   end
 

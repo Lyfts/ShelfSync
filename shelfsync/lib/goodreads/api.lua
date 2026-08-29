@@ -8,7 +8,7 @@
 --    bundle of ~13 cookies across goodreads.com and Amazon's own domains,
 --    not a couple of named values. Rather than trying to parse/merge that
 --    bundle, the whole raw `Cookie` header is stored and replayed verbatim
---    as one opaque blob (SETTING.SESSION_COOKIE), with no attempt to track
+--    as one opaque blob (SETTING.GOODREADS.SESSION_COOKIE), with no attempt to track
 --    Set-Cookie refreshes -- confirmed via HAR captures that write endpoints
 --    only ever refresh `_session_id2`, and there's no evidence that matters
 --    for auth validity.
@@ -41,7 +41,7 @@ local function get_headers(self, custom_headers)
   local cookie = ""
 
   if self.settings then
-    cookie = self.settings:readSetting(SETTING.SESSION_COOKIE)
+    cookie = self.settings:readSetting(SETTING.GOODREADS.SESSION_COOKIE)
   end
   if not cookie or cookie == "" then cookie = config.cookie or "" end
 
@@ -86,7 +86,7 @@ end
 function GoodreadsApi:hasCredential()
   local cookie = ""
   if self.settings then
-    cookie = self.settings:readSetting(SETTING.SESSION_COOKIE)
+    cookie = self.settings:readSetting(SETTING.GOODREADS.SESSION_COOKIE)
   end
   if not cookie or cookie == "" then cookie = config.cookie or "" end
   return cookie ~= ""
@@ -286,9 +286,9 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     -- before ever making a request, instead of failing until the user
     -- manually pastes one in.
     if not headers["Cookie"] or headers["Cookie"] == "" then
-      local refresh_base = self.settings and self.settings:readSetting(SETTING.COOKIE_REFRESH_URL)
+      local refresh_base = self.settings and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_URL)
       if refresh_base and refresh_base ~= "" then
-        local refresh_token = self.settings and self.settings:readSetting(SETTING.COOKIE_REFRESH_TOKEN)
+        local refresh_token = self.settings and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_TOKEN)
         local cookie_url = refresh_base:gsub("/+$", "") .. "/cookie"
         logger.info("Goodreads: no session cookie configured, trying local cookie-refresher at " .. cookie_url)
         local cookie, refresher_code = fetch_cached_cookie(cookie_url, refresh_token, timeout)
@@ -382,9 +382,9 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         -- Stored setting is just the refresher's base URL (e.g.
         -- http://192.168.1.50:5080) -- the /refresh path is always the
         -- same, so there's no reason to make the user type it.
-        local refresh_base = self.settings and self.settings:readSetting(SETTING.COOKIE_REFRESH_URL)
+        local refresh_base = self.settings and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_URL)
         local refresh_url = refresh_base and refresh_base ~= "" and (refresh_base:gsub("/+$", "") .. "/refresh")
-        local refresh_token = self.settings and self.settings:readSetting(SETTING.COOKIE_REFRESH_TOKEN)
+        local refresh_token = self.settings and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_TOKEN)
         if refresh_url and not waf_retried then
           waf_retried = true
           logger.info("Goodreads: WAF challenge hit, trying local cookie-refresher at " .. refresh_url)
@@ -487,7 +487,7 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     -- session save.
     if headers["x-refreshed-cookie"] and self.settings then
       logger.info("Goodreads: saving refreshed cookie from local cookie-refresher")
-      self.settings:updateSetting(SETTING.SESSION_COOKIE, headers["x-refreshed-cookie"])
+      self.settings:updateSetting(SETTING.GOODREADS.SESSION_COOKIE, headers["x-refreshed-cookie"])
     end
 
     return code_num, response, headers

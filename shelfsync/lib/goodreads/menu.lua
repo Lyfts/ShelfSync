@@ -248,7 +248,7 @@ Goodreads accounts are linked through Amazon, so this cookie is a large bundle r
     {
       text = _("Goodreads Cookie"),
       text_func = function()
-        local set = self.settings:readSetting(SETTING.SESSION_COOKIE)
+        local set = self.settings:readSetting(SETTING.GOODREADS.SESSION_COOKIE)
         if not set or set == "" then set = legacy_config.cookie end
         return _("Goodreads Cookie") .. (set and set ~= "" and _(" (set)") or _(" (not set)"))
       end,
@@ -264,7 +264,7 @@ Goodreads accounts are linked through Amazon, so this cookie is a large bundle r
           title = _("Goodreads Cookie"),
           fields = {
             {
-              text = self.settings:readSetting(SETTING.SESSION_COOKIE) or legacy_config.cookie or "",
+              text = self.settings:readSetting(SETTING.GOODREADS.SESSION_COOKIE) or legacy_config.cookie or "",
             },
           },
           buttons = {
@@ -279,7 +279,7 @@ Goodreads accounts are linked through Amazon, so this cookie is a large bundle r
                 text = _("Save"),
                 callback = function()
                   local value = dialog:getFields()[1]
-                  self.settings:updateSetting(SETTING.SESSION_COOKIE, value)
+                  self.settings:updateSetting(SETTING.GOODREADS.SESSION_COOKIE, value)
                   UIManager:close(dialog)
                 end,
               },
@@ -293,7 +293,7 @@ Goodreads accounts are linked through Amazon, so this cookie is a large bundle r
       text = _("Cookie Auto-Refresh URL"),
       keep_menu_open = true,
       text_func = function()
-        local set = self.settings:readSetting(SETTING.COOKIE_REFRESH_URL)
+        local set = self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_URL)
         return _("Cookie Auto-Refresh URL") .. (set and set ~= "" and _(" (set)") or _(" (optional)"))
       end,
       hold_callback = function()
@@ -308,7 +308,7 @@ Instead, you can run a small local helper (see the separate goodreads-cookie-ref
         local dialog
         dialog = InputDialog:new {
           title = _("Cookie Auto-Refresh URL"),
-          input = self.settings:readSetting(SETTING.COOKIE_REFRESH_URL) or "",
+          input = self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_URL) or "",
           input_hint = "http://192.168.1.50:5080",
           buttons = {
             {
@@ -321,7 +321,7 @@ Instead, you can run a small local helper (see the separate goodreads-cookie-ref
               {
                 text = _("Save"),
                 callback = function()
-                  self.settings:updateSetting(SETTING.COOKIE_REFRESH_URL, dialog:getInputText())
+                  self.settings:updateSetting(SETTING.GOODREADS.COOKIE_REFRESH_URL, dialog:getInputText())
                   UIManager:close(dialog)
                 end,
               },
@@ -335,7 +335,7 @@ Instead, you can run a small local helper (see the separate goodreads-cookie-ref
       text = _("Cookie Auto-Refresh Token"),
       keep_menu_open = true,
       text_func = function()
-        local set = self.settings:readSetting(SETTING.COOKIE_REFRESH_TOKEN)
+        local set = self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_TOKEN)
         return _("Cookie Auto-Refresh Token") .. (set and set ~= "" and _(" (set)") or _(" (optional)"))
       end,
       hold_callback = function()
@@ -348,7 +348,7 @@ Instead, you can run a small local helper (see the separate goodreads-cookie-ref
         local dialog
         dialog = InputDialog:new {
           title = _("Cookie Auto-Refresh Token"),
-          input = self.settings:readSetting(SETTING.COOKIE_REFRESH_TOKEN) or "",
+          input = self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_TOKEN) or "",
           buttons = {
             {
               {
@@ -360,7 +360,7 @@ Instead, you can run a small local helper (see the separate goodreads-cookie-ref
               {
                 text = _("Save"),
                 callback = function()
-                  self.settings:updateSetting(SETTING.COOKIE_REFRESH_TOKEN, dialog:getInputText())
+                  self.settings:updateSetting(SETTING.GOODREADS.COOKIE_REFRESH_TOKEN, dialog:getInputText())
                   UIManager:close(dialog)
                 end,
               },
