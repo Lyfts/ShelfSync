@@ -139,14 +139,7 @@ end
 
 function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
   if self.ui.document and self.settings:bookLinked() then
-    if gesture_feedback then
-      UIManager:show(InfoMessage:new {
-        text = _("Trying to sync progress to " .. self.label .. "..."),
-        timeout = 2,
-      })
-    end
-
-    self:updatePageNow(function(result, reason)
+    local function finish(result, reason)
       if result then
         if gesture_feedback then
           UIManager:show(InfoMessage:new {
@@ -172,7 +165,40 @@ function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
       if completion_callback then
         completion_callback(result, reason)
       end
-    end)
+    end
+
+    local function update()
+      self:updatePageNow(finish)
+    end
+
+    if gesture_feedback then
+      UIManager:show(InfoMessage:new {
+        text = _("Trying to sync progress to " .. self.label .. "..."),
+        timeout = 2,
+      })
+    end
+
+    -- A gesture can run before startReadCache has populated the remote
+    -- status. Refresh an unknown status instead of treating it as proof that
+    -- the linked book is not currently reading.
+    if gesture_feedback
+        and self:isActive()
+        and self:syncFileUpdates(self.ui.document.file)
+        and not self.state.book_status.status_id then
+      self.wifi:withWifi(function()
+        Trapper:wrap(function()
+          local err = self.cache:cacheUserBook()
+          self:registerHighlight()
+          if err then
+            finish(nil, _("Could not fetch book information from " .. self.label))
+          else
+            update()
+          end
+        end)
+      end)
+    else
+      update()
+    end
   else
     local error
     if not self.ui.document then
