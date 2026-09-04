@@ -17,7 +17,7 @@ local HardcoverApi = require("shelfsync/lib/hardcover/api")
 local HARDCOVER_CONST = require("shelfsync/lib/hardcover/constants")
 
 describe("Provider enable/credential gating", function()
-  local ui, doc_settings, settings, calls, api, provider_instance, engine
+  local ui, doc_settings, settings, calls, api, provider_instance, engine, state
 
   before_each(function()
     mocks.reset()
@@ -51,6 +51,7 @@ describe("Provider enable/credential gating", function()
       updateUserBook = 0,
       updatePage = 0,
       createRead = 0,
+      cacheUserBook = 0,
     }
 
     -- Real HardcoverApi as the metatable fallback (not overridden below) so
@@ -66,10 +67,14 @@ describe("Provider enable/credential gating", function()
       createRead = function() calls.createRead = calls.createRead + 1; return {} end,
     }, { __index = HardcoverApi })
 
-    local state = { page = nil, pos = nil, search_results = {}, book_status = {} }
+    state = { page = nil, pos = nil, search_results = {}, book_status = {} }
     local wifi = AutoWifi:new { settings = settings, label = "Hardcover" }
     local user = { getId = function() return 1 end }
-    local cache = { cacheUserBook = function() end }
+    local cache = {
+      cacheUserBook = function()
+        calls.cacheUserBook = calls.cacheUserBook + 1
+      end,
+    }
     local dialog_manager = {}
 
     provider_instance = HardcoverProvider:new {
@@ -108,6 +113,7 @@ describe("Provider enable/credential gating", function()
     assert.are.equal(0, calls.updateUserBook)
     assert.are.equal(0, calls.updatePage)
     assert.are.equal(0, calls.createRead)
+    assert.are.equal(0, calls.cacheUserBook)
   end
 
   describe("baseline (enabled and credentialed)", function()
@@ -120,6 +126,29 @@ describe("Provider enable/credential gating", function()
       UIManager:_runUntilIdle()
 
       assert.is_true(calls.findBookByIdentifiers > 0)
+    end)
+
+    it("refreshes an unknown remote status before a gesture update", function()
+      settings:updateSetting(SETTING.HARDCOVER.API_TOKEN, "a-real-token")
+      settings:updateBookSetting(ui.document.file, { book_id = 42, edition_id = 7, pages = 300 })
+      engine.cache.cacheUserBook = function()
+        calls.cacheUserBook = calls.cacheUserBook + 1
+        state.book_status = {
+          id = 42,
+          status_id = HARDCOVER_CONST.STATUS.READING,
+          user_book_reads = {},
+        }
+      end
+
+      local completed = false
+      engine:onUpdateProgress(function(result)
+        completed = result ~= nil
+      end, true)
+      UIManager:_runUntilIdle()
+
+      assert.are.equal(1, calls.cacheUserBook)
+      assert.are.equal(1, calls.createRead)
+      assert.is_true(completed)
     end)
   end)
 
