@@ -97,6 +97,13 @@ local ShelfSyncApp = WidgetContainer:extend {
 }
 
 function ShelfSyncApp:onDispatcherRegisterActions()
+  Dispatcher:registerAction("shelfsync_update_all_progress", {
+    category = "none",
+    event = "ShelfSyncUpdateAllProgress",
+    title = _("ShelfSync: Update progress for all linked books"),
+    general = true,
+  })
+
   for _prov_idx, provider in ipairs(PROVIDERS) do
     for _action_idx, action in ipairs(ACTIONS) do
       Dispatcher:registerAction(provider.key .. "_" .. action.snake, {
@@ -370,6 +377,44 @@ function ShelfSyncApp:onUpdatePos()
   for _, engine in pairs(self.engines) do
     engine:onUpdatePos()
   end
+end
+
+function ShelfSyncApp:onShelfSyncUpdateAllProgress()
+  if not self.ui.document then
+    UIManager:show(InfoMessage:new {
+      text = _("Unable to update reading progress: No book active"),
+      icon = "notice-warning",
+    })
+    return true
+  end
+
+  local linked_engines = {}
+  for _, provider in ipairs(PROVIDERS) do
+    local engine = self.engines[provider.key]
+    if engine.settings:bookLinked() then
+      table.insert(linked_engines, engine)
+    end
+  end
+
+  if #linked_engines == 0 then
+    UIManager:show(InfoMessage:new {
+      text = _("Unable to update reading progress: Book has not been linked to any provider"),
+      icon = "notice-warning",
+    })
+    return true
+  end
+
+  local function updateNext(index)
+    local engine = linked_engines[index]
+    if engine then
+      engine:onUpdateProgress(function()
+        updateNext(index + 1)
+      end, true)
+    end
+  end
+  updateNext(1)
+
+  return true
 end
 
 function ShelfSyncApp:onDocumentClose()

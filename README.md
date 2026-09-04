@@ -84,6 +84,9 @@ When enabled (per service), the plugin will periodically sync your progress:
 - Progress can be synced automatically based on time duration, percentage read or pages read (based on edition page count).
 - Hardcover only stores progress as a page number; if a tracking mode produces a percentage instead (e.g. no page count is known for the linked edition), it's converted to a page number automatically before syncing.
 
+### Update Progress with a Gesture
+KOReader's gesture manager includes a **ShelfSync: Update progress for all linked books** action in the **General** category. Assign it to any gesture to immediately push the open book's current progress to every provider it is linked to, without waiting for the configured time, percentage, or page interval. Gesture-triggered updates show the provider being synced and whether the update succeeded or failed; automatic interval updates remain silent. Provider authentication, enablement, and per-book tracking settings still apply.
+
 ## Settings
 
 Each service has its own **Settings** submenu for linking and account options:

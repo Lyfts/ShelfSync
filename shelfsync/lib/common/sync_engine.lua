@@ -137,19 +137,40 @@ function SyncEngine:onPullPosition()
   end)
 end
 
-function SyncEngine:onUpdateProgress()
+function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
   if self.ui.document and self.settings:bookLinked() then
+    if gesture_feedback then
+      UIManager:show(InfoMessage:new {
+        text = _("Trying to sync progress to " .. self.label .. "..."),
+        timeout = 2,
+      })
+    end
+
     self:updatePageNow(function(result, reason)
       if result then
-        UIManager:show(Notification:new {
-          text = _("Progress updated")
-        })
+        if gesture_feedback then
+          UIManager:show(InfoMessage:new {
+            text = _("Progress updated on " .. self.label),
+            timeout = 2,
+          })
+        else
+          UIManager:show(Notification:new {
+            text = _("Progress updated")
+          })
+        end
       else
         logger.warn("Unsuccessful updating page progress", self.ui.document.file, reason)
         UIManager:show(InfoMessage:new {
-          text = reason or _("Unable to update reading progress"),
+          text = gesture_feedback
+            and (reason
+              and _("Unable to update reading progress on " .. self.label .. ": " .. reason)
+              or _("Unable to update reading progress on " .. self.label))
+            or reason or _("Unable to update reading progress"),
           icon = "notice-warning",
         })
+      end
+      if completion_callback then
+        completion_callback(result, reason)
       end
     end)
   else
@@ -165,6 +186,9 @@ function SyncEngine:onUpdateProgress()
       text = error_message,
       icon = "notice-warning",
     })
+    if completion_callback then
+      completion_callback(nil, error)
+    end
   end
 end
 
@@ -342,10 +366,8 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
 
   if self.state.book_status.status_id ~= self.constants.STATUS.READING then
     logger.info(self.label .. ": Skipping page update - status_id is " .. tostring(self.state.book_status.status_id) .. ", not READING")
-    if not self:warnStatusMismatch(filename) then
-      bail(_("Book is not currently marked as reading on " .. self.label))
-    end
-    return
+    self:warnStatusMismatch(filename)
+    return bail(_("Book is not currently marked as reading on " .. self.label))
   end
 
   local remote_value = self.provider:getRemoteProgress(self.state.book_status, update_type)
@@ -361,27 +383,29 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
     return bail(_("No active reading session found on " .. self.label))
   end
 
-  local immediate_update = function()
-    self.wifi:withWifi(function()
-      local result, reason = self.provider:pushProgress(current_read, value, update_type, filename)
-      if result then
-        self.state.book_status = result
-        self:registerHighlight()
-      end
-      if callback then
-        callback(result, reason)
-      end
-    end)
+  local update = function()
+    local result, reason = self.provider:pushProgress(current_read, value, update_type, filename)
+    if result then
+      self.state.book_status = result
+      self:registerHighlight()
+    end
+    if callback then
+      callback(result, reason)
+    end
   end
 
-  local trapped_update = function()
-    Trapper:wrap(immediate_update)
+  local immediate_update = function()
+    self.wifi:withWifi(function()
+      -- withWifi may invoke this after an asynchronous restore, when any
+      -- Trapper wrapping the original event has already completed.
+      Trapper:wrap(update)
+    end)
   end
 
   if immediate then
     immediate_update()
   else
-    UIManager:scheduleIn(1, trapped_update)
+    UIManager:scheduleIn(1, immediate_update)
   end
 end
 
