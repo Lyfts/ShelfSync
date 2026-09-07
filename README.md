@@ -26,6 +26,10 @@ StoryGraph, Hardcover, and Goodreads share a single config file: rename `shelfsy
 > Hardcover isn't cookie-based, so its token still needs to be pasted in by hand (see below).
 
 ### StoryGraph authentication
+Open **ShelfSync > Providers > StoryGraph > Account (Cookies & Tokens) > Log in** and enter your StoryGraph email and password. The plugin saves the session and remember-me cookies returned by StoryGraph; it does not store your password. Log in again if your session expires.
+
+If Cloudflare blocks login on your device, import browser cookies using the helper above or these manual steps:
+
 1. Log in to [thestorygraph.com](https://thestorygraph.com) in your browser.
 2. Open your browser's Developer Tools (F12) -> Application/Storage -> Cookies.
 3. Copy the value of the `_storygraph_session` cookie and paste it into the `session_cookie` field of the `storygraph` section in `shelfsync_config.lua`.

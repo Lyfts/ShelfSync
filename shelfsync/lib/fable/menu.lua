@@ -247,7 +247,7 @@ function FableMenu:getAuthSubMenuItems()
       keep_menu_open = true,
       callback = function()
         UIManager:show(InfoMessage:new {
-          text = _([[Unlike StoryGraph/Goodreads, Fable has a real login API, so this plugin logs in directly with your Fable email and password below.
+          text = _([[This plugin logs in directly with your Fable email and password using Firebase authentication.
 
 The access/refresh token pair Fable's own login returns (the same thing its official app keeps) refreshes itself automatically from then on. Your password is also cached on this device -- encrypted at rest where possible -- so that if the refresh token itself ever dies, the plugin can silently log back in instead of asking you to retype it. If you change your Fable password, just log in again here once; "Log out" below clears everything this plugin has cached.]]),
         })

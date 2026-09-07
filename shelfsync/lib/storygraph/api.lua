@@ -184,6 +184,132 @@ function StoryGraphApi:extract_csrf(html)
   return csrf or self.last_csrf
 end
 
+-- Keep login cookies local until authentication succeeds. In particular, a
+-- failed login must not replace an existing account's session with a guest's.
+function StoryGraphApi:login(email, password)
+  email = (email or ""):match("^%s*(.-)%s*$")
+  if email == "" or not password or password == "" then
+    return nil, "Enter your email and password."
+  end
+  if not NetworkManager:isConnected() or not self.enabled then
+    return nil, "Network not connected or StoryGraph disabled."
+  end
+  if not self.settings then return nil, "StoryGraph settings unavailable." end
+
+  local completed, result = Trapper:dismissableRunInSubprocess(function()
+    local function send(method, body, cookie, csrf)
+      local sink = {}
+      -- Match the Android app's WebView navigation and Turbo form submit
+      -- captured in the HAR. Do not inherit desktop client hints or send
+      -- Origin/Referer on the initial top-level navigation. This cannot run
+      -- Cloudflare's JavaScript challenges, but avoids contradictory headers.
+      local headers = {
+        ["User-Agent"] = "Turbo Native Android Version 39 Mozilla/5.0 (Linux; Android 16; 23090RA98G Build/BP2A.250605.031.A3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/151.0.7922.200 Mobile Safari/537.36",
+        ["X-Requested-With"] = "com.thestorygraph.thestorygraph",
+        ["Sec-Ch-Ua"] = '"Not=A?Brand";v="99", "Android WebView";v="151", "Chromium";v="151"',
+        ["Sec-Ch-Ua-Mobile"] = "?1",
+        ["Sec-Ch-Ua-Platform"] = '"Android"',
+        ["Accept-Language"] = "en-GB,en-US;q=0.9,en;q=0.8",
+        ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        ["Sec-Fetch-Site"] = "none",
+        ["Sec-Fetch-Mode"] = "navigate",
+        ["Sec-Fetch-Dest"] = "document",
+        ["Sec-Fetch-User"] = "?1",
+      }
+      if cookie then headers.Cookie = cookie end
+      if body then
+        headers.Origin = base_url
+        headers.Referer = base_url .. "/users/sign_in"
+        headers.Accept = "text/vnd.turbo-stream.html, text/html, application/xhtml+xml"
+        headers["Sec-Fetch-Site"] = "same-origin"
+        headers["Sec-Fetch-Mode"] = "cors"
+        headers["Sec-Fetch-Dest"] = "empty"
+        headers["Sec-Fetch-User"] = nil
+        headers["Content-Type"] = "application/x-www-form-urlencoded;charset=UTF-8"
+        headers["Content-Length"] = tostring(#body)
+        headers["X-CSRF-Token"] = csrf
+      end
+      socketutil:set_timeout(10, 15)
+      local ok, code, response_headers = http.request {
+        url = base_url .. "/users/sign_in",
+        method = method,
+        headers = headers,
+        redirect = false, -- Capture Set-Cookie on the successful 303.
+        source = body and ltn12.source.string(body) or nil,
+        sink = socketutil.table_sink(sink),
+      }
+      socketutil:reset_timeout()
+      response_headers = response_headers or {}
+      -- Only status and challenge presence are logged: no credentials,
+      -- cookies, CSRF tokens, or response bodies.
+      logger.info("StoryGraph: Login " .. method .. " /users/sign_in: HTTP "
+        .. tostring(tonumber(code) or "unavailable") .. "; Cloudflare challenge="
+        .. tostring(response_headers["cf-mitigated"] == "challenge"))
+      return ok and tonumber(code), table.concat(sink), response_headers
+    end
+    local function cookie(headers, name)
+      local values = headers["set-cookie"] or ""
+      if type(values) == "table" then values = table.concat(values, ", ") end
+      -- LuaSocket combines repeated Set-Cookie headers. Anchor cookie names
+      -- to separators, without splitting on commas inside Expires dates.
+      return ("; " .. values):match("[;,]%s*" .. name .. "=([^;,\r\n]+)")
+    end
+    local function failure(stage, code, headers)
+      local detail = stage .. " (HTTP " .. tostring(code or "unavailable") .. ")"
+      if headers["cf-mitigated"] == "challenge" then
+        return "error|Cloudflare challenged " .. detail .. ". Try again later or import browser cookies."
+      end
+      if code == 403 then
+        return "error|StoryGraph blocked " .. detail .. ". Try again later or import browser cookies."
+      end
+      return "error|Failed during " .. detail .. "."
+    end
+
+    local code, html, headers = send("GET")
+    if code ~= 200 or headers["cf-mitigated"] == "challenge" then
+      return failure("login page load (GET)", code, headers)
+    end
+    -- A fresh extractor cannot fall back to a previous account's CSRF token.
+    local csrf = self.extract_csrf({}, html)
+    local session = cookie(headers, "_storygraph_session")
+    if not csrf or not session then
+      return "error|Login page load (GET, HTTP 200) did not return a usable login form and session cookie. Try importing browser cookies."
+    end
+    csrf = decode_entities(csrf)
+    local body = "authenticity_token=" .. urlencode(csrf)
+      .. "&user%5Bemail%5D=" .. urlencode(email)
+      .. "&user%5Bpassword%5D=" .. urlencode(password)
+      .. "&user%5Bremember_me%5D=1"
+    code, html, headers = send("POST", body, "_storygraph_session=" .. session, csrf)
+    if headers["cf-mitigated"] == "challenge" then
+      return failure("login submission (POST)", code, headers)
+    end
+    local location = headers.location
+    local authenticated_session = cookie(headers, "_storygraph_session")
+    local remember = cookie(headers, "remember_user_token")
+    if (code == 303 or code == 302)
+        and (location == base_url .. "/" or location == "/")
+        and authenticated_session and remember then
+      return "ok|" .. authenticated_session .. "|" .. remember
+    end
+    if code == 200 or code == 401 or code == 422
+        or (location and location:find("/users/sign_in", 1, true)) then
+      return "error|Login submission (POST, HTTP " .. tostring(code)
+        .. ") was not accepted. Check your email and password and try again."
+    end
+    return failure("login submission (POST)", code, headers)
+  end, true, true)
+
+  if not completed or not result then return nil, "Login request did not complete." end
+  local session, remember = result:match("^ok|([^|]+)|([^|]+)$")
+  if not session then return nil, result:match("^error|(.*)$") or "Login failed." end
+  self.settings:updateSetting(SETTING.STORYGRAPH.SESSION_COOKIE, session)
+  self.settings:updateSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN, remember)
+  self.last_csrf = nil
+  self.last_auth_warning = nil
+  return true
+end
+
 function StoryGraphApi:request(url, method, data, custom_headers)
   if not NetworkManager:isConnected() or not self.enabled then
     if self.settings then
@@ -240,7 +366,6 @@ function StoryGraphApi:request(url, method, data, custom_headers)
 
     if method == "POST" then
       logger.info("StoryGraph: POST URL: " .. url)
-      logger.info("StoryGraph: POST Body: " .. (body or "nil"))
     end
 
     local ok, code, _headers, _status = http.request(request)

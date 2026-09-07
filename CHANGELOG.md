@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+##### Plugin
+- Add StoryGraph email/password login under **Account (Cookies & Tokens) > Log in**, using the mobile app's login flow and saving the returned session cookies without storing your password. Login errors identify whether the page load or submission was blocked, and manual browser-cookie entry remains available as a fallback.
+
 ## 1.3.2
 ##### Plugin
 - Add a **ShelfSync: Update progress for all linked books** gesture under KOReader's General actions, which immediately syncs the open book's current progress to every linked provider in sequence and reports each provider's result. Gesture-triggered sync now refreshes an unknown remote reading status first, instead of incorrectly treating it as a status mismatch.
