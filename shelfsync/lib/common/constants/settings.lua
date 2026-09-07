@@ -73,6 +73,12 @@ Settings.FABLE = {
   ID_TOKEN = "id_token",
   REFRESH_TOKEN = "refresh_token",
   TOKEN_EXPIRES_AT = "token_expires_at",
+  -- Cached login password, used to silently re-authenticate when the
+  -- refresh token itself dies (see fable/api.lua's request()). Encrypted at
+  -- rest via crypto_util when libcrypto is available (PASSWORD_ENC), else
+  -- stored raw in PASSWORD_PLAIN -- exactly one of the two is ever set.
+  PASSWORD_ENC = "password_enc",
+  PASSWORD_PLAIN = "password_plain",
 }
 
 return Settings

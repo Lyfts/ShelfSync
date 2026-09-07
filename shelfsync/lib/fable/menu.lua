@@ -249,7 +249,7 @@ function FableMenu:getAuthSubMenuItems()
         UIManager:show(InfoMessage:new {
           text = _([[Unlike StoryGraph/Goodreads, Fable has a real login API, so this plugin logs in directly with your Fable email and password below.
 
-Your password itself is never stored -- only the access/refresh token pair Fable's own login returns, the same thing its official app keeps, and that pair refreshes itself automatically from then on. If it's ever revoked (e.g. after changing your password), just log in again here.]]),
+The access/refresh token pair Fable's own login returns (the same thing its official app keeps) refreshes itself automatically from then on. Your password is also cached on this device -- encrypted at rest where possible -- so that if the refresh token itself ever dies, the plugin can silently log back in instead of asking you to retype it. If you change your Fable password, just log in again here once; "Log out" below clears everything this plugin has cached.]]),
         })
       end,
       separator = true,
@@ -329,6 +329,8 @@ Your password itself is never stored -- only the access/refresh token pair Fable
             self.settings:updateSetting(SETTING.FABLE.ID_TOKEN, "")
             self.settings:updateSetting(SETTING.FABLE.REFRESH_TOKEN, "")
             self.settings:updateSetting(SETTING.FABLE.TOKEN_EXPIRES_AT, 0)
+            self.settings:updateSetting(SETTING.FABLE.PASSWORD_ENC, "")
+            self.settings:updateSetting(SETTING.FABLE.PASSWORD_PLAIN, "")
           end,
         })
       end,

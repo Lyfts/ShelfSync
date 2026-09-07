@@ -3,6 +3,7 @@ local http = require("socket.http")
 local ltn12 = require("ltn12")
 local json = require("json")
 local _t = require("shelfsync/lib/common/table_util")
+local CryptoUtil = require("shelfsync/lib/common/crypto_util")
 local T = require("ffi/util").template
 local Trapper = require("ui/trapper")
 local NetworkManager = require("ui/network/manager")
@@ -73,6 +74,26 @@ local function raw_http(url, method, headers, body_string, timeout, maxtime)
   return code, table.concat(sink)
 end
 
+-- Reads back whatever login() cached (see there): decrypts PASSWORD_ENC if
+-- set, else falls back to PASSWORD_PLAIN (the libcrypto-unavailable case).
+-- Returns nil if neither is set or decryption fails (e.g. the keyring file
+-- was lost/changed since encryption).
+local function stored_password(settings)
+  if not settings then return nil end
+
+  local enc = settings:readSetting(SETTING.FABLE.PASSWORD_ENC)
+  if enc and enc ~= "" then
+    return CryptoUtil.decryptSecret(enc)
+  end
+
+  local plain = settings:readSetting(SETTING.FABLE.PASSWORD_PLAIN)
+  if plain and plain ~= "" then
+    return plain
+  end
+
+  return nil
+end
+
 -- Mirrors the token-presence check request() relies on, so callers can tell
 -- whether a login has ever succeeded without making a network call.
 function FableApi:hasCredential()
@@ -140,6 +161,19 @@ function FableApi:login(email, password)
     self.settings:updateSetting(SETTING.FABLE.ID_TOKEN, data.idToken)
     self.settings:updateSetting(SETTING.FABLE.REFRESH_TOKEN, data.refreshToken)
     self.settings:updateSetting(SETTING.FABLE.TOKEN_EXPIRES_AT, os.time() + (tonumber(data.expiresIn) or 3600))
+
+    -- Cache the password too (encrypted at rest when libcrypto is
+    -- available, plaintext otherwise -- see crypto_util.lua) so request()
+    -- can silently re-authenticate if the refresh token itself ever dies,
+    -- instead of just failing and forcing the user to retype it here.
+    local encrypted = CryptoUtil.encryptSecret(password)
+    if encrypted then
+      self.settings:updateSetting(SETTING.FABLE.PASSWORD_ENC, encrypted)
+      self.settings:updateSetting(SETTING.FABLE.PASSWORD_PLAIN, "")
+    else
+      self.settings:updateSetting(SETTING.FABLE.PASSWORD_ENC, "")
+      self.settings:updateSetting(SETTING.FABLE.PASSWORD_PLAIN, password)
+    end
   end
 
   return true
@@ -190,6 +224,37 @@ function FableApi:request(path, method, body)
           refreshed_id_token = id_token
           refreshed_refresh_token = refresh_token
           refreshed_expires_at = os.time() + (tonumber(data.expires_in) or 3600)
+        end
+      end
+    end
+
+    -- Refresh token missing entirely, or just proved dead (revoked, or the
+    -- expiry check above fired but Firebase rejected it) -- fall back to a
+    -- full email/password re-login using the credential login() cached, so
+    -- an expired session recovers itself instead of surfacing
+    -- "Unauthorized" and forcing the user to retype their password.
+    if not refreshed_id_token and (id_token == "" or (refresh_token ~= "" and os.time() >= (expires_at - 60))) then
+      local login_email = (self.settings and self.settings:readSetting(SETTING.FABLE.EMAIL)) or ""
+      local login_password = stored_password(self.settings)
+      if login_email ~= "" and login_password then
+        local login_body = json.encode({ email = login_email, password = login_password, returnSecureToken = true })
+        local login_code, login_resp = raw_http(
+          identitytoolkit_url .. "/verifyPassword?key=" .. FIREBASE_API_KEY,
+          "POST",
+          { ["Content-Type"] = "application/json" },
+          login_body,
+          timeout,
+          maxtime
+        )
+        if login_code == 200 then
+          local ok, data = pcall(json.decode, login_resp, json.decode.simple)
+          if ok and data and data.idToken and data.refreshToken then
+            id_token = data.idToken
+            refresh_token = data.refreshToken
+            refreshed_id_token = id_token
+            refreshed_refresh_token = refresh_token
+            refreshed_expires_at = os.time() + (tonumber(data.expiresIn) or 3600)
+          end
         end
       end
     end
