@@ -623,9 +623,9 @@ function FableApi:getReview(book_id)
 
   local code, data = self:request("/api/users/" .. user_id .. "/reviews/" .. book_id, "GET")
   if code == 200 and data then
-    return data
+    return data, code
   end
-  return nil
+  return nil, code
 end
 
 -- Pushes a rating and/or review text to Fable. Fable accepts fractional
@@ -639,7 +639,10 @@ end
 -- nil (rating or review_text) is filled in from the existing review so
 -- calling this to set only one of them doesn't blank out the other.
 function FableApi:setReview(book_id, rating, review_text)
-  local existing = self:getReview(book_id)
+  local existing, lookup_code = self:getReview(book_id)
+  if not existing and lookup_code ~= 404 then
+    return false, "Could not load the existing Fable review (HTTP " .. tostring(lookup_code) .. ")"
+  end
 
   local labels = existing and existing.labels
   if not labels or #labels == 0 then
@@ -657,7 +660,8 @@ function FableApi:setReview(book_id, rating, review_text)
   }
 
   local code = self:request("/api/books/" .. book_id .. "/reviews", "POST", body)
-  return code and code >= 200 and code < 300
+  if code and code >= 200 and code < 300 then return true end
+  return false, "Fable review submission failed (HTTP " .. tostring(code) .. ")"
 end
 
 function FableApi:setRating(book_id, rating)

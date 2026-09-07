@@ -253,23 +253,29 @@ local function parse_review_edit(html)
   return {
     session_count = tonumber(session_count) or 0,
     review_text = review_text or "",
-    notes = notes or "",
+    notes = decode_entities(notes or ""),
   }
 end
 
--- Where the edit page's own form actually wants the update POSTed --
--- read off the page itself rather than guessed, since a Rails form_for a
--- `review` record keys its form/field ids off the *review's own* database
--- id (eg. id="edit_review_123456789"), which is a different number from
--- book_id and not derivable from it. Falls back to nil (caller keeps the
--- book_id-based guess) if the page doesn't match either pattern -- keeps
--- this from being a hard requirement if Goodreads' markup differs.
+-- Use the review form's action and method, never a book-id-based update URL.
 local function parse_review_update_target(html)
   if not html or html == "" then return nil end
-  local action = html:match("<form[^>]-action=['\"]([^'\"]*/review[^'\"]*)['\"]")
-  if action then return action end
+  for attrs, body in html:gmatch("<form(%s[^>]*)>(.-)</form>") do
+    if body:match("name=['\"]review%[review%]['\"]") then
+      local action = attrs:match("action=['\"]([^'\"]+)['\"]")
+      if action then
+        action = decode_entities(action)
+        if action:match("^/review[/?.]") or action == "/review"
+            or action:match("^https://www%.goodreads%.com/review[/?.]") then
+          local method = body:match("name=['\"]_method['\"][^>]-value=['\"]([^'\"]+)['\"]")
+            or body:match("value=['\"]([^'\"]+)['\"][^>]-name=['\"]_method['\"]")
+          return action, method
+        end
+      end
+    end
+  end
   local review_id = html:match("edit_review_(%d+)")
-  if review_id then return "/review/" .. review_id end
+  if review_id then return "/review/" .. review_id, "put" end
   return nil
 end
 
@@ -938,14 +944,16 @@ function GoodreadsApi:setReviewText(book_id, text)
     ["Origin"] = base_url,
   }
 
-  local update_path = parse_review_update_target(edit_html)
-  local update_url = update_path and (update_path:match("^https?://") and update_path or (base_url .. update_path))
-    or (base_url .. "/review/update/" .. book_id)
+  local update_path, update_method = parse_review_update_target(edit_html)
+  if not update_path then
+    return nil, "Could not locate the Goodreads review form; review text was not saved"
+  end
+  local update_url = update_path:match("^https?://") and update_path or (base_url .. update_path)
   self.settings:debugLog("Goodreads: setReviewText POST target=" .. update_url
     .. " (from-page=" .. tostring(update_path ~= nil) .. ")")
 
   local code, resp = self:request(update_url, "POST", {
-    _method = "put",
+    _method = update_method,
     authenticity_token = csrf,
     ["review[review]"] = text,
     ["review[notes]"] = review.notes,
@@ -956,7 +964,7 @@ function GoodreadsApi:setReviewText(book_id, text)
     return true
   end
   self.settings:debugWarn("Goodreads: setReviewText failed - code=" .. tostring(code) .. " resp=" .. tostring(resp))
-  return nil
+  return nil, "Review text was not saved (HTTP " .. tostring(code) .. ")"
 end
 
 -- Stamps today as the book's "date read" via Goodreads' Reading Challenge
@@ -1020,14 +1028,14 @@ function GoodreadsApi:setDateFinished(book_id)
     ["Origin"] = base_url,
   }
 
-  local update_path = parse_review_update_target(edit_html)
-  local update_url = update_path and (update_path:match("^https?://") and update_path or (base_url .. update_path))
-    or (base_url .. "/review/update/" .. book_id)
+  local update_path, update_method = parse_review_update_target(edit_html)
+  if not update_path then return nil end
+  local update_url = update_path:match("^https?://") and update_path or (base_url .. update_path)
   self.settings:debugLog("Goodreads: setDateFinished POST target=" .. update_url
     .. " (from-page=" .. tostring(update_path ~= nil) .. ")")
 
   local update_code, update_resp = self:request(update_url, "POST", {
-    _method = "put",
+    _method = update_method,
     authenticity_token = csrf,
     ["review[review]"] = review.review_text,
     ["review[notes]"] = review.notes,

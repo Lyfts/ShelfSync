@@ -667,35 +667,42 @@ end
 
 -- Rating + review text in one mutation, for the unified Review menu.
 function HardcoverApi:updateReview(user_book_id, rating, review_text)
+  local declarations, fields = {}, {}
+  local variables = { id = user_book_id }
+  if rating ~= nil then
+    declarations[#declarations + 1] = "$rating: numeric"
+    fields[#fields + 1] = "rating: $rating"
+    variables.rating = rating == 0 and json.util.null or rating
+  end
+  if review_text ~= nil then
+    declarations[#declarations + 1] = "$review: jsonb"
+    fields[#fields + 1] = "review_slate: $review"
+    variables.review = build_slate_document(review_text) or json.util.null
+  end
+  if #fields == 0 then return nil, "No rating or review text supplied" end
   local query = [[
-    mutation ($id: Int!, $rating: numeric, $review: jsonb) {
-      update_user_book(id: $id, object: { rating: $rating, review_slate: $review }) {
+    mutation ($id: Int!, %s) {
+      update_user_book(id: $id, object: { %s }) {
         error
-        user_book {
-          ...UserBookParts
-        }
+        user_book { ...UserBookParts }
       }
     }
-  ]] .. user_book_fragment
+  ]]
+  query = query:format(table.concat(declarations, ", "), table.concat(fields, ", ")) .. user_book_fragment
 
-  if rating == 0 or rating == nil then
-    rating = json.util.null
-  end
-
-  local slate = build_slate_document(review_text) or json.util.null
-
-  local result, err = self:query(query, { id = user_book_id, rating = rating, review = slate })
-  if result and result.update_user_book then
-    if result.update_user_book.error then
-      logger.warn("Hardcover: updateReview failed - " .. tostring(result.update_user_book.error))
-      return nil
+  local result, err = self:query(query, variables)
+  local updated = result and result.update_user_book
+  if updated and updated ~= json.util.null then
+    if updated.error and updated.error ~= json.util.null and updated.error ~= "" then
+      err = updated.error
+    elseif updated.user_book and updated.user_book ~= json.util.null and updated.user_book.id then
+      return updated.user_book
     end
-    return result.update_user_book.user_book
   end
-
-  if err then
-    logger.warn("Hardcover: updateReview failed - " .. json.encode(err))
-  end
+  local reason = type(err) == "string" and err or (err and json.encode(err))
+    or "Hardcover returned no saved review"
+  logger.warn("Hardcover: updateReview failed - " .. reason)
+  return nil, reason
 end
 
 function HardcoverApi:removeRead(user_book_id)

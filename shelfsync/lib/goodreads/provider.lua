@@ -122,14 +122,17 @@ function Goodreads:submitReview(filename, rating, text)
     return false, "No linked book found on Goodreads"
   end
 
-  local success = true
-  if rating and rating > 0 then
-    success = self.api:setRating(book_id, math.floor(rating)) ~= nil and success
-  end
+  -- Save text first so a text failure does not create a rating-only review.
   if text and text ~= "" then
-    success = self.api:setReviewText(book_id, text) ~= nil and success
+    local ok, err = self.api:setReviewText(book_id, text)
+    if not ok then return false, err or "Goodreads could not save the review text" end
   end
-  return success
+  if rating and rating > 0 then
+    if not self.api:setRating(book_id, math.floor(rating)) then
+      return false, "Goodreads could not save the rating"
+    end
+  end
+  return true
 end
 
 return Goodreads

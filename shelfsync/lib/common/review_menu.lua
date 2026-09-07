@@ -11,6 +11,7 @@
 -- refreshing controls never reopens the dialog or refreshes provider caches.
 local _ = require("gettext")
 local Device = require("device")
+local logger = require("logger")
 local Blitbuffer = require("ffi/blitbuffer")
 local Font = require("ui/font")
 
@@ -227,23 +228,29 @@ function ReviewMenu:_submit(review, eligible)
   -- Not tied to any one provider's own wifi state -- reuse StoryGraph's, same
   -- as main.lua's checkForUpdates does for other plugin-wide (not
   -- per-provider) network actions.
+  local filename = self.review_filename
+  local rating, text = review.rating, review.text
   self.app.engines.storygraph.wifi:withWifi(function()
-    local filename = self.app.ui.document.file
     local failed = {}
     for _, entry in ipairs(selected) do
-      local ok = entry.engine.provider:submitReview(filename, review.rating, review.text)
-      if not ok then
-        table.insert(failed, entry.label)
+      local called, ok, reason = pcall(entry.engine.provider.submitReview,
+        entry.engine.provider, filename, rating, text)
+      if not called or not ok then
+        reason = (not called and ok) or reason or _("The provider did not confirm the review was saved.")
+        logger.warn(entry.label .. ": review submission failed: " .. tostring(reason))
+        table.insert(failed, entry.label .. ": " .. tostring(reason))
+      else
+        review.selected[entry.key] = false
       end
     end
 
-    self.review = nil
-
     if #failed == 0 then
+      if self.review == review then self.review = nil end
       UIManager:show(InfoMessage:new { text = _("Review submitted!") })
     else
       UIManager:show(InfoMessage:new {
-        text = _("Review submitted, but failed for: ") .. table.concat(failed, ", "),
+        text = _("Review failed for:") .. "\n" .. table.concat(failed, "\n")
+          .. "\n\n" .. _("Your draft is saved. Reopen Review to retry the failed providers."),
         icon = "notice-warning",
       })
     end

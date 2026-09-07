@@ -209,7 +209,8 @@ end
 
 -- ReviewMenu entry point. Hardcover only accepts half-star increments, so a
 -- quarter-star value is rounded down to a half star here.
-function Hardcover:submitReview(_filename, rating, text)
+function Hardcover:submitReview(filename, rating, text)
+  if self.cache then self.cache:cacheUserBook() end
   local user_book_id = self.state.book_status and self.state.book_status.id
   if not user_book_id then
     return false, "No linked book found on Hardcover"
@@ -217,7 +218,8 @@ function Hardcover:submitReview(_filename, rating, text)
 
   local rounded_rating = rating and rating > 0 and (math.floor(rating * 2) / 2) or nil
   local review_text = (text and text ~= "") and text or nil
-  return self.api:updateReview(user_book_id, rounded_rating, review_text) ~= nil
+  local result, err = self.api:updateReview(user_book_id, rounded_rating, review_text)
+  return result ~= nil, err
 end
 
 return Hardcover

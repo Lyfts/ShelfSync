@@ -17,6 +17,7 @@ describe("Review composer", function()
       package.loaded[name] = module
     end
     local widget = { new = function(_, options) return options end }
+    replace("logger", { warn = function() end })
     replace("gettext", function(s) return s end)
     replace("device", { screen = {
       getWidth = function() return 600 end,
@@ -171,4 +172,19 @@ describe("Review composer", function()
     assert.equals(menu, composer.menu)
     assert.same({}, submitted)
   end)
+  it("reports failures and exceptions, retains the draft, and retries only failures", function()
+    composer:show()
+    composer.review.text = "Keep this review"
+    composer.app.engines.goodreads.provider.submitReview = function() return false, "HTTP 404" end
+    composer.app.engines.hardcover.provider.submitReview = function() error("offline") end
+    composer.app.engines.fable.provider.submitReview = function() return false, "HTTP 500" end
+    control("submit").callback()
+    assert.equals("Keep this review", composer.review.text)
+    assert.is_false(composer.review.selected.storygraph)
+    assert.is_true(composer.review.selected.fable)
+    assert.matches("Goodreads: HTTP 404", shown[#shown].text)
+    assert.matches("Hardcover:", shown[#shown].text)
+    assert.matches("Fable: HTTP 500", shown[#shown].text)
+  end)
+
 end)

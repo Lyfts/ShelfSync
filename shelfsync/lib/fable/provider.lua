@@ -120,7 +120,8 @@ function Fable:submitReview(filename, rating, text)
   end
 
   local review_rating = rating and rating > 0 and rating or nil
-  return self.api:setReview(book_id, review_rating, text) == true
+  local ok, err = self.api:setReview(book_id, review_rating, text)
+  return ok == true, err
 end
 
 return Fable
