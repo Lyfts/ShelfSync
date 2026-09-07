@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.2
+##### Plugin
+- Add a **ShelfSync: Update progress for all linked books** gesture under KOReader's General actions, which immediately syncs the open book's current progress to every linked provider in sequence and reports each provider's result. Gesture-triggered sync now refreshes an unknown remote reading status first, instead of incorrectly treating it as a status mismatch.
+- Fable now caches the login password on the device, encrypted at rest where possible, so an expired or revoked session can silently re-authenticate without asking for the password again. Logging out clears the cached password as well as the session tokens.
+
 ## 1.3.1
 ##### Plugin
 - Add an "Automatically link by provider identifier" setting, which takes priority over ISBN and title+author matching when auto-linking a book: Goodreads via a `goodreads:<id>` metadata tag, Hardcover via its existing `hardcover:`/`hardcover-edition:` tags, StoryGraph via its existing `storygraph:`/`storygraph-edition:` tags. New auto-link priority order is identifier -> ISBN -> title+author. Fable has no matching identifier scheme yet.
