@@ -1,27 +1,24 @@
 -- Unified, cross-provider book review composer: one star rating (quarter-star
 -- precision) and one free-text review, submitted to every linked, enabled,
--- authenticated provider at once. Each provider rounds the rating to whatever
+-- authenticated provider at once. Each provider rounds the rating down to whatever
 -- precision it actually supports (see each provider.lua's submitReview) --
 -- this menu always deals in the full quarter-star value.
 --
 -- Reached via ShelfSync > Review in the main menu, and via the "book
 -- finished" prompt (see main.lua's onShelfSyncBookFinished).
 --
--- Built on the generic ui/widget/menu.lua Menu (not TouchMenu) -- that widget
--- has no checked_func/keep_menu_open support, and its onMenuSelect
--- unconditionally closes the menu after any leaf item is tapped. Rather than
--- destroying and recreating the whole widget (and re-running the
--- once-per-open network refresh below) on every tap, show() overrides
--- onMenuSelect on the instance to honor a custom `keep_open` item field, same
--- trick as the onMenuHold override further down. Rows that need to stay open
--- (rating, text, provider checkboxes) update state and call
--- self.menu:updateItems() to redraw in place.
+-- A compact native ButtonDialog composer. Draft and submission state live here;
+-- refreshing controls never reopens the dialog or refreshes provider caches.
 local _ = require("gettext")
 local Device = require("device")
+local Blitbuffer = require("ffi/blitbuffer")
+local Font = require("ui/font")
 
 local InfoMessage = require("ui/widget/infomessage")
-local Menu = require("ui/widget/menu")
+local ButtonDialog = require("ui/widget/buttondialog")
+local InputDialog = require("ui/widget/inputdialog")
 local SpinWidget = require("ui/widget/spinwidget")
+local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 
 local ICON = require("shelfsync/lib/common/constants/icons")
@@ -29,7 +26,7 @@ local PROVIDERS = require("shelfsync/lib/common/constants/providers")
 
 local Screen = Device.screen
 
-local SECTION_HEADER = "\u{2015}\u{2015}\u{2015} %s \u{2015}\u{2015}\u{2015}"
+local EMPTY_STAR = "\u{2606}"
 
 local ReviewMenu = {}
 ReviewMenu.__index = ReviewMenu
@@ -111,95 +108,103 @@ function ReviewMenu:_state()
   return self.review
 end
 
-function ReviewMenu:_ratingItem(review)
-  return {
-    text_func = function()
-      local stars = review.rating or 0
-      local whole = math.floor(stars)
-      local star_string = string.rep(ICON.STAR, whole)
-      if stars - whole >= 0.25 then star_string = star_string .. ICON.HALF_STAR end
-      return _("Rating: ") .. ("%.2f "):format(stars) .. star_string
-    end,
-    keep_open = true,
-    callback = function()
-      local spinner
-      spinner = SpinWidget:new {
-        value = (review.rating and review.rating > 0) and review.rating or 1,
-        value_min = 1,
-        value_max = 5,
-        value_step = 0.25,
-        value_hold_step = 1,
-        precision = "%.2f",
-        ok_text = _("Set"),
-        title_text = _("Set rating"),
-        callback = function(spin)
-          review.rating = spin.value
-        end,
-        -- Fires on every dismiss path (Set, Cancel, or tap-outside) -- see
-        -- SpinWidget's own onClose(). Using this instead of also updating
-        -- from `callback` above avoids redrawing twice on Set.
-        close_callback = function()
-          self.menu:updateItems()
-        end,
-      }
-      UIManager:show(spinner)
-    end,
-    hold_callback = function()
-      UIManager:show(InfoMessage:new {
-        text = _([[Set a star rating from 0 to 5 in quarter-star steps.
-
-Each provider rounds this to whatever precision it actually supports when you submit:
-- Goodreads: nearest whole star
-- Hardcover: nearest half star
-- StoryGraph and Fable: exact value (quarter-star precision)]]),
-      })
-    end,
-  }
+-- Keep previews on a single paragraph and truncate at a UTF-8 boundary.
+local function preview(text, limit)
+  local flat = (text or ""):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+  local count = 0
+  for pos in flat:gmatch("()[%z\1-\127\194-\244]") do
+    count = count + 1
+    if count > limit then return flat:sub(1, pos - 1) .. "…" end
+  end
+  return flat
 end
 
-function ReviewMenu:_textItem(review)
-  return {
-    text_func = function()
-      if not review.text or review.text == "" then
-        return _("Review text: (none)")
+function ReviewMenu:_refresh()
+  if not self.menu then return end
+  -- Update fixed-height controls in place, preserving focus and scroll position.
+  for _, row in ipairs(self.menu.buttons) do
+    for _, item in ipairs(row) do
+      local button = self.menu:getButtonById(item.id)
+      if item.multiline then
+        -- Button normally starts with a single-line TextWidget and shrinks
+        -- long labels. Use a fixed-height text box for these reading areas.
+        button.label_widget:free()
+        button.text = item.text_func()
+        button.label_widget = TextBoxWidget:new {
+          text = button.text,
+          face = Font:getFace("cfont", item.font_size),
+          bold = false,
+          alignment = item.align or "center",
+          width = button.label_container.dimen.w,
+          height = button.label_container.dimen.h,
+          height_adjust = false,
+          height_overflow_show_ellipsis = true,
+          fgcolor = button.enabled and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_DARK_GRAY,
+        }
+        button.label_container[1] = button.label_widget
+      elseif item.text_func then
+        button:setText(item.text_func(), button.width)
       end
-      local preview = review.text:sub(1, 40)
-      if #review.text > 40 then preview = preview .. "..." end
-      return _("Review text: ") .. preview
-    end,
-    keep_open = true,
-    callback = function()
-      local MultiInputDialog = require("ui/widget/multiinputdialog")
-      local dialog
-      dialog = MultiInputDialog:new {
-        title = _("Review text"),
-        fields = {
-          { text = review.text, input_type = "text" },
-        },
-        buttons = {
-          {
-            {
-              text = _("Cancel"),
-              id = "close",
-              callback = function()
-                UIManager:close(dialog)
-                self.menu:updateItems()
-              end,
-            },
-            {
-              text = _("Set"),
-              callback = function()
-                review.text = dialog:getFields()[1]
-                UIManager:close(dialog)
-                self.menu:updateItems()
-              end,
-            },
-          },
-        },
-      }
-      UIManager:show(dialog)
-    end,
+      if item.enabled_func then button:enableDisable(item.enabled_func()) end
+    end
+  end
+  UIManager:setDirty(self.menu, "ui")
+end
+
+function ReviewMenu:_setRating(review)
+  UIManager:show(SpinWidget:new {
+    value = review.rating or 0,
+    value_min = 0,
+    value_max = 5,
+    value_step = 0.25,
+    value_hold_step = 1,
+    precision = "%.2f",
+    ok_text = _("Set"),
+    title_text = _("Set rating"),
+    callback = function(spin) review.rating = spin.value end,
+    close_callback = function() self:_refresh() end,
+  })
+end
+
+function ReviewMenu:_ratingHelp()
+  UIManager:show(InfoMessage:new {
+    text = _([[Set a star rating from 0 to 5 in quarter-star steps.
+
+Each provider rounds this down to whatever precision it actually supports when you submit:
+- Goodreads: round down to a whole star
+- Hardcover: round down to a half star
+- StoryGraph and Fable: exact value (quarter-star precision)]]),
+  })
+end
+
+function ReviewMenu:_editText(review)
+  local dialog
+  dialog = InputDialog:new {
+    title = _("Your review"),
+    input = review.text or "",
+    input_hint = _("What stayed with you about this book?"),
+    fullscreen = true,
+    condensed = true,
+    allow_newline = true,
+    add_scroll_buttons = true,
+    buttons = {{
+      {
+        text = _("Cancel"),
+        id = "close",
+        callback = function() UIManager:close(dialog) end,
+      },
+      {
+        text = _("Save draft"),
+        callback = function()
+          review.text = dialog:getInputText()
+          UIManager:close(dialog)
+          self:_refresh()
+        end,
+      },
+    }},
   }
+  UIManager:show(dialog)
+  dialog:onShowKeyboard()
 end
 
 -- Returns true once submission was actually attempted (regardless of
@@ -246,60 +251,117 @@ function ReviewMenu:_submit(review, eligible)
   return true
 end
 
-function ReviewMenu:getSubMenuItems()
-  local review = self:_state()
-  local all_entries = self:_allEngines()
-  local eligible = self:_eligibleEngines()
-
-  local items = {
-    self:_ratingItem(review),
-    self:_textItem(review),
-    { text = SECTION_HEADER:format(_("Providers")), dim = true, select_enabled = false },
-  }
-
-  -- All 4 providers are always listed, so it's clear which ones exist and
-  -- why a given one can't be reviewed right now -- ineligible ones are
-  -- greyed out and untappable (select_enabled = false) rather than hidden.
-  -- Checked state is a checkbox glyph in the right-aligned `mandatory`
-  -- column (via mandatory_func, so toggling never needs to rebuild the
-  -- item_table -- updateItems() alone re-evaluates it).
-  for _, entry in ipairs(all_entries) do
-    if entry.eligible then
-      table.insert(items, {
-        text = entry.label,
-        mandatory_func = function()
-          return review.selected[entry.key] and ICON.CHECKBOX_CHECKED or ICON.CHECKBOX_UNCHECKED
-        end,
-        keep_open = true,
-        callback = function()
-          review.selected[entry.key] = not review.selected[entry.key]
-          self.menu:updateItems()
-        end,
-      })
-    else
-      table.insert(items, {
-        text = entry.label,
-        mandatory = "(" .. entry.reason .. ")",
-        mandatory_dim = true,
-        dim = true,
-        select_enabled = false,
-      })
+function ReviewMenu:_buttons(review, entries)
+  local function selectedCount()
+    local count = 0
+    for _, entry in ipairs(entries) do
+      if entry.eligible and review.selected[entry.key] then count = count + 1 end
     end
+    return count
   end
-
-  table.insert(items, { text = SECTION_HEADER:format(""), dim = true, select_enabled = false })
-  table.insert(items, {
-    text = _("Submit Review"),
-    bold = true,
-    keep_open = true,
-    callback = function()
-      if self:_submit(review, eligible) then
-        self.menu.close_callback()
-      end
+  local buttons = {}
+  local stars = {}
+  for value = 1, 5 do
+    stars[#stars + 1] = {
+      id = "star_" .. value,
+      text_func = function()
+        return (review.rating or 0) >= value and ICON.STAR or EMPTY_STAR
+      end,
+      font_size = 30,
+      callback = function()
+        review.rating = value
+        self:_refresh()
+      end,
+      hold_callback = function() self:_ratingHelp() end,
+    }
+  end
+  buttons[#buttons + 1] = stars
+  buttons[#buttons + 1] = {
+    {
+      id = "less", text = "− ¼", font_bold = false,
+      enabled_func = function() return (review.rating or 0) > 0 end,
+      callback = function()
+        review.rating = math.max(0, (review.rating or 0) - 0.25)
+        self:_refresh()
+      end,
+    },
+    {
+      id = "rating",
+      text_func = function()
+        return (review.rating or 0) == 0 and _("No rating") or ("%.2f / 5"):format(review.rating)
+      end,
+      callback = function() self:_setRating(review) end,
+      hold_callback = function() self:_ratingHelp() end,
+    },
+    {
+      id = "more", text = "+ ¼", font_bold = false,
+      enabled_func = function() return (review.rating or 0) < 5 end,
+      callback = function()
+        review.rating = math.min(5, (review.rating or 0) + 0.25)
+        self:_refresh()
+      end,
+    },
+  }
+  buttons[#buttons + 1] = {{
+    id = "text",
+    text_func = function()
+      local excerpt = preview(review.text, 100)
+      return excerpt == "" and _("Write a review…") or _("Edit review") .. "\n" .. excerpt
     end,
-  })
-
-  return items
+    align = "left",
+    font_size = 18,
+    font_bold = false,
+    multiline = true,
+    height = Screen:scaleBySize(88),
+    callback = function() self:_editText(review) end,
+  }}
+  buttons[#buttons + 1] = {{
+    id = "providers_label", text = _("Share with"),
+    align = "left", font_size = 16, font_bold = false,
+    enabled = false,
+  }}
+  for i, entry in ipairs(entries) do
+    if i % 2 == 1 then buttons[#buttons + 1] = {} end
+    table.insert(buttons[#buttons], {
+      id = entry.key,
+      text_func = function()
+        if not entry.eligible then return entry.label .. "\n" .. entry.reason end
+        local check = review.selected[entry.key] and ICON.CHECKBOX_CHECKED or ICON.CHECKBOX_UNCHECKED
+        return check .. "  " .. entry.label
+      end,
+      enabled = entry.eligible,
+      font_size = 17,
+      font_bold = false,
+      multiline = true,
+      height = Screen:scaleBySize(58),
+      callback = function()
+        review.selected[entry.key] = not review.selected[entry.key]
+        self:_refresh()
+      end,
+    })
+  end
+  buttons[#buttons + 1] = {
+    {
+      id = "close", text = _("Close"), font_bold = false,
+      callback = function() self.menu:onClose() end,
+    },
+    {
+      id = "submit",
+      text_func = function()
+        return _("Submit review") .. " (" .. selectedCount() .. ")"
+      end,
+      enabled_func = function() return selectedCount() > 0 end,
+      callback = function()
+        local menu = self.menu
+        local eligible = {}
+        for _, entry in ipairs(entries) do
+          if entry.eligible then eligible[#eligible + 1] = entry end
+        end
+        if self:_submit(review, eligible) then menu:onClose() end
+      end,
+    },
+  }
+  return buttons
 end
 
 function ReviewMenu:show()
@@ -308,49 +370,20 @@ function ReviewMenu:show()
     return
   end
 
+  local review = self:_state()
   local menu
-  menu = Menu:new {
+  menu = ButtonDialog:new {
     title = _("Review"),
-    item_table = self:getSubMenuItems(),
-    width = Screen:getWidth() - Screen:scaleBySize(50),
-    height = Screen:getHeight() - Screen:scaleBySize(100),
-    single_line = true,
-    close_callback = function()
-      UIManager:close(menu)
-      self.menu = nil
+    title_align = "center",
+    use_info_style = false,
+    width = math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * 0.9),
+    buttons = self:_buttons(review, self:_allEngines()),
+    tap_close_callback = function()
+      if self.menu == menu then self.menu = nil end
     end,
   }
   self.menu = menu
-
-  -- The base Menu class always closes itself after any leaf item is chosen
-  -- (see the file-level comment above), and separately ignores
-  -- item.hold_callback entirely (unlike TouchMenu) -- both overridden here
-  -- on the instance rather than the class, so other Menu users are
-  -- unaffected.
-  menu.onMenuSelect = function(m, item)
-    if item.sub_item_table == nil then
-      if item.select_enabled == false then
-        return true
-      end
-      if item.select_enabled_func and not item.select_enabled_func() then
-        return true
-      end
-      m:onMenuChoice(item)
-      if not item.keep_open and m.close_callback then
-        m.close_callback()
-      end
-    else
-      m.item_table.title = m.title
-      table.insert(m.item_table_stack, m.item_table)
-      m:switchItemTable(item.text, item.sub_item_table)
-    end
-    return true
-  end
-  menu.onMenuHold = function(_, item)
-    if item.hold_callback then item.hold_callback() end
-    return true
-  end
-
+  self:_refresh()
   UIManager:show(menu)
 end
 

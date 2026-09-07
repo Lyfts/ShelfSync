@@ -115,7 +115,7 @@ end
 
 -- ReviewMenu entry point: submits a star rating and/or free-text review from
 -- the unified Review menu. Goodreads only accepts whole-star ratings, so a
--- quarter/half-star value is rounded to the nearest whole number here.
+-- quarter/half-star value is rounded down to a whole number here.
 function Goodreads:submitReview(filename, rating, text)
   local book_id = self.settings:readBookSetting(filename, "book_id")
   if not book_id then
@@ -124,7 +124,7 @@ function Goodreads:submitReview(filename, rating, text)
 
   local success = true
   if rating and rating > 0 then
-    success = self.api:setRating(book_id, math.floor(rating + 0.5)) ~= nil and success
+    success = self.api:setRating(book_id, math.floor(rating)) ~= nil and success
   end
   if text and text ~= "" then
     success = self.api:setReviewText(book_id, text) ~= nil and success
