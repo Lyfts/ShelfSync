@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.3
 ##### Plugin
 - Add StoryGraph email/password login under **Account (Cookies & Tokens) > Log in**, using the mobile app's login flow and saving the returned session cookies without storing your password. Login errors identify whether the page load or submission was blocked, and manual browser-cookie entry remains available as a fallback.
 
