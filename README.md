@@ -58,7 +58,7 @@ This cookie will go stale again periodically unless you set up the Docker refres
 Unlike the other services, Fable has a real login API, so the plugin logs in directly with your Fable email and password rather than a cookie/token you have to fetch by hand.
 
 1. In KOReader, open **Fable** menu -> **Account** -> **Log in**, and enter your Fable email and password.
-2. Your password itself is never stored — only the access/refresh token pair Fable's own login returns, the same thing its official app keeps. That pair refreshes itself automatically from then on; if it's ever revoked (e.g. after changing your password), just log in again the same way.
+2. ShelfSync caches your password on the device so it can silently sign in again if the refresh token stops working. The password is encrypted at rest when `libcrypto` is available; otherwise, it is stored in plaintext. Your access/refresh tokens refresh automatically, and **Log out** clears the cached password and tokens.
 
 > [!TIP]
 > If you signed up to Fable with **Google or Apple**, there's no password to log in with here. Convert the account to a regular email/password account first: in the Fable app, go to **Account settings** and set/add a password for your account. Once that's done, log in above using that email and password like any other account.
