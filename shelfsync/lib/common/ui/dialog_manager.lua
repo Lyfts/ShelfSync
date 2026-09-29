@@ -25,6 +25,9 @@ local function mapJournalData(data)
     entry = data.text,
     progress = data.progress,
     progress_type = data.progress_type or "percentage",
+    progress_percent = data.progress_percent,
+    local_page = data.local_page,
+    local_total_pages = data.local_total_pages,
     date = data.date
   }
 end
@@ -190,22 +193,30 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
       UIManager:show(saving_msg)
 
       UIManager:scheduleIn(0.1, function()
-        local result = self.api:createJournalEntry(api_data)
-        UIManager:close(saving_msg)
-        
-        if result then
-          UIManager:close(dialog)
-          UIManager:setDirty(nil, "full")
+        -- Scheduled UI callbacks aren't inside the Trapper coroutine that
+        -- dismissableRunInSubprocess() needs for provider network requests.
+        Trapper:wrap(function()
+          local result, err = self.api:createJournalEntry(api_data)
+          UIManager:close(saving_msg)
 
-          if wifi_was_off then
-            UIManager:nextTick(function()
-              self.wifi:wifiDisablePrompt()
-            end)
+          if result then
+            UIManager:close(dialog)
+            UIManager:setDirty(nil, "full")
+
+            if err then
+              self:showError(err)
+            end
+
+            if wifi_was_off then
+              UIManager:nextTick(function()
+                self.wifi:wifiDisablePrompt()
+              end)
+            end
+          else
+            self:showError(err or _("Failed to update " .. self.label))
+            UIManager:setDirty(nil, "full")
           end
-        else
-          self:showError(_("Failed to update " .. self.label))
-          UIManager:setDirty(nil, "full")
-        end
+        end)
       end)
     end,
 

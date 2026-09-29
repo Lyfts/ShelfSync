@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+##### Plugin
+- Add Pagebound sync support with email/password login, book linking, status updates, and page/percentage progress sync.
+- Pagebound notes are published to the linked book's forum with a title showing progress and page position.
+
 ## 1.3.3
 ##### Plugin
 - Add StoryGraph email/password login under **Account (Cookies & Tokens) > Log in**, using the mobile app's login flow and saving the returned session cookies without storing your password. Login errors identify whether the page load or submission was blocked, and manual browser-cookie entry remains available as a fallback.

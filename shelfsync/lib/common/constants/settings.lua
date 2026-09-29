@@ -81,4 +81,14 @@ Settings.FABLE = {
   PASSWORD_PLAIN = "password_plain",
 }
 
+Settings.PAGEBOUND = {
+  EMAIL = "email",
+  FIREBASE_ID_TOKEN = "firebase_id_token",
+  REFRESH_TOKEN = "refresh_token",
+  TOKEN_EXPIRES_AT = "token_expires_at",
+  API_TOKEN = "api_token",
+  PASSWORD_ENC = "password_enc",
+  PASSWORD_PLAIN = "password_plain",
+}
+
 return Settings

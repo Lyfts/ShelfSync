@@ -903,6 +903,13 @@ function SyncEngine:startReadCache()
 end
 
 function SyncEngine:registerHighlight()
+  -- Provider settings can be changed from KOReader's file browser, where the
+  -- reader-only highlight module has not been loaded yet. Reader lifecycle
+  -- callbacks will register the action once the book is opened.
+  if not self.ui or not self.ui.highlight then
+    return
+  end
+
   self.ui.highlight:removeFromHighlightDialog(self.highlight_menu_name)
 
   if self.settings:bookLinked() then

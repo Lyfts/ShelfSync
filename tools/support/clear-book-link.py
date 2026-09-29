@@ -18,7 +18,7 @@ import os
 import re
 import sys
 
-ALLOWED_PROVIDERS = ("goodreads", "storygraph", "hardcover")
+ALLOWED_PROVIDERS = ("goodreads", "storygraph", "hardcover", "fable", "pagebound")
 
 
 def default_koreader_dir():
@@ -100,7 +100,8 @@ def main():
     )
     parser.add_argument(
         "-p", "--provider", default="all",
-        help="Comma-separated providers to unlink (goodreads, storygraph, hardcover) or 'all'. "
+        help="Comma-separated providers to unlink "
+             "(goodreads, storygraph, hardcover, fable, pagebound) or 'all'. "
              "Default: all.",
     )
     parser.add_argument(

@@ -1,5 +1,4 @@
--- Shared book-linking/autolink logic for all sync providers (StoryGraph,
--- Hardcover, Goodreads).
+-- Shared book-linking/autolink logic for all sync providers.
 --
 -- Provider-specific classes extend this via metatable inheritance, same
 -- pattern as base_settings.lua:

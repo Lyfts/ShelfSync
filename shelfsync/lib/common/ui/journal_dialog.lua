@@ -59,11 +59,27 @@ function JournalDialog:init()
   self.save_callback = function() 
     local remote_val = journal_self.remote_percent or 0
     local current_pct
+    local total_local_pages = journal_self.page_mapper.ui.document:getPageCount()
+    local local_page
     if journal_self.progress_type == "percentage" then
       current_pct = journal_self.page
+      if total_local_pages and total_local_pages > 0 then
+        local_page = math.floor((journal_self.page / 100) * total_local_pages + 0.5)
+      end
     else
-      local total_remote = journal_self.remote_page or 1
-      current_pct = math.floor((journal_self.page / total_remote) * 100 + 0.5)
+      local total_remote = tonumber(journal_self.remote_page)
+      if total_remote and total_remote > 0 then
+        current_pct = math.floor((journal_self.page / total_remote) * 100 + 0.5)
+        if total_local_pages and total_local_pages > 0 then
+          local_page = journal_self.page_mapper:getUnmappedPage(
+            journal_self.page, total_local_pages, total_remote
+          )
+        end
+      else
+        local_page = journal_self.page_mapper.ui:getCurrentPage()
+        current_pct = total_local_pages and total_local_pages > 0
+          and math.floor((local_page / total_local_pages) * 100 + 0.5) or 0
+      end
     end
 
     local save_data = {
@@ -71,6 +87,9 @@ function JournalDialog:init()
       text = journal_self.note_input:getText(),
       progress = journal_self.page,
       progress_type = journal_self.progress_type,
+      progress_percent = current_pct,
+      local_page = local_page,
+      local_total_pages = total_local_pages,
       date = journal_self.date
     }
 
