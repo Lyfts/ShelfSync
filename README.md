@@ -66,6 +66,9 @@ Unlike the other services, Fable has a real login API, so the plugin logs in dir
 ### Pagebound authentication
 Open **ShelfSync > Providers > Pagebound > Account > Log in** and enter your Pagebound email and password. The plugin signs in through Firebase, exchanges that session for a Pagebound API token, and refreshes the token automatically. It caches your password on the device, encrypted at rest where available, so it can recover if the refresh token stops working. Use **Log out** to clear the credentials cached by ShelfSync.
 
+> [!TIP]
+> If you usually sign in to Pagebound with **Apple or Google**, reset the password for the email address on your account through Pagebound. You can then log in with that email and password; ShelfSync uses this regular email/password account.
+
 Notes entered in Pagebound's progress dialog are published as posts in that book's forum. The post body is your note, and its title includes the selected progress percentage and page position; other Pagebound users may be able to see it.
 
 ## Usage
