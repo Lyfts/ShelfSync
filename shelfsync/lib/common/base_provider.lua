@@ -24,6 +24,143 @@ local SETTING = require("shelfsync/lib/common/constants/settings")
 local BaseProvider = {}
 BaseProvider.__index = BaseProvider
 
+-- Fuzzy titles need author agreement; without usable authors, require an almost exact title.
+local MIN_TITLE_SIMILARITY = 0.8
+local MIN_TITLE_SIMILARITY_WITHOUT_AUTHOR = 0.95
+local MIN_AUTHOR_SIMILARITY = 0.7
+
+local function matchTokens(value, is_title)
+  if type(value) ~= "string" then
+    return {}
+  end
+
+  value = value:lower()
+    :gsub("’", "'")
+    :gsub("‘", "'")
+    :gsub("‑", "-")
+    :gsub("–", "-")
+    :gsub("—", "-")
+    :gsub("&", " and ")
+    :gsub("'", "")
+    :gsub("[%p%c]", " ")
+    :gsub("%s+", " ")
+
+  local tokens = {}
+  for token in value:gmatch("%S+") do
+    table.insert(tokens, token)
+  end
+
+  if is_title and #tokens > 1 and (tokens[1] == "a" or tokens[1] == "an" or tokens[1] == "the") then
+    table.remove(tokens, 1)
+  end
+  return tokens
+end
+
+local function tokenSequenceSimilarity(left, right)
+  if #left == 0 or #right == 0 then
+    return 0
+  end
+
+  local previous = {}
+  for column = 0, #right do
+    previous[column] = column
+  end
+
+  for row = 1, #left do
+    local current = { [0] = row }
+    for column = 1, #right do
+      local substitution = left[row] == right[column] and 0 or 1
+      current[column] = math.min(
+        previous[column] + 1,
+        current[column - 1] + 1,
+        previous[column - 1] + substitution
+      )
+    end
+    previous = current
+  end
+
+  return 1 - previous[#right] / math.max(#left, #right)
+end
+
+local function tokenSetSimilarity(left, right)
+  local left_set, right_set = {}, {}
+  for _, token in ipairs(left) do left_set[token] = true end
+  for _, token in ipairs(right) do right_set[token] = true end
+
+  local left_count, right_count, shared = 0, 0, 0
+  for token in pairs(left_set) do
+    left_count = left_count + 1
+    if right_set[token] then shared = shared + 1 end
+  end
+  for _ in pairs(right_set) do right_count = right_count + 1 end
+
+  if left_count == 0 or right_count == 0 then
+    return 0
+  end
+  return 2 * shared / (left_count + right_count)
+end
+
+local function hasUsefulAuthor(tokens)
+  return #tokens > 0 and tokens[1] ~= "unknown"
+end
+
+local function appendAuthorNames(value, names)
+  if type(value) == "string" then
+    if value ~= "" then table.insert(names, value) end
+  elseif type(value) == "table" then
+    if type(value.name) == "string" then
+      appendAuthorNames(value.name, names)
+    end
+    if value.author ~= nil then
+      appendAuthorNames(value.author, names)
+    end
+    for _, author in ipairs(value) do
+      appendAuthorNames(author, names)
+    end
+  end
+end
+
+local function getCandidateAuthors(book)
+  local names = {}
+  appendAuthorNames(book.author, names)
+  appendAuthorNames(book.authors, names)
+  appendAuthorNames(book.contributions, names)
+
+  local combined = table.concat(names, " ")
+  local tokens = matchTokens(combined)
+  if not hasUsefulAuthor(tokens) then
+    return nil
+  end
+  return tokens
+end
+
+local function titleAuthorMatchScore(props, candidate)
+  local title_score = tokenSequenceSimilarity(
+    matchTokens(props.title, true),
+    matchTokens(candidate.title, true)
+  )
+  if title_score < MIN_TITLE_SIMILARITY then
+    return nil
+  end
+
+  local local_authors = matchTokens(props.authors)
+  local provider_authors = getCandidateAuthors(candidate)
+  local has_local_authors = hasUsefulAuthor(local_authors)
+
+  if has_local_authors and provider_authors then
+    local author_score = tokenSetSimilarity(local_authors, provider_authors)
+    if author_score < MIN_AUTHOR_SIMILARITY then
+      return nil
+    end
+    return title_score * 0.75 + author_score * 0.25
+  end
+
+  if title_score < MIN_TITLE_SIMILARITY_WITHOUT_AUTHOR then
+    return nil
+  end
+  return title_score
+end
+
 function BaseProvider:new(o)
   return setmetatable(o, self)
 end
@@ -151,10 +288,21 @@ end
 
 function BaseProvider:linkBookByTitle()
   local props = self.ui.document:getProps()
+  if type(props.title) ~= "string" or props.title:match("^%s*$") then
+    return
+  end
 
   local results = self.api:findBooks(props.title, props.authors, self.user:getId())
-  if results and #results > 0 then
-    self:autolinkBook(results[1])
+  local best_match, best_score
+  for _, result in ipairs(results or {}) do
+    local score = titleAuthorMatchScore(props, result)
+    if score and (not best_score or score > best_score) then
+      best_match, best_score = result, score
+    end
+  end
+
+  if best_match then
+    self:autolinkBook(best_match)
     return true
   end
 end
@@ -166,12 +314,24 @@ end
 -- checking bookLinked() immediately after calling this, since a wifi wait
 -- means linking can finish well after this function itself returns.
 function BaseProvider:tryAutolink(done)
-  if self.settings:bookLinked() then
+  local document = self.ui and self.ui.document
+  if not document then
     if done then done() end
     return
   end
 
-  local props = self.ui.document:getProps()
+  local props = document:getProps()
+
+  if Book:isWikipediaDocument(props) then
+    self.settings:debugLog(self.label .. ": tryAutolink - skipping Wikipedia content")
+    if done then done() end
+    return
+  end
+
+  if self.settings:bookLinked() then
+    if done then done() end
+    return
+  end
 
   local identifiers = Book:parseIdentifiers(props.identifiers)
   local should_attempt = ((identifiers.book_slug or identifiers.edition_id or identifiers.goodreads_id or identifiers.storygraph_slug) and self.settings:readSetting(SETTING.SHARED.LINK_BY_IDENTIFIER) ~= false)

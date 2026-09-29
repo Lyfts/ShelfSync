@@ -22,6 +22,7 @@ local InfoMessage = require("ui/widget/infomessage")
 local Notification = require("ui/widget/notification")
 
 local _t = require("shelfsync/lib/common/table_util")
+local Book = require("shelfsync/lib/common/book")
 local Scheduler = require("shelfsync/lib/common/scheduler")
 local throttle = require("shelfsync/lib/common/throttle")
 
@@ -48,9 +49,15 @@ function SyncEngine:_bookSettingChanged(setting, key)
 end
 
 function SyncEngine:isActive()
-  return self.settings:providerEnabled()
+  return not self:isWikipediaDocument()
+    and self.settings:providerEnabled()
     and self.api:hasCredential()
     and (self.enabled or self.plugin_settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true)
+end
+
+function SyncEngine:isWikipediaDocument()
+  return self.ui and self.ui.document
+    and Book:isWikipediaDocument(self.ui.document:getProps()) or false
 end
 
 function SyncEngine:disable()
@@ -560,6 +567,20 @@ function SyncEngine:onUpdatePos()
 end
 
 function SyncEngine:onReaderReady()
+  if self:isWikipediaDocument() then
+    self:cancelPendingUpdates()
+    Scheduler:clear()
+    self.state.read_cache_started = false
+    self.state.process_page_turns = false
+    self.state.book_status = {}
+    self.state.status_mismatch_warned = false
+    self.state.page = nil
+    self.state.page_map = nil
+    self.state.last_page = nil
+    self:registerHighlight()
+    return
+  end
+
   self.page_mapper:cachePageMap()
   self:registerHighlight()
   self.state.page = self.ui:getCurrentPage()
@@ -902,7 +923,7 @@ function SyncEngine:registerHighlight()
 
   self.ui.highlight:removeFromHighlightDialog(self.highlight_menu_name)
 
-  if self.settings:bookLinked() then
+  if self.settings:bookLinked() and not self:isWikipediaDocument() then
     self.ui.highlight:addToHighlightDialog(self.highlight_menu_name, function(this)
       return {
         text_func = function()

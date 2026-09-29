@@ -80,4 +80,26 @@ function Book:parseIdentifiers(identifiers)
   return result
 end
 
+function Book:isWikipediaDocument(props)
+  if not props then
+    return false
+  end
+
+  local identifiers = props.identifiers
+  if type(identifiers) == "string" then
+    for identifier in identifiers:lower():gmatch("%S+") do
+      if identifier:match("^wikipedia_[%w%-]+_%d+_%d+$")
+          or identifier:match("^search_[%w%-]+_.+_%d+$")
+          or identifier:match("^category_[%w%-]+_.+_%d+$")
+          or identifier:match("^mainpage_[%w%-]+_.+_%d+$") then
+        return true
+      end
+    end
+  end
+
+  local authors = props.authors
+  return type(authors) == "string"
+    and authors:lower():match("^%s*wikipedia%s+[%a%-]+%s*$") ~= nil
+end
+
 return Book
