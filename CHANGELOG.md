@@ -4,6 +4,7 @@
 ##### Plugin
 - Add Pagebound sync support with email/password login, book linking, status updates, and page/percentage progress sync.
 - Pagebound notes are published to the linked book's forum with a title showing progress and page position.
+- Fixed on-demand Wi-Fi shutting off while provider requests were still running; restored Wi-Fi now stays on until all queued operations finish.
 
 ## 1.3.3
 ##### Plugin

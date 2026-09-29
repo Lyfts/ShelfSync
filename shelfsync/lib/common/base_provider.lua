@@ -184,18 +184,10 @@ function BaseProvider:tryAutolink(done)
     .. " title=" .. tostring(props.title))
   if should_attempt then
     self.wifi:withWifi(function()
-      -- _runAutolink hits the network (findBookByIdentifiers/findBooks) via
-      -- api:request(), which only gets a cancellable, non-UI-blocking
-      -- subprocess out of Trapper:dismissableRunInSubprocess() when called
-      -- from inside a Trapper:wrap() coroutine -- otherwise it silently
-      -- falls back to a fully blocking in-process call. showLinkBookDialog
-      -- (the manual search-and-link flow) already wraps for this reason;
-      -- this is the same requirement for the automatic path triggered on
-      -- document open / LINK_BY_ISBN/LINK_BY_TITLE settings changes.
-      Trapper:wrap(function()
-        self:_runAutolink(identifiers)
-        if done then done() end
-      end)
+      -- AutoWifi runs this callback inside a Trapper coroutine and holds its
+      -- Wi-Fi lease until the network requests in _runAutolink have finished.
+      self:_runAutolink(identifiers)
+      if done then done() end
     end)
   elseif done then
     done()

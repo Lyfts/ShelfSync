@@ -3,6 +3,8 @@ local SETTING = require("shelfsync/lib/common/constants/settings")
 local Device = require("device")
 
 local NetworkMgr = require("ui/network/manager")
+local Trapper = require("ui/trapper")
+local UIManager = require("ui/uimanager")
 
 local AutoWifi = {}
 AutoWifi.__index = AutoWifi
@@ -11,30 +13,120 @@ function AutoWifi:new(o)
   return setmetatable(o, self)
 end
 
--- Module-level (not per-instance): StoryGraph and Hardcover each get their
--- own AutoWifi, but there's only one real NetworkMgr, so a restore kicked
--- off by one engine must be visible to the other. Without this, a second
--- withWifi() call arriving while a restore is in flight would see
--- NetworkMgr:isWifiOn() already true (the wifi interface comes up ~instantly,
--- well before the actual network association/DHCP completes -- see
--- restoreWifiAsync) and wrongly treat that as "already connected", firing
--- its callback immediately against a connection that doesn't functionally
--- exist yet. Queuing onto the same in-flight restore instead means every
--- caller's callback only fires once real connectivity is confirmed, and
--- wifi only gets auto-disabled once afterward, no matter how many engines
--- asked for it around the same time.
-local pending_restore = nil -- nil, or { callbacks = { ... }, original_on = <bool> }
+-- NetworkMgr is shared by all providers, so the restore and the period during
+-- which the plugin owns Wi-Fi must also be shared. Keep a lease for each
+-- operation until its callback has actually returned. In particular, Trapper
+-- callbacks can yield while an HTTP subprocess is still running.
+local active_wifi_session = nil
+local CONNECTIVITY_TIMEOUT = 46 -- KOReader gives up after roughly 45 seconds.
+
+local function cancelConnectTimeout(session)
+  if session.connect_timeout then
+    UIManager:unschedule(session.connect_timeout)
+    session.connect_timeout = nil
+  end
+end
+
+local function finishSessionIfIdle(session)
+  if active_wifi_session ~= session
+      or session.pending
+      or session.dispatching
+      or session.active_operations > 0
+      or session.closing then
+    return
+  end
+
+  session.closing = true
+  session.owner:wifiDisableSilent(function()
+    if active_wifi_session ~= session then return end
+    active_wifi_session = nil
+
+    -- A request that arrived while the radio was being shut down starts a
+    -- fresh restore after the shutdown callback completes.
+    local queued = session.after_close or {}
+    for _, request in ipairs(queued) do
+      request.owner:withWifi(request.callback)
+    end
+  end)
+end
+
+local function invokeWithWifi(callback, wifi_enabled, session)
+  if session then
+    session.active_operations = session.active_operations + 1
+  end
+
+  local released = false
+  local function release()
+    if released then return end
+    released = true
+    if session then
+      session.active_operations = session.active_operations - 1
+      finishSessionIfIdle(session)
+    end
+  end
+
+  local function runCallback()
+    -- Trapper:wrap already catches and logs errors. The inner xpcall makes
+    -- sure the Wi-Fi lease is released before that error is rethrown.
+    local ok, err = xpcall(function()
+      callback(wifi_enabled)
+    end, debug.traceback)
+    release()
+    if not ok then error(err) end
+  end
+
+  if Trapper.isWrapped and Trapper:isWrapped() then
+    runCallback()
+  else
+    Trapper:wrap(runCallback)
+  end
+end
+
+local function dispatchQueued(session, wifi_enabled)
+  local callbacks = session.callbacks
+  session.callbacks = {}
+  session.dispatching = true
+  for _, request in ipairs(callbacks) do
+    invokeWithWifi(request.callback, wifi_enabled, session)
+  end
+  session.dispatching = false
+  finishSessionIfIdle(session)
+end
+
+local function failRestore(session, reason)
+  if active_wifi_session ~= session or session.connected then return end
+  cancelConnectTimeout(session)
+  active_wifi_session = nil
+  session.pending = false
+  local callbacks = session.callbacks
+  session.callbacks = {}
+
+  session.owner.settings:debugWarn(session.owner.label .. ": withWifi - connectivity restore failed: " .. tostring(reason))
+  for _, request in ipairs(callbacks) do
+    invokeWithWifi(request.callback, false, nil)
+  end
+end
 
 function AutoWifi:withWifi(callback)
-  if pending_restore then
-    self.settings:debugLog(self.label .. ": withWifi - restore already in flight, queuing")
-    table.insert(pending_restore.callbacks, callback)
+  local session = active_wifi_session
+  if session then
+    if session.closing then
+      self.settings:debugLog(self.label .. ": withWifi - wifi shutdown in progress, queuing")
+      session.after_close = session.after_close or {}
+      table.insert(session.after_close, { owner = self, callback = callback })
+    elseif session.connected then
+      self.settings:debugLog(self.label .. ": withWifi - reusing active wifi session")
+      invokeWithWifi(callback, true, session)
+    else
+      self.settings:debugLog(self.label .. ": withWifi - restore already in flight, queuing")
+      table.insert(session.callbacks, { owner = self, callback = callback })
+    end
     return
   end
 
   if NetworkMgr:isWifiOn() then
     self.settings:debugLog(self.label .. ": withWifi - wifi already on, calling back immediately")
-    callback(false)
+    invokeWithWifi(callback, false, nil)
     return
   end
 
@@ -47,25 +139,38 @@ function AutoWifi:withWifi(callback)
       and not_airplane_mode then
 
     self.settings:debugLog(self.label .. ": withWifi - wifi off, restoring automatically")
-    pending_restore = { callbacks = { callback }, original_on = NetworkMgr.wifi_was_on }
+    session = {
+      owner = self,
+      callbacks = { { owner = self, callback = callback } },
+      after_close = {},
+      active_operations = 0,
+      original_on = NetworkMgr.wifi_was_on,
+      pending = true,
+      connected = false,
+      dispatching = false,
+      closing = false,
+    }
+    active_wifi_session = session
+
+    session.connect_timeout = function()
+      failRestore(session, "timed out")
+    end
+    UIManager:scheduleIn(CONNECTIVITY_TIMEOUT, session.connect_timeout)
 
     NetworkMgr:restoreWifiAsync()
     NetworkMgr:scheduleConnectivityCheck(function()
-      local restore = pending_restore
-      pending_restore = nil
+      if active_wifi_session ~= session or session.connected then return end
+      cancelConnectTimeout(session)
+      session.pending = false
+      session.connected = true
 
       -- restore original "was on" state to prevent wifi being restored automatically after suspend
-      NetworkMgr.wifi_was_on = restore.original_on
-      G_reader_settings:saveSetting("wifi_was_on", restore.original_on)
+      NetworkMgr.wifi_was_on = session.original_on
+      G_reader_settings:saveSetting("wifi_was_on", session.original_on)
 
       self.settings:debugLog(self.label .. ": withWifi - connectivity check finished, wifi_on=" .. tostring(NetworkMgr:isWifiOn())
-        .. " queued_callbacks=" .. #restore.callbacks)
-      for _, queued_callback in ipairs(restore.callbacks) do
-        queued_callback(true)
-      end
-
-      -- TODO: schedule turn off wifi, debounce
-      self:wifiDisableSilent()
+        .. " queued_callbacks=" .. #session.callbacks)
+      dispatchQueued(session, true)
     end)
   else
     -- Auto-connect is unavailable or disabled: don't leave callers hanging,
@@ -73,15 +178,16 @@ function AutoWifi:withWifi(callback)
     self.settings:debugLog(self.label .. ": withWifi - wifi off, not auto-restoring - enable_wifi_setting="
       .. tostring(enable_wifi_setting) .. " pending_connection=" .. tostring(NetworkMgr.pending_connection)
       .. " has_wifi_restore=" .. tostring(has_wifi_restore) .. " not_airplane_mode=" .. tostring(not_airplane_mode))
-    callback(false)
+    invokeWithWifi(callback, false, nil)
   end
 end
 
-function AutoWifi:wifiDisableSilent()
+function AutoWifi:wifiDisableSilent(callback)
   NetworkMgr:turnOffWifi(function()
     -- explicitly disable wifi was on
     NetworkMgr.wifi_was_on = false
     G_reader_settings:saveSetting("wifi_was_on", false)
+    if callback then callback() end
   end)
 end
 

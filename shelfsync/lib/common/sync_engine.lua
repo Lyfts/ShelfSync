@@ -186,15 +186,13 @@ function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
         and self:syncFileUpdates(self.ui.document.file)
         and not self.state.book_status.status_id then
       self.wifi:withWifi(function()
-        Trapper:wrap(function()
-          local err = self.cache:cacheUserBook()
-          self:registerHighlight()
-          if err then
-            finish(nil, _("Could not fetch book information from " .. self.label))
-          else
-            update()
-          end
-        end)
+        local err = self.cache:cacheUserBook()
+        self:registerHighlight()
+        if err then
+          finish(nil, _("Could not fetch book information from " .. self.label))
+        else
+          update()
+        end
       end)
     else
       update()
@@ -422,9 +420,9 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
 
   local immediate_update = function()
     self.wifi:withWifi(function()
-      -- withWifi may invoke this after an asynchronous restore, when any
-      -- Trapper wrapping the original event has already completed.
-      Trapper:wrap(update)
+      -- AutoWifi supplies the Trapper coroutine and keeps its Wi-Fi lease
+      -- until update (including its subprocess request) returns.
+      update()
     end)
   end
 
@@ -798,63 +796,55 @@ function SyncEngine:startReadCache()
                 return restart()
               end
 
-              -- withWifi's callback fires asynchronously (after
-              -- NetworkMgr:scheduleConnectivityCheck completes) whenever a
-              -- wifi restore is needed, well after the outer Trapper:wrap()
-              -- coroutine above has already run to completion -- so
-              -- cacheUserBook()'s network call needs its own fresh wrap
-              -- here too, same reasoning as the dismissableRunInSubprocess()
-              -- call sites in dialog_manager.lua and base_provider.lua's
-              -- tryAutolink.
-              Trapper:wrap(function()
-                local err = self.cache:cacheUserBook()
-                self:registerHighlight()
-                logger.info(self.label .. ": startReadCache - cacheUserBook completed, status=" .. (self.state.book_status.status_id or "nil"))
-                if err then
-                  return fail(err)
+              -- AutoWifi wraps delayed callbacks in Trapper and holds the
+              -- shared Wi-Fi lease until cacheUserBook has returned.
+              local err = self.cache:cacheUserBook()
+              self:registerHighlight()
+              logger.info(self.label .. ": startReadCache - cacheUserBook completed, status=" .. (self.state.book_status.status_id or "nil"))
+              if err then
+                return fail(err)
+              end
+
+              -- A nil status_id here (fetched the book page fine, but found no
+              -- read-status on it) is usually a real, stable outcome -- e.g. the
+              -- book was removed from the user's shelves, or its status was
+              -- changed to something we don't render a badge for -- rather than a
+              -- fetch failure to retry indefinitely. But a single miss can also be
+              -- a one-off render/parse blip on an otherwise normal "Currently
+              -- Reading" book, so give it a couple of retries before accepting it
+              -- as final.
+              if not self.state.book_status.status_id then
+                if nil_status_attempts < max_nil_status_attempts then
+                  nil_status_attempts = nil_status_attempts + 1
+                  self.state.book_status = {}
+                  return fail("No read status found for book, retrying")
                 end
 
-                -- A nil status_id here (fetched the book page fine, but found no
-                -- read-status on it) is usually a real, stable outcome -- e.g. the
-                -- book was removed from the user's shelves, or its status was
-                -- changed to something we don't render a badge for -- rather than a
-                -- fetch failure to retry indefinitely. But a single miss can also be
-                -- a one-off render/parse blip on an otherwise normal "Currently
-                -- Reading" book, so give it a couple of retries before accepting it
-                -- as final.
-                if not self.state.book_status.status_id then
-                  if nil_status_attempts < max_nil_status_attempts then
-                    nil_status_attempts = nil_status_attempts + 1
-                    self.state.book_status = {}
-                    return fail("No read status found for book, retrying")
-                  end
-
-                  -- Still genuinely no status after retrying: mirror linkBook()'s
-                  -- behavior for a freshly-linked book with no status, and add it
-                  -- as Currently Reading automatically here too, rather than only
-                  -- ever asking the user to fix it via warnStatusMismatch.
-                  logger.info(self.label .. ": Already-linked book has no status, adding to Currently Reading automatically")
-                  local added = self.api:updateUserBook(book_settings.book_id, self.constants.STATUS.READING)
-                  if added and added.status_id then
-                    self.state.book_status = added
-                  elseif auto_add_attempts < max_auto_add_attempts then
-                    -- The write itself can fail transiently (e.g. a momentary
-                    -- network hiccup) just as easily as the read above did --
-                    -- give it the same kind of retry instead of giving up after
-                    -- a single attempt.
-                    auto_add_attempts = auto_add_attempts + 1
-                    self.state.book_status = {}
-                    return fail("Failed to auto-mark book as Currently Reading, retrying")
-                  end
-                  -- Still no status after retrying the write too: fall through
-                  -- to success() with an empty book_status. warnStatusMismatch
-                  -- (from _handlePageUpdate) remains the safety net to let the
-                  -- user fix it manually.
+                -- Still genuinely no status after retrying: mirror linkBook()'s
+                -- behavior for a freshly-linked book with no status, and add it
+                -- as Currently Reading automatically here too, rather than only
+                -- ever asking the user to fix it via warnStatusMismatch.
+                logger.info(self.label .. ": Already-linked book has no status, adding to Currently Reading automatically")
+                local added = self.api:updateUserBook(book_settings.book_id, self.constants.STATUS.READING)
+                if added and added.status_id then
+                  self.state.book_status = added
+                elseif auto_add_attempts < max_auto_add_attempts then
+                  -- The write itself can fail transiently (e.g. a momentary
+                  -- network hiccup) just as easily as the read above did --
+                  -- give it the same kind of retry instead of giving up after
+                  -- a single attempt.
+                  auto_add_attempts = auto_add_attempts + 1
+                  self.state.book_status = {}
+                  return fail("Failed to auto-mark book as Currently Reading, retrying")
                 end
+                -- Still no status after retrying the write too: fall through
+                -- to success() with an empty book_status. warnStatusMismatch
+                -- (from _handlePageUpdate) remains the safety net to let the
+                -- user fix it manually.
+              end
 
-                success()
-                self:registerHighlight() -- redundant but safe
-              end)
+              success()
+              self:registerHighlight() -- redundant but safe
             end)
           end
         else
