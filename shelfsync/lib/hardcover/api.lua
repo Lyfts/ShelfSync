@@ -597,10 +597,11 @@ function HardcoverApi:updateUserBook(book_id, status_id, privacy_setting_id, edi
     edition_id = edition_id
   }
 
-  local result = self:query(query, { object = update_args })
+  local result, request_error = self:query(query, { object = update_args })
   if result and result.insert_user_book then
-    return result.insert_user_book.user_book
+    return result.insert_user_book.user_book, result.insert_user_book.error
   end
+  return nil, request_error
 end
 
 function HardcoverApi:updateRating(user_book_id, rating)

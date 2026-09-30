@@ -2,6 +2,7 @@
 
 ## Unreleased
 ##### Plugin
+- Fix Hardcover sometimes failing to mark a newly linked book as Currently Reading automatically.
 - Prevent automatic book-status caching from using a document after it is closed or replaced while Wi-Fi is restoring.
 
 ## 1.4.0
