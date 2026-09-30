@@ -11,8 +11,6 @@
 -- clock/queue/network state between tests.
 
 table.pack = table.pack or function(...) return { n = select("#", ...), ... } end
-table.unpack = table.unpack or unpack
-
 local LOG = {}
 local function log(...)
   local parts = {}

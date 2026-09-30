@@ -693,21 +693,16 @@ function SyncEngine:onEndOfBook()
     return
   end
 
-  local mark_read = false
-  if G_reader_settings:isTrue("end_document_auto_mark") then
-    mark_read = true
-  end
+  local mark_read = G_reader_settings:isTrue("end_document_auto_mark")
+  local mark_read_later = false
 
   if not mark_read then
     local action = G_reader_settings:readSetting("end_document_action") or "pop-up"
     mark_read = action == "mark_read"
-
-    if action == "pop-up" then
-      mark_read = 'later'
-    end
+    mark_read_later = action == "pop-up"
   end
 
-  if not mark_read then
+  if not mark_read and not mark_read_later then
     return
   end
 
@@ -715,7 +710,7 @@ function SyncEngine:onEndOfBook()
     self.cache:updateBookStatus(file_path, self.constants.STATUS.FINISHED)
   end
 
-  if mark_read == 'later' then
+  if mark_read_later then
     UIManager:scheduleIn(30, function()
       local status = "reading"
       if DocSettings:hasSidecarFile(file_path) then

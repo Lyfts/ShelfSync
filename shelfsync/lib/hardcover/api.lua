@@ -482,6 +482,8 @@ function HardcoverApi:findEditions(book_id, user_id)
       if a.users_count ~= b.users_count then
         return a.users_count > b.users_count
       end
+
+      return false
     end)
   end
 
