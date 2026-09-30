@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+##### Plugin
+- Skip inactive providers from the all-provider progress gesture without showing per-provider failure popups.
+
 ## 1.4.3
 ##### Plugin
 - Fix Pagebound progress updates so page-based sync sends the absolute percentage with the current edition page, matching Pagebound's own request format. Keep both values updated when syncing by percentage too.

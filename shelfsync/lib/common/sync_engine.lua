@@ -145,6 +145,16 @@ function SyncEngine:onPullPosition()
 end
 
 function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
+  -- A provider may still be linked after it is disabled. Skip it silently
+  -- before showing gesture feedback or starting any status/progress request.
+  -- Keep the sequence moving if a caller is syncing multiple providers.
+  if not self:isActive() then
+    if completion_callback then
+      completion_callback(nil)
+    end
+    return
+  end
+
   if self.ui.document and self.settings:bookLinked() then
     local function finish(result, reason)
       if result then

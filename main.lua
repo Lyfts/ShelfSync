@@ -390,14 +390,25 @@ function ShelfSyncApp:onShelfSyncUpdateAllProgress()
   end
 
   local linked_engines = {}
+  local has_linked_provider = false
   for _, provider in ipairs(PROVIDERS) do
     local engine = self.engines[provider.key]
     if engine.settings:bookLinked() then
-      table.insert(linked_engines, engine)
+      has_linked_provider = true
+      if engine:isActive() then
+        table.insert(linked_engines, engine)
+      end
     end
   end
 
   if #linked_engines == 0 then
+    -- A book can remain linked to providers the user has disabled. In that
+    -- case the gesture should quietly do nothing instead of claiming that
+    -- the book has no links or surfacing per-provider failures.
+    if has_linked_provider then
+      return true
+    end
+
     UIManager:show(InfoMessage:new {
       text = _("Unable to update reading progress: Book has not been linked to any provider"),
       icon = "notice-warning",
