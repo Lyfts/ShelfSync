@@ -748,12 +748,27 @@ local function pagebound_note_title(data, status, settings)
   local page = tonumber(data.local_page)
   local total_pages = tonumber(data.local_total_pages)
 
+  local remote_total = tonumber(status.total_page_count or status.page_count)
+  if not remote_total or remote_total <= 0 then
+    remote_total = tonumber(data.remote_total_pages)
+  end
+  if not remote_total or remote_total <= 0 then
+    remote_total = tonumber(settings and settings:pages())
+  end
+  if remote_total and remote_total <= 0 then
+    remote_total = nil
+  end
+  local progress_page = tonumber(data.remote_page)
+    or (data.progress_type == "pages" and tonumber(data.progress))
+  if progress_page and remote_total and remote_total > 0 then
+    -- Pagebound floors the page-derived percentage (e.g. 150/320 is 46%).
+    percent = math.floor(progress_page * 100 / remote_total)
+  end
+
   if not percent then
-    local remote_total = tonumber(status.total_page_count or status.page_count)
-      or tonumber(settings and settings:pages())
     local progress = tonumber(data.progress) or 0
     if data.progress_type == "pages" and remote_total and remote_total > 0 then
-      percent = math.floor(progress * 100 / remote_total + 0.5)
+      percent = math.floor(progress * 100 / remote_total)
     else
       percent = math.floor(progress + 0.5)
     end
@@ -762,8 +777,6 @@ local function pagebound_note_title(data, status, settings)
   percent = math.max(0, math.min(100, math.floor(percent + 0.5)))
 
   if not page or not total_pages or total_pages <= 0 then
-    local remote_total = tonumber(status.total_page_count or status.page_count)
-      or tonumber(settings and settings:pages())
     local progress = tonumber(data.progress) or 0
     if data.progress_type == "pages" then
       page = page or math.floor(progress + 0.5)
@@ -779,7 +792,7 @@ local function pagebound_note_title(data, status, settings)
   return ("Thoughts from %d%% (page %s)"):format(percent, page_text)
 end
 
-function PageboundApi:updateProgress(book_id, status, current_read, value, update_type)
+function PageboundApi:updateProgress(book_id, status, current_read, value, update_type, current_page)
   if not book_id then return nil, "No linked book found on Pagebound" end
 
   status = status or self:findUserBook(book_id)
@@ -806,30 +819,52 @@ function PageboundApi:updateProgress(book_id, status, current_read, value, updat
     reading_instance_id = current_read.id,
   }
   local user_book = {}
-  local progress_method
-  if update_type == "pages" then
-    local page = math.floor((tonumber(value) or 0) + 0.5)
-    local previous_page = tonumber(status.current_page) or 0
-    local page_delta = math.max(0, page - previous_page)
-    local total_pages = tonumber(status.total_page_count or status.page_count)
-      or tonumber(self.settings and self.settings:readBookSetting(self.settings:getFilePath(), "pages"))
-    reading_update.total_progress = page_delta
-    reading_update.total_pages_read = tostring(page)
-    user_book.current_page = tostring(page)
-    user_book.total_page_count = total_pages and tostring(total_pages) or ""
-    user_book.current_minute = json.util.null
-    user_book.total_minutes = json.util.null
-    progress_method = "pages"
-  else
-    local percent = math.floor(math.max(0, math.min(100, tonumber(value) or 0)) + 0.5)
-    reading_update.total_progress = percent
-    reading_update.total_pages_read = json.util.null
-    user_book.current_page = json.util.null
-    user_book.total_page_count = json.util.null
-    user_book.current_minute = json.util.null
-    user_book.total_minutes = json.util.null
-    progress_method = "percent"
+  local pages_mode = update_type == "pages"
+  local progress_method = pages_mode and "pages" or "percent"
+  local total_pages = tonumber(status.total_page_count or status.page_count)
+  if not total_pages or total_pages <= 0 then
+    total_pages = tonumber(self.settings
+      and self.settings:readBookSetting(self.settings:getFilePath(), "pages"))
   end
+  if not total_pages or total_pages <= 0 then
+    total_pages = nil
+  end
+
+  local requested_percent = math.floor(math.max(0, math.min(100, tonumber(value) or 0)) + 0.5)
+  local page = tonumber(current_page)
+  if pages_mode then
+    page = tonumber(value)
+  elseif not page and total_pages and total_pages > 0 then
+    page = math.floor((requested_percent / 100) * total_pages + 0.5)
+  end
+  if not page then
+    page = tonumber(status.current_page)
+  end
+  if page then
+    page = math.max(0, math.floor(page + 0.5))
+    if total_pages and total_pages > 0 then
+      page = math.min(total_pages, page)
+    end
+  end
+
+  local percent = requested_percent
+  if page and total_pages and total_pages > 0 then
+    -- Pagebound stores total_progress as the absolute percentage even when
+    -- progress_method is "pages". Keep its percentage aligned with the absolute
+    -- edition position in both sync modes, matching Pagebound's own request.
+    percent = math.floor(page * 100 / total_pages)
+  elseif pages_mode then
+    -- Without a page count, retain any known percentage rather than treating
+    -- the page number as a percentage or sending the pages-read delta.
+    percent = math.floor(math.max(0, math.min(100, tonumber(status.progress) or 0)))
+  end
+
+  reading_update.total_progress = percent
+  reading_update.total_pages_read = page and tostring(page) or json.util.null
+  user_book.current_page = page and tostring(page) or json.util.null
+  user_book.total_page_count = total_pages or (pages_mode and "") or json.util.null
+  user_book.current_minute = json.util.null
+  user_book.total_minutes = json.util.null
 
   local payload = {
     reading_update = reading_update,
@@ -865,7 +900,7 @@ function PageboundApi:createJournalEntry(data)
   local current_read = status.current_reading_instance
     or (status.user_book_reads and status.user_book_reads[#status.user_book_reads])
   local updated, progress_error = self:updateProgress(
-    data.book_id, status, current_read, data.progress, data.progress_type
+    data.book_id, status, current_read, data.progress, data.progress_type, data.remote_page
   )
   if not updated then
     progress_error = progress_error or "Pagebound progress update failed"

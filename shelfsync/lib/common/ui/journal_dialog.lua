@@ -63,6 +63,7 @@ function JournalDialog:init()
     local current_pct
     local total_local_pages = journal_self.page_mapper.ui.document:getPageCount()
     local local_page
+    local remote_page
     if journal_self.progress_type == "percentage" then
       current_pct = journal_self.page
       if total_local_pages and total_local_pages > 0 then
@@ -83,6 +84,13 @@ function JournalDialog:init()
           and math.floor((local_page / total_local_pages) * 100 + 0.5) or 0
       end
     end
+    if journal_self.progress_type == "pages" then
+      remote_page = tonumber(journal_self.page)
+    elseif local_page and total_local_pages and total_local_pages > 0 then
+      remote_page = journal_self.page_mapper:getMappedPage(
+        local_page, total_local_pages, tonumber(journal_self.remote_page)
+      )
+    end
 
     local save_data = {
       book_id = journal_self.book_id,
@@ -92,6 +100,7 @@ function JournalDialog:init()
       progress = journal_self.page,
       progress_type = journal_self.progress_type,
       progress_percent = current_pct,
+      remote_page = remote_page,
       local_page = local_page,
       local_total_pages = total_local_pages,
       remote_total_pages = tonumber(journal_self.remote_page),

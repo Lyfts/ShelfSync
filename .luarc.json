@@ -1,3 +1,4 @@
 {
-  "diagnostics.disable": ["undefined-field"]
+  "diagnostics.disable": ["undefined-field",
+        "undefined-global"]
 }

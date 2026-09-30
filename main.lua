@@ -169,6 +169,7 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
     user = user,
     cache = cache,
     dialog_manager = dialog_manager,
+    page_mapper = page_mapper,
     settings = settings,
     state = state,
     ui = self.ui,

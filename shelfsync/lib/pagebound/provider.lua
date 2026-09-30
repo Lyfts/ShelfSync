@@ -63,7 +63,7 @@ function Pagebound:getRemoteProgress(status, update_type)
     local page = tonumber(status.current_page)
     local total = tonumber(status.total_page_count or status.page_count)
     if page and total and total > 0 then
-      return math.floor(page * 100 / total + 0.5)
+      return math.floor(page * 100 / total)
     end
     return 0
   end
@@ -80,7 +80,7 @@ function Pagebound:getRemotePercent(status)
     local page = tonumber(status.current_page)
     local total = tonumber(status.total_page_count or status.page_count)
     if page and total and total > 0 then
-      return math.floor(page * 100 / total + 0.5)
+      return math.floor(page * 100 / total)
     end
     return nil
   end
@@ -94,12 +94,29 @@ function Pagebound:pushProgress(current_read, value, update_type, filename)
     return nil, "No linked book found on Pagebound"
   end
 
+  local status = self.state.book_status or {}
+  local total_pages = tonumber(status.total_page_count or status.page_count)
+  if not total_pages or total_pages <= 0 then
+    total_pages = tonumber(self.settings:pages())
+  end
+  local current_page
+  if update_type == "pages" then
+    current_page = tonumber(value)
+  elseif self.ui and self.ui.document and self.page_mapper then
+    local local_page = self.ui:getCurrentPage()
+    local document_pages = self.ui.document:getPageCount()
+    if local_page and document_pages and document_pages > 0 then
+      current_page = self.page_mapper:getMappedPage(local_page, document_pages, total_pages)
+    end
+  end
+
   local result, err = self.api:updateProgress(
     book_id,
-    self.state.book_status,
+    status,
     current_read,
     value,
-    update_type
+    update_type,
+    current_page
   )
   if not result then
     return nil, err
