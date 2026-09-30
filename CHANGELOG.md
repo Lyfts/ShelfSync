@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.2
 ##### Plugin
 - Fix Fable progress updates failing when **Auto sync by edition pages** is enabled; percentage-based syncing is unaffected.
 
