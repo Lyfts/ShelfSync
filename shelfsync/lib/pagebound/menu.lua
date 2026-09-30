@@ -30,6 +30,22 @@ function PageboundMenu:isActive()
     and (self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true)
 end
 
+function PageboundMenu:trackingDisabledReason()
+  if not self.settings:providerEnabled() then
+    return _("enable Pagebound first")
+  end
+  if not self.api:hasCredential() then
+    return _("log in first")
+  end
+  if not self.enabled and self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) ~= true then
+    return _("update ShelfSync to continue")
+  end
+  if not self.settings:bookLinked() then
+    return _("link this book first")
+  end
+  return nil
+end
+
 function PageboundMenu:mainMenu()
   return {
     enabled_func = function()
@@ -99,7 +115,13 @@ function PageboundMenu:getSubMenuItems(book_view)
       separator = true
     },
     book_view and {
-      text = _("Automatically track progress"),
+      text_func = function()
+        local reason = self:trackingDisabledReason()
+        if reason then
+          return T(_("Automatically track progress (%1)"), reason)
+        end
+        return _("Automatically track progress")
+      end,
       checked_func = function()
         return self.settings:syncEnabled()
       end,
@@ -254,7 +276,7 @@ function PageboundMenu:getAuthSubMenuItems()
     {
       text_func = function()
         local email = self.settings:readSetting(SETTING.PAGEBOUND.EMAIL)
-        return (email and email ~= "") and _("Logged in as: " .. email) or _("Log in")
+        return (email and email ~= "") and _("Saved account: " .. email) or _("Log in")
       end,
       keep_menu_open = true,
       callback = function()
@@ -289,9 +311,19 @@ function PageboundMenu:getAuthSubMenuItems()
                   UIManager:close(dialog)
 
                   Trapper:wrap(function()
-                    local info = InfoMessage:new { text = _("Logging in to Pagebound...") }
-                    UIManager:show(info)
-                    local ok, err = self.api:login(email, password)
+                    local info
+                    local function showLoginStatus(text)
+                      if info then UIManager:close(info) end
+                      info = InfoMessage:new { text = text }
+                      UIManager:show(info)
+                    end
+
+                    showLoginStatus(_("Checking your Pagebound credentials..."))
+                    local ok, err = self.api:login(email, password, function(stage)
+                      if stage == "pagebound_exchange" then
+                        showLoginStatus(_("Connecting to Pagebound (the first connection can take a minute)..."))
+                      end
+                    end)
                     UIManager:close(info)
 
                     if ok then

@@ -15,6 +15,8 @@ local PAGEBOUND = require("shelfsync/lib/pagebound/constants")
 
 local IDENTITY_TOOLKIT_URL = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword"
 local SECURE_TOKEN_URL = "https://securetoken.googleapis.com/v1/token"
+local PAGEBOUND_AUTH_TIMEOUT = 75
+local PAGEBOUND_AUTH_TOTAL_TIMEOUT = 90
 
 local PageboundApi = {
   enabled = true,
@@ -42,15 +44,18 @@ local function raw_http(url, method, headers, body_string, timeout, maxtime)
 
   local sink = {}
   socketutil:set_timeout(timeout, maxtime)
-  local _, code = http.request {
+  local ok, _, code = pcall(http.request, {
     url = url,
     method = method,
     headers = headers,
     source = body_string and ltn12.source.string(body_string) or nil,
     sink = socketutil.table_sink(sink),
-  }
+  })
   socketutil:reset_timeout()
 
+  if not ok then
+    return nil, tostring(_)
+  end
   return code, table.concat(sink)
 end
 
@@ -82,6 +87,11 @@ local function error_message(body, fallback)
   return fallback
 end
 
+local function request_failure(code)
+  if type(code) == "number" then return "HTTP " .. tostring(code) end
+  return tostring(code or "no response")
+end
+
 local function stored_password(settings)
   if not settings then return nil end
   local encrypted = settings:readSetting(SETTING.PAGEBOUND.PASSWORD_ENC)
@@ -108,7 +118,7 @@ local function firebase_sign_in(email, password)
   )
   local data = decode_json(response)
   if tonumber(code) ~= 200 or not data or not data.idToken or not data.refreshToken then
-    return nil, error_message(response, "Login failed (HTTP " .. tostring(code or "unknown") .. ")")
+    return nil, error_message(response, "Firebase sign-in failed (" .. request_failure(code) .. ")")
   end
   return {
     id_token = data.idToken,
@@ -152,11 +162,13 @@ local function exchange_firebase_token(id_token)
       -- JSON body and is what the endpoint exchanges.
       ["Authorization"] = "Bearer null",
     },
-    json.encode({ id_token = id_token })
+    json.encode({ id_token = id_token }),
+    PAGEBOUND_AUTH_TIMEOUT,
+    PAGEBOUND_AUTH_TOTAL_TIMEOUT
   )
   local data = decode_json(response)
   if tonumber(code) ~= 200 or not data or not data.token then
-    return nil, error_message(response, "Pagebound token exchange failed")
+    return nil, error_message(response, "Pagebound token exchange failed (" .. request_failure(code) .. ")")
   end
   return {
     api_token = data.token,
@@ -192,7 +204,7 @@ function PageboundApi:notifyAuthFailure()
   if self.on_error then self.on_error("Unauthorized") end
 end
 
-function PageboundApi:login(email, password)
+function PageboundApi:login(email, password, on_status)
   if not NetworkManager:isConnected() then
     return nil, "Network not connected"
   end
@@ -200,40 +212,52 @@ function PageboundApi:login(email, password)
     return nil, "Email and password are required"
   end
 
-  local subprocess_fn = function()
+  local function run_login_stage(stage, subprocess_fn)
+    local completed, content = Trapper:dismissableRunInSubprocess(subprocess_fn, true, true)
+    if not (completed and content) then
+      return nil, "Login did not complete during " .. stage .. " (cancelled or interrupted)"
+    end
+
+    local result, payload = content:match("^([^|]+)|(.*)$")
+    if result ~= "ok" then
+      logger.warn("Pagebound: " .. stage .. " failed")
+      return nil, payload or (stage .. " failed")
+    end
+
+    local data = decode_json(payload)
+    if not data then
+      return nil, "Invalid response during " .. stage
+    end
+    return data
+  end
+
+  local firebase, firebase_error = run_login_stage("Firebase sign-in", function()
     local firebase, firebase_error = firebase_sign_in(email, password)
     if not firebase then
       return "error|" .. tostring(firebase_error)
     end
+    return "ok|" .. json.encode(firebase)
+  end)
+  if not firebase then return nil, firebase_error end
 
+  if on_status then on_status("pagebound_exchange") end
+  local pagebound, exchange_error = run_login_stage("Pagebound token exchange", function()
     local pagebound, exchange_error = exchange_firebase_token(firebase.id_token)
     if not pagebound then
       return "error|" .. tostring(exchange_error)
     end
+    return "ok|" .. json.encode(pagebound)
+  end)
+  if not pagebound then return nil, exchange_error end
 
-    firebase.api_token = pagebound.api_token
-    firebase.user_id = pagebound.user_id
-    firebase.email = pagebound.email or firebase.email
-    return "ok|" .. json.encode(firebase)
-  end
-
-  local completed, content = Trapper:dismissableRunInSubprocess(subprocess_fn, true, true)
-  if not (completed and content) then
-    return nil, "Login request failed"
-  end
-
-  local result, payload = content:match("^([^|]+)|(.*)$")
-  if result ~= "ok" then
-    logger.warn("Pagebound: Login failed")
-    return nil, payload or "Login failed"
-  end
-
-  local data = decode_json(payload)
-  if not data or not data.api_token or not data.refresh_token then
+  firebase.api_token = pagebound.api_token
+  firebase.user_id = pagebound.user_id
+  firebase.email = pagebound.email or firebase.email
+  if not firebase.api_token or not firebase.refresh_token then
     return nil, "Login response missing tokens"
   end
 
-  persist_session(self.settings, data)
+  persist_session(self.settings, firebase)
   if self.settings then
     local encrypted = CryptoUtil.encryptSecret(password)
     if encrypted then
