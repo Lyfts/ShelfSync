@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+##### Plugin
+- Fix Fable progress updates failing when **Auto sync by edition pages** is enabled; percentage-based syncing is unaffected.
+
 ## 1.4.1
 ##### Plugin
 - Refresh Fable and Pagebound account labels immediately after logging in or out.

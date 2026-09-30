@@ -580,24 +580,23 @@ function FableApi:removeRead(book_id)
   return nil
 end
 
--- Confirmed via HAR (percentage mode only -- the capture never exercised
--- page-based tracking): the POST body is
--- {current_percentage, status="reading", social_accounts={}, selected_mode}.
--- The page-mode body below (current_page instead of current_percentage) is
--- inferred by symmetry, not independently confirmed against a capture.
+-- Confirmed via HAR: percentage mode sends `current_percentage` with
+-- `selected_mode="percentage"`; page mode sends `current_page` and
+-- `page_count` with `selected_mode="page_count"`.
 --
 -- Re-fetches the book afterwards for an authoritative status_id rather than
 -- trying to map this endpoint's own response `status` field (which uses a
 -- reading-session vocabulary like "reading", not the shelving vocabulary
 -- STATUS_BY_SYSTEM_TYPE expects) -- same pattern as Goodreads' updateProgress.
-function FableApi:updateProgress(book_id, value, update_type)
+function FableApi:updateProgress(book_id, value, update_type, page_count)
   -- Fable rejects an empty social_accounts encoded as a JSON object ("{}")
   -- with a 400 -- it must be an empty array ("[]"). An empty Lua table is
   -- ambiguous to the JSON encoder, so it has to be marked explicitly.
   local body = { status = "reading", social_accounts = json.util.InitArray({}) }
   if update_type == "pages" then
     body.current_page = math.floor(value)
-    body.selected_mode = "page"
+    body.page_count = page_count
+    body.selected_mode = "page_count"
   else
     body.current_percentage = math.floor(value)
     body.selected_mode = "percentage"
@@ -619,7 +618,12 @@ function FableApi:createJournalEntry(data)
   if not data or not data.book_id then
     return nil
   end
-  return self:updateProgress(data.book_id, tonumber(data.progress) or 0, data.progress_type)
+  return self:updateProgress(
+    data.book_id,
+    tonumber(data.progress) or 0,
+    data.progress_type,
+    tonumber(data.remote_total_pages)
+  )
 end
 
 return FableApi
