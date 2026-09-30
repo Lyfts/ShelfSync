@@ -144,7 +144,7 @@ function SyncEngine:onPullPosition()
   end)
 end
 
-function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
+function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback, suppress_provider_feedback)
   -- A provider may still be linked after it is disabled. Skip it silently
   -- before showing gesture feedback or starting any status/progress request.
   -- Keep the sequence moving if a caller is syncing multiple providers.
@@ -157,27 +157,32 @@ function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
 
   if self.ui.document and self.settings:bookLinked() then
     local function finish(result, reason)
-      if result then
-        if gesture_feedback then
-          UIManager:show(InfoMessage:new {
-            text = _("Progress updated on " .. self.label),
-            timeout = 2,
-          })
+      if not result then
+        logger.warn("Unsuccessful updating page progress", self.ui.document.file, reason)
+      end
+
+      if not suppress_provider_feedback then
+        if result then
+          if gesture_feedback then
+            UIManager:show(InfoMessage:new {
+              text = _("Progress updated on " .. self.label),
+              timeout = 2,
+            })
+          else
+            UIManager:show(Notification:new {
+              text = _("Progress updated")
+            })
+          end
         else
-          UIManager:show(Notification:new {
-            text = _("Progress updated")
+          UIManager:show(InfoMessage:new {
+            text = gesture_feedback
+              and (reason
+                and _("Unable to update reading progress on " .. self.label .. ": " .. reason)
+                or _("Unable to update reading progress on " .. self.label))
+              or reason or _("Unable to update reading progress"),
+            icon = "notice-warning",
           })
         end
-      else
-        logger.warn("Unsuccessful updating page progress", self.ui.document.file, reason)
-        UIManager:show(InfoMessage:new {
-          text = gesture_feedback
-            and (reason
-              and _("Unable to update reading progress on " .. self.label .. ": " .. reason)
-              or _("Unable to update reading progress on " .. self.label))
-            or reason or _("Unable to update reading progress"),
-          icon = "notice-warning",
-        })
       end
       if completion_callback then
         completion_callback(result, reason)
@@ -188,7 +193,7 @@ function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
       self:updatePageNow(finish)
     end
 
-    if gesture_feedback then
+    if gesture_feedback and not suppress_provider_feedback then
       UIManager:show(InfoMessage:new {
         text = _("Trying to sync progress to " .. self.label .. "..."),
         timeout = 2,
@@ -223,10 +228,12 @@ function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
     end
 
     local error_message = error and "Unable to update reading progress: " .. error or "Unable to update reading progress"
-    UIManager:show(InfoMessage:new {
-      text = error_message,
-      icon = "notice-warning",
-    })
+    if not suppress_provider_feedback then
+      UIManager:show(InfoMessage:new {
+        text = error_message,
+        icon = "notice-warning",
+      })
+    end
     if completion_callback then
       completion_callback(nil, error)
     end

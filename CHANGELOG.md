@@ -2,6 +2,7 @@
 
 ## Unreleased
 ##### Plugin
+- Show one gesture sync message listing providers being updated, followed by a combined result summary.
 - Skip inactive providers from the all-provider progress gesture without showing per-provider failure popups.
 
 ## 1.4.3

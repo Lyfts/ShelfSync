@@ -416,12 +416,60 @@ function ShelfSyncApp:onShelfSyncUpdateAllProgress()
     return true
   end
 
+  local updated, failed = {}, {}
+  local syncing_providers = {}
+  for _, engine in ipairs(linked_engines) do
+    table.insert(syncing_providers, engine.label)
+  end
+
+  UIManager:show(InfoMessage:new {
+    text = _("Trying to sync progress to " .. table.concat(syncing_providers, ", ") .. "..."),
+    timeout = 3,
+  })
+
+  local function showSummary()
+    local messages = {}
+    if #updated > 0 then
+      table.insert(messages, _("Progress updated on " .. table.concat(updated, ", ")))
+    end
+
+    if #failed > 0 then
+      local failed_providers = {}
+      for _, failure in ipairs(failed) do
+        table.insert(failed_providers, failure.reason
+          and (failure.provider .. ": " .. failure.reason)
+          or failure.provider)
+      end
+      table.insert(messages, _("Unable to update reading progress on " .. table.concat(failed_providers, "; ")))
+    end
+
+    if #messages == 0 then
+      return
+    end
+
+    UIManager:show(InfoMessage:new {
+      text = table.concat(messages, "\n"),
+      icon = #failed > 0 and "notice-warning" or nil,
+      timeout = #failed == 0 and 3 or nil,
+    })
+  end
+
   local function updateNext(index)
     local engine = linked_engines[index]
     if engine then
-      engine:onUpdateProgress(function()
+      engine:onUpdateProgress(function(result, reason)
+        if result then
+          table.insert(updated, engine.label)
+        elseif engine:isActive() then
+          table.insert(failed, {
+            provider = engine.label,
+            reason = reason and tostring(reason),
+          })
+        end
         updateNext(index + 1)
-      end, true)
+      end, true, true)
+    else
+      showSummary()
     end
   end
   updateNext(1)
