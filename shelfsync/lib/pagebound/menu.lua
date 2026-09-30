@@ -279,7 +279,7 @@ function PageboundMenu:getAuthSubMenuItems()
         return (email and email ~= "") and _("Saved account: " .. email) or _("Log in")
       end,
       keep_menu_open = true,
-      callback = function()
+      callback = function(menu_instance)
         local MultiInputDialog = require("ui/widget/multiinputdialog")
         local dialog
         dialog = MultiInputDialog:new {
@@ -327,6 +327,7 @@ function PageboundMenu:getAuthSubMenuItems()
                     UIManager:close(info)
 
                     if ok then
+                      menu_instance:updateItems()
                       UIManager:show(InfoMessage:new { text = _("Logged in to Pagebound") })
                     else
                       UIManager:show(InfoMessage:new {
@@ -350,7 +351,7 @@ function PageboundMenu:getAuthSubMenuItems()
         return self.api:hasCredential()
       end,
       keep_menu_open = true,
-      callback = function()
+      callback = function(menu_instance)
         self.dialog_manager:maybeConfirm({
           text = _("Log out of Pagebound on this device?"),
           ok_callback = function()
@@ -361,6 +362,7 @@ function PageboundMenu:getAuthSubMenuItems()
             self.settings:updateSetting(SETTING.PAGEBOUND.API_TOKEN, "")
             self.settings:updateSetting(SETTING.PAGEBOUND.PASSWORD_ENC, "")
             self.settings:updateSetting(SETTING.PAGEBOUND.PASSWORD_PLAIN, "")
+            menu_instance:updateItems()
           end,
         })
       end,

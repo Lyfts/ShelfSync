@@ -260,7 +260,7 @@ The access/refresh token pair Fable's own login returns (the same thing its offi
         return (email and email ~= "") and _("Logged in as: " .. email) or _("Log in")
       end,
       keep_menu_open = true,
-      callback = function()
+      callback = function(menu_instance)
         local MultiInputDialog = require("ui/widget/multiinputdialog")
         local dialog
         dialog = MultiInputDialog:new {
@@ -298,6 +298,7 @@ The access/refresh token pair Fable's own login returns (the same thing its offi
                     UIManager:close(info)
 
                     if ok then
+                      menu_instance:updateItems()
                       UIManager:show(InfoMessage:new { text = _("Logged in to Fable") })
                     else
                       UIManager:show(InfoMessage:new {
@@ -321,7 +322,7 @@ The access/refresh token pair Fable's own login returns (the same thing its offi
         return self.api:hasCredential()
       end,
       keep_menu_open = true,
-      callback = function()
+      callback = function(menu_instance)
         self.dialog_manager:maybeConfirm({
           text = _("Log out of Fable on this device?"),
           ok_callback = function()
@@ -331,6 +332,7 @@ The access/refresh token pair Fable's own login returns (the same thing its offi
             self.settings:updateSetting(SETTING.FABLE.TOKEN_EXPIRES_AT, 0)
             self.settings:updateSetting(SETTING.FABLE.PASSWORD_ENC, "")
             self.settings:updateSetting(SETTING.FABLE.PASSWORD_PLAIN, "")
+            menu_instance:updateItems()
           end,
         })
       end,
