@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+##### Plugin
+- Prevent automatic book-status caching from using a document after it is closed or replaced while Wi-Fi is restoring.
+
 ## 1.4.0
 ##### Plugin
 - Prevent title auto-linking from selecting unrelated search results by checking title and author similarity. Wikipedia and WikiReader EPUBs are excluded from linking and syncing.

@@ -807,12 +807,21 @@ function SyncEngine:startReadCache()
           -- fail, but cancel retries
           return success()
         end
-        local book_settings = self.settings:readBookSettings(self.ui.document.file) or {}
+        local document = self.ui.document
+        local filename = document.file
+        local book_settings = self.settings:readBookSettings(filename) or {}
         if book_settings.book_id then
           if self.state.book_status.id then
             return success()
           else
             self.wifi:withWifi(function()
+              -- Wi-Fi restoration can take long enough for the reader to
+              -- close this book or open another one. Don't let a stale cache
+              -- request act on the new document (or on no document at all).
+              if self.ui.document ~= document then
+                return
+              end
+
               if not NetworkManager:isConnected() then
                 return restart()
               end

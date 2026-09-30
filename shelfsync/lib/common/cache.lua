@@ -10,7 +10,12 @@ function Cache:updateBookStatus(filename, status, ...)
 end
 
 function Cache:cacheUserBook()
-  local filename = self.ui.document.file
+  local document = self.ui and self.ui.document
+  if not document then
+    return nil
+  end
+
+  local filename = document.file
   local status, errors = self.api:findUserBook(self.settings:getLinkedBookId(), self.user:getId())
   self.state.book_status = status or {}
   if status and status.page_count and status.page_count > 0 then
