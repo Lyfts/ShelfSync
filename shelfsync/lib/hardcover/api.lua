@@ -18,6 +18,122 @@ local HARDCOVER = require("shelfsync/lib/hardcover/constants")
 
 local api_url = "https://api.hardcover.app/v1/graphql"
 
+local function formatErrors(errors)
+  if type(errors) ~= "table" then
+    return tostring(errors or "unspecified GraphQL error")
+  end
+
+  local messages = {}
+  for _, item in ipairs(errors) do
+    local message
+    if type(item) == "table" then
+      message = item.message or item.error or "GraphQL error"
+      local code = item.extensions and item.extensions.code
+      if code then
+        message = tostring(message) .. " (code: " .. tostring(code) .. ")"
+      end
+    else
+      message = tostring(item)
+    end
+    -- Keep diagnostics readable and avoid multi-line or unbounded log entries.
+    message = tostring(message):gsub("[%c]", " ")
+    if #message > 500 then
+      message = message:sub(1, 500) .. "..."
+    end
+    table.insert(messages, message)
+  end
+
+  if #messages == 0 then
+    return "unspecified GraphQL error"
+  end
+  return table.concat(messages, "; ")
+end
+
+local function formatRequestError(err)
+  if type(err) == "string" then
+    return err
+  end
+  if type(err) ~= "table" then
+    return "no response or error details returned"
+  end
+
+  if err.errors then
+    return formatErrors(err.errors)
+  elseif err.parse_error then
+    return "could not decode API response: " .. tostring(err.parse_error)
+  elseif err.request_error then
+    return "request failed: " .. tostring(err.request_error)
+  elseif err.completed == false then
+    return "request subprocess did not complete"
+  end
+  return "no response or error details returned"
+end
+
+local function sortedPayloadFields(object)
+  local fields = {}
+  for key in pairs(type(object) == "table" and object or {}) do
+    table.insert(fields, tostring(key))
+  end
+  table.sort(fields)
+  return table.concat(fields, ",")
+end
+
+-- The journal dialog's shared data is intentionally provider-neutral. Hardcover
+-- stores notes, progress and dates in a different shape from StoryGraph's
+-- progress-with-note endpoint.
+local function mapJournalData(data, default_privacy_setting_id)
+  local object = {
+    book_id = tonumber(data.book_id),
+    event = data.event_type == "quote" and "quote" or "note",
+    entry = data.text or "",
+    edition_id = tonumber(data.edition_id),
+    privacy_setting_id = tonumber(data.privacy_setting_id)
+      or tonumber(default_privacy_setting_id)
+      or 1,
+    -- The API requires tags even when the reader has not supplied any.
+    tags = json.util.InitArray({}),
+  }
+
+  local date = data.date
+  if type(date) == "table" and date.year and date.month and date.day then
+    object.action_at = string.format("%04d-%02d-%02d", date.year, date.month, date.day)
+  end
+
+  -- Hardcover stores a page position in metadata.position. Convert percentage
+  -- progress to the selected Hardcover edition's page count when available.
+  local value, possible
+  local remote_total_pages = tonumber(data.remote_total_pages)
+  if data.progress_type == "pages" then
+    value = tonumber(data.progress)
+    possible = remote_total_pages
+    if not possible or possible <= 0 then
+      value = tonumber(data.local_page)
+      possible = tonumber(data.local_total_pages)
+    end
+  else
+    local percent = tonumber(data.progress_percent or data.progress)
+    if percent and remote_total_pages and remote_total_pages > 0 then
+      value = math.floor((percent / 100) * remote_total_pages + 0.5)
+      possible = remote_total_pages
+    else
+      value = tonumber(data.local_page)
+      possible = tonumber(data.local_total_pages)
+    end
+  end
+
+  if value and possible and possible > 0 then
+    object.metadata = {
+      position = {
+        type = "pages",
+        value = math.max(0, math.min(math.floor(value + 0.5), math.floor(possible + 0.5))),
+        possible = math.floor(possible + 0.5),
+      },
+    }
+  end
+
+  return object
+end
+
 local HardcoverApi = {
   enabled = true,
   settings = nil, -- Injected by main.lua
@@ -128,8 +244,11 @@ function HardcoverApi:me()
   return {}
 end
 
-function HardcoverApi:query(query, parameters)
-  if not NetworkManager:isConnected() or not self.enabled then
+function HardcoverApi:query(query, parameters, preserve_graphql_errors)
+  if not self.enabled then
+    return
+  end
+  if not NetworkManager:isConnected() then
     return
   end
 
@@ -146,18 +265,34 @@ function HardcoverApi:query(query, parameters)
 
   if completed and content then
     local code, response = string.match(content, "^([^:]*):(.*)")
-    if string.find(code, "^%d%d%d") then
-      local data = json.decode(response, json.decode.simple)
+    if code and string.find(code, "^%d%d%d") then
+      local decoded, data, decode_error = pcall(json.decode, response, json.decode.simple)
+      if not decoded or type(data) ~= "table" then
+        return nil, {
+          status_code = tonumber(code),
+          parse_error = decoded and tostring(decode_error or "response was not a JSON object") or tostring(data),
+        }
+      end
       if data.data then
+        if preserve_graphql_errors and data.errors then
+          return data.data, { errors = data.errors, status_code = tonumber(code) }
+        end
         return data.data
       elseif data.errors or data.error then
         local err = data.errors or { data.error }
         self:notifyIfAuthError(err)
 
-        return nil, { errors = err }
+        return nil, { errors = err, status_code = tonumber(code) }
       end
+      return nil, {
+        status_code = tonumber(code),
+        request_error = "GraphQL response contained neither data nor errors",
+      }
     else
-      return nil, { completed = false }
+      return nil, {
+        completed = false,
+        request_error = code or "response did not include an HTTP status",
+      }
     end
   else
     return nil, { completed = completed }
@@ -228,7 +363,7 @@ function HardcoverApi:_query(query, parameters)
     logger.dbg("Hardcover: Request error", code, content)
   end
 
-  return code .. ':' .. content
+  return tostring(code or "unknown") .. ':' .. content
 end
 
 function HardcoverApi:hydrateBooks(ids, user_id)
@@ -640,10 +775,16 @@ function HardcoverApi:removeRead(user_book_id)
   end
 end
 
-function HardcoverApi:createJournalEntry(object)
+function HardcoverApi:createJournalEntry(dialog_data)
+  dialog_data = dialog_data or {}
+  local default_privacy_setting_id = self:me().account_privacy_setting_id
+  local object = mapJournalData(dialog_data, default_privacy_setting_id)
+
   local query = [[
     mutation InsertReadingJournalEntry($object: ReadingJournalCreateType!) {
       insert_reading_journal(object: $object) {
+        errors
+        id
         reading_journal {
           id
         }
@@ -651,10 +792,39 @@ function HardcoverApi:createJournalEntry(object)
     }
   ]]
 
-  local result = self:query(query, { object = object })
-  if result then
-    return result.insert_reading_journal.reading_journal
+  local result, request_error = self:query(query, { object = object }, true)
+  local inserted = result and result.insert_reading_journal
+  if inserted and inserted.reading_journal then
+    return inserted.reading_journal
   end
+
+  local details
+  if inserted and inserted.errors and #inserted.errors > 0 then
+    details = formatErrors(inserted.errors)
+  elseif request_error then
+    details = formatRequestError(request_error)
+  elseif result and not inserted then
+    details = "API response did not include insert_reading_journal"
+  elseif inserted then
+    details = "mutation returned no reading_journal and no error details"
+  elseif not self.enabled then
+    details = "request skipped because Hardcover sync is disabled"
+  elseif not NetworkManager:isConnected() then
+    details = "request skipped because the network is disconnected"
+  else
+    details = "no response or error details returned"
+  end
+
+  if type(request_error) == "table" and request_error.status_code then
+    details = "HTTP " .. tostring(request_error.status_code) .. ": " .. details
+  end
+
+  logger.warn("Hardcover: Reading-journal mutation failed: " .. details
+    .. " (payload fields=" .. sortedPayloadFields(object)
+    .. ", book_id_type=" .. type(type(object) == "table" and object.book_id)
+    .. ", entry_present=" .. tostring(type(object) == "table" and object.entry ~= nil) .. ")")
+
+  return nil, "Hardcover note sync failed; see the KOReader log for details."
 end
 
 return HardcoverApi

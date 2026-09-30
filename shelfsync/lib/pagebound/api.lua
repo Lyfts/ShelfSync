@@ -849,7 +849,7 @@ function PageboundApi:createJournalEntry(data)
     return nil, progress_error
   end
 
-  local note = tostring(data.entry or "")
+  local note = tostring(data.text or "")
   if note:match("%S") then
     local title = pagebound_note_title(data, status, self.settings)
     logger.info("Pagebound: posting journal note to the book forum")

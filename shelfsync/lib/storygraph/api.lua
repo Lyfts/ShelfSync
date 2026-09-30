@@ -960,7 +960,23 @@ function StoryGraphApi:updatePage(user_read_id, value, started_at, update_type)
   return nil
 end
 
-function StoryGraphApi:createJournalEntry(data)
+local function mapJournalData(data)
+  -- Preserve StoryGraph's progress-with-note request fields at the provider
+  -- boundary. Other providers serialize the shared dialog data differently.
+  return {
+    book_id = data.book_id,
+    entry = data.text,
+    progress = data.progress,
+    progress_type = data.progress_type or "percentage",
+    progress_percent = data.progress_percent,
+    local_page = data.local_page,
+    local_total_pages = data.local_total_pages,
+    date = data.date
+  }
+end
+
+function StoryGraphApi:createJournalEntry(dialog_data)
+  local data = mapJournalData(dialog_data)
   local book_id = data.book_id
   local book_url = base_url .. "/books/" .. book_id
   local _, html = self:request(book_url, "GET")

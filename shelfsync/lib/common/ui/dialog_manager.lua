@@ -19,19 +19,6 @@ function DialogManager:new(o)
   return setmetatable(o or {}, self)
 end
 
-local function mapJournalData(data)
-  return {
-    book_id = data.book_id,
-    entry = data.text,
-    progress = data.progress,
-    progress_type = data.progress_type or "percentage",
-    progress_percent = data.progress_percent,
-    local_page = data.local_page,
-    local_total_pages = data.local_total_pages,
-    date = data.date
-  }
-end
-
 function DialogManager:buildSearchDialog(title, items, active_item, book_callback, search_callback, search)
   local callback = function(book)
     self.search_dialog:onClose()
@@ -180,13 +167,14 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
     input_box_height = 250,
     label = self.label,
     book_id = settings.book_id,
+    edition_id = settings.edition_id,
     page = initial_percent,
     remote_page = remote_pages,
     remote_percent = remote_percent,
     progress_type = sync_by_pages and "pages" or "percentage",
+    event_type = event_type or "note",
     page_mapper = self.page_mapper,
     save_dialog_callback = function(book_data)
-      local api_data = mapJournalData(book_data)
       local saving_msg = InfoMessage:new{
         text = _("Saving progress to " .. self.label .. "..."),
       }
@@ -196,7 +184,7 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
         -- Scheduled UI callbacks aren't inside the Trapper coroutine that
         -- dismissableRunInSubprocess() needs for provider network requests.
         Trapper:wrap(function()
-          local result, err = self.api:createJournalEntry(api_data)
+          local result, err = self.api:createJournalEntry(book_data)
           UIManager:close(saving_msg)
 
           if result then

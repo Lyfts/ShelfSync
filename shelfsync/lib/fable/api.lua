@@ -613,7 +613,7 @@ end
 
 -- Fable's reading_progress endpoint (unlike Goodreads' /user_status.json)
 -- carries no note/body field in any captured request -- there's no
--- confirmed way to persist journal text to Fable at all, so `data.entry` is
+-- confirmed way to persist journal text to Fable at all, so `data.text` is
 -- silently dropped and only the progress value itself is pushed.
 function FableApi:createJournalEntry(data)
   if not data or not data.book_id then

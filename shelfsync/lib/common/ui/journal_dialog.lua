@@ -25,6 +25,8 @@ local JournalDialog = InputDialog:extend {
   remote_percent = nil, -- initial remote percentage
   progress_type = "percentage",
   book_id = nil,
+  edition_id = nil,
+  event_type = "note",
   date = nil, -- table with day, month, year
 }
   
@@ -84,12 +86,15 @@ function JournalDialog:init()
 
     local save_data = {
       book_id = journal_self.book_id,
+      edition_id = journal_self.edition_id,
+      event_type = journal_self.event_type or "note",
       text = journal_self.note_input:getText(),
       progress = journal_self.page,
       progress_type = journal_self.progress_type,
       progress_percent = current_pct,
       local_page = local_page,
       local_total_pages = total_local_pages,
+      remote_total_pages = tonumber(journal_self.remote_page),
       date = journal_self.date
     }
 

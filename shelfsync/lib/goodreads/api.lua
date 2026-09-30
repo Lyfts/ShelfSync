@@ -835,7 +835,7 @@ function GoodreadsApi:createJournalEntry(data)
   local book_id = data.book_id
   if not book_id then return nil end
 
-  return self:updateProgress(book_id, tonumber(data.progress) or 0, data.progress_type, data.entry)
+  return self:updateProgress(book_id, tonumber(data.progress) or 0, data.progress_type, data.text)
 end
 
 return GoodreadsApi
