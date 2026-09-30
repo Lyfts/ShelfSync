@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.1
 ##### Plugin
 - Refresh Fable and Pagebound account labels immediately after logging in or out.
 - Improve Pagebound login feedback with separate sign-in and token-exchange stages, a longer bounded timeout for Pagebound's token exchange, and clearer transport errors. Explain why automatic tracking is unavailable and label the locally saved account without implying its session was just verified.
