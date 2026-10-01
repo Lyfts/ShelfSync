@@ -15,6 +15,8 @@ assignees: ''
 A clear and concise description of what the bug is.
 
 **`crash.log` (if applicable)**
+Please preferably attach a `crash.log` captured after enabling **ShelfSync → Settings → Verbose logging** and reproducing the issue. This helps us diagnose the problem.
+
 `crash.log` is a file that is automatically created when KOReader crashes. It can normally be found in the KOReader directory:
 
 * `/mnt/private/koreader` for Cervantes
