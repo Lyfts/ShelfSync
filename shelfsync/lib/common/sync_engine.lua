@@ -109,7 +109,15 @@ function SyncEngine:onPullPosition()
     timeout = 3,
   })
 
-  self.wifi:withWifi(function()
+  self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+    if wifi_error then
+      UIManager:show(InfoMessage:new {
+        text = _("Could not fetch position from " .. self.label .. "."),
+        icon = "notice-warning",
+      })
+      return
+    end
+
     local status = self.api:findUserBook(book_id, self.user:getId())
     local remote_percent = status and self.provider:getRemotePercent(status)
     if not status or not remote_percent then
@@ -207,7 +215,11 @@ function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback, supp
         and self:isActive()
         and self:syncFileUpdates(self.ui.document.file)
         and not self.state.book_status.status_id then
-      self.wifi:withWifi(function()
+      self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+        if wifi_error then
+          return finish(nil, wifi_error)
+        end
+
         local err = self.cache:cacheUserBook()
         self:registerHighlight()
         if err then
@@ -370,7 +382,15 @@ function SyncEngine:warnStatusMismatch(filename)
     ok_text = _("Mark as Reading"),
     cancel_text = _("Ignore"),
     ok_callback = function()
-      self.wifi:withWifi(function()
+      self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+        if wifi_error then
+          UIManager:show(InfoMessage:new {
+            text = _("Failed to update status on " .. self.label),
+            icon = "notice-warning",
+          })
+          return
+        end
+
         self.cache:updateBookStatus(filename, self.constants.STATUS.READING)
         self:registerHighlight()
         if self.state.book_status.status_id == self.constants.STATUS.READING then
@@ -443,9 +463,12 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
   end
 
   local immediate_update = function()
-    self.wifi:withWifi(function()
+    self.wifi:withWifi(function(_wifi_enabled, wifi_error)
       -- AutoWifi supplies the Trapper coroutine and keeps its Wi-Fi lease
       -- until update (including its subprocess request) returns.
+      if wifi_error then
+        return bail(wifi_error)
+      end
       update()
     end)
   end
@@ -737,13 +760,21 @@ function SyncEngine:onEndOfBook()
         end
       end
       if status == "complete" then
-        self.wifi:withWifi(function()
+        self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+          if wifi_error then
+            logger.warn(self.label .. ": could not mark book as finished: " .. tostring(wifi_error))
+            return
+          end
           marker()
         end)
       end
     end)
   else
-    self.wifi:withWifi(function()
+    self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+      if wifi_error then
+        logger.warn(self.label .. ": could not mark book as finished: " .. tostring(wifi_error))
+        return
+      end
       marker()
       UIManager:show(InfoMessage:new {
         text = _(self.label .. " status saved"),
@@ -770,7 +801,11 @@ function SyncEngine:onDocSettingsItemsChanged(file, doc_settings)
   end
 
   if status then
-    self.wifi:withWifi(function()
+    self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+      if wifi_error then
+        logger.warn(self.label .. ": could not update book status: " .. tostring(wifi_error))
+        return
+      end
       self.cache:updateBookStatus(file, status)
 
       UIManager:show(InfoMessage:new {
@@ -826,7 +861,7 @@ function SyncEngine:startReadCache()
           if self.state.book_status.id then
             return success()
           else
-            self.wifi:withWifi(function()
+            self.wifi:withWifi(function(_wifi_enabled, wifi_error)
               -- Wi-Fi restoration can take long enough for the reader to
               -- close this book or open another one. Don't let a stale cache
               -- request act on the new document (or on no document at all).
@@ -834,8 +869,12 @@ function SyncEngine:startReadCache()
                 return
               end
 
+              if wifi_error then
+                return fail(wifi_error)
+              end
+
               if not NetworkManager:isConnected() then
-                return restart()
+                return fail("Network not connected")
               end
 
               -- AutoWifi wraps delayed callbacks in Trapper and holds the
@@ -926,6 +965,7 @@ function SyncEngine:startReadCache()
     end,
 
     function()
+      self.state.read_cache_started = false
       if NetworkManager:isConnected() then
         UIManager:show(Notification:new {
           text = _("Failed to fetch book information from " .. self.label),

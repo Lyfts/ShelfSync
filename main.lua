@@ -312,7 +312,12 @@ function ShelfSyncApp:checkForUpdates()
     return
   end
 
-  self.engines.storygraph.wifi:withWifi(function()
+  self.engines.storygraph.wifi:withWifi(function(_wifi_enabled, wifi_error)
+    if wifi_error then
+      self.storygraph_settings:debugWarn("Update check skipped: network unavailable: " .. tostring(wifi_error))
+      return
+    end
+
     local Github = require("shelfsync/lib/common/github")
     local info = Github:fetchVersionInfo()
     if not info then return end

@@ -1,3 +1,4 @@
+---@diagnostic disable: redundant-parameter
 local SETTING = require("shelfsync/lib/common/constants/settings")
 
 local Device = require("device")
@@ -19,11 +20,19 @@ end
 -- callbacks can yield while an HTTP subprocess is still running.
 local active_wifi_session = nil
 local CONNECTIVITY_TIMEOUT = 46 -- KOReader gives up after roughly 45 seconds.
+local ONLINE_CHECK_INTERVAL = 1
 
 local function cancelConnectTimeout(session)
   if session.connect_timeout then
     UIManager:unschedule(session.connect_timeout)
     session.connect_timeout = nil
+  end
+end
+
+local function cancelOnlineCheck(session)
+  if session.online_check then
+    UIManager:unschedule(session.online_check)
+    session.online_check = nil
   end
 end
 
@@ -50,7 +59,7 @@ local function finishSessionIfIdle(session)
   end)
 end
 
-local function invokeWithWifi(callback, wifi_enabled, session)
+local function invokeWithWifi(callback, wifi_enabled, session, wifi_error)
   if session then
     session.active_operations = session.active_operations + 1
   end
@@ -69,7 +78,7 @@ local function invokeWithWifi(callback, wifi_enabled, session)
     -- Trapper:wrap already catches and logs errors. The inner xpcall makes
     -- sure the Wi-Fi lease is released before that error is rethrown.
     local ok, err = xpcall(function()
-      callback(wifi_enabled)
+      callback(wifi_enabled, wifi_error)
     end, debug.traceback)
     release()
     if not ok then error(err) end
@@ -96,15 +105,71 @@ end
 local function failRestore(session, reason)
   if active_wifi_session ~= session or session.connected then return end
   cancelConnectTimeout(session)
-  active_wifi_session = nil
+  cancelOnlineCheck(session)
   session.pending = false
+  session.closing = true
   local callbacks = session.callbacks
   session.callbacks = {}
 
   session.owner.settings:debugWarn(session.owner.label .. ": withWifi - connectivity restore failed: " .. tostring(reason))
   for _, request in ipairs(callbacks) do
-    invokeWithWifi(request.callback, false, nil)
+    invokeWithWifi(request.callback, false, nil, reason)
   end
+
+  -- A restore that never becomes usable should not leave the radio on. Keep
+  -- this session active until shutdown finishes so new callers queue instead
+  -- of mistaking the half-connected interface for a usable connection.
+  session.owner:wifiDisableSilent(function()
+    if active_wifi_session ~= session then return end
+    active_wifi_session = nil
+
+    local queued = session.after_close or {}
+    for _, request in ipairs(queued) do
+      request.owner:withWifi(request.callback)
+    end
+  end)
+end
+
+local function isOnline()
+  -- isConnected() only establishes that the interface has an address. The
+  -- on-demand restore can reach that point before DHCP/DNS is ready, so wait
+  -- for KOReader's online check when it is available.
+  if type(NetworkMgr.isOnline) == "function" then
+    local ok, online = pcall(NetworkMgr.isOnline, NetworkMgr)
+    return ok and online or false
+  end
+  return NetworkMgr:isConnected()
+end
+
+local function finishRestore(session)
+  if active_wifi_session ~= session or session.connected or session.closing then return end
+  cancelConnectTimeout(session)
+  cancelOnlineCheck(session)
+  session.pending = false
+  session.connected = true
+
+  -- Restore the original "was on" state to prevent Wi-Fi being restored
+  -- automatically after suspend.
+  NetworkMgr.wifi_was_on = session.original_on
+  G_reader_settings:saveSetting("wifi_was_on", session.original_on)
+
+  session.owner.settings:debugLog(session.owner.label .. ": withWifi - online check finished, wifi_on=" .. tostring(NetworkMgr:isWifiOn())
+    .. " queued_callbacks=" .. #session.callbacks)
+  dispatchQueued(session, true)
+end
+
+local function checkOnline(session)
+  if active_wifi_session ~= session or session.closing or session.connected then return end
+  if isOnline() then
+    finishRestore(session)
+    return
+  end
+
+  session.online_check = function()
+    session.online_check = nil
+    checkOnline(session)
+  end
+  UIManager:scheduleIn(ONLINE_CHECK_INTERVAL, session.online_check)
 end
 
 function AutoWifi:withWifi(callback)
@@ -147,6 +212,7 @@ function AutoWifi:withWifi(callback)
       original_on = NetworkMgr.wifi_was_on,
       pending = true,
       connected = false,
+      associated = false,
       dispatching = false,
       closing = false,
     }
@@ -159,18 +225,10 @@ function AutoWifi:withWifi(callback)
 
     NetworkMgr:restoreWifiAsync()
     NetworkMgr:scheduleConnectivityCheck(function()
-      if active_wifi_session ~= session or session.connected then return end
-      cancelConnectTimeout(session)
-      session.pending = false
-      session.connected = true
-
-      -- restore original "was on" state to prevent wifi being restored automatically after suspend
-      NetworkMgr.wifi_was_on = session.original_on
-      G_reader_settings:saveSetting("wifi_was_on", session.original_on)
-
-      self.settings:debugLog(self.label .. ": withWifi - connectivity check finished, wifi_on=" .. tostring(NetworkMgr:isWifiOn())
-        .. " queued_callbacks=" .. #session.callbacks)
-      dispatchQueued(session, true)
+      if active_wifi_session ~= session or session.associated or session.closing then return end
+      session.associated = true
+      self.settings:debugLog(self.label .. ": withWifi - interface connected, waiting for network readiness")
+      checkOnline(session)
     end)
   else
     -- Auto-connect is unavailable or disabled: don't leave callers hanging,

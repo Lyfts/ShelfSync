@@ -343,9 +343,15 @@ function BaseProvider:tryAutolink(done)
     .. " isbn_10=" .. tostring(identifiers.isbn_10) .. " isbn_13=" .. tostring(identifiers.isbn_13)
     .. " title=" .. tostring(props.title))
   if should_attempt then
-    self.wifi:withWifi(function()
+    self.wifi:withWifi(function(_wifi_enabled, wifi_error)
       -- AutoWifi runs this callback inside a Trapper coroutine and holds its
       -- Wi-Fi lease until the network requests in _runAutolink have finished.
+      if wifi_error then
+        self.settings:debugWarn(self.label .. ": tryAutolink - network unavailable: " .. tostring(wifi_error))
+        if done then done() end
+        return
+      end
+
       self:_runAutolink(identifiers)
       if done then done() end
     end)
@@ -367,7 +373,7 @@ function BaseProvider:_runAutolink(identifiers)
   end
 
   if not linked and self.settings:readSetting(SETTING.SHARED.LINK_BY_TITLE) ~= false then
-    linked = self:linkBookByTitle()
+    linked = self:linkBookByTitle() == true
     self.settings:debugLog(self.label .. ": _runAutolink - linkBookByTitle linked=" .. tostring(linked))
   end
 

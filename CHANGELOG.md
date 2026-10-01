@@ -4,6 +4,8 @@
 ##### Plugin
 - Show one gesture sync message listing providers being updated, followed by a combined result summary.
 - Skip inactive providers from the all-provider progress gesture without showing per-provider failure popups.
+- Fix Pagebound transport failures crashing while formatting error responses or being reported as authentication failures.
+- Fix book syncing when Wi-Fi is turned on only when needed by waiting for it to connect before syncing.
 
 ## 1.4.3
 ##### Plugin

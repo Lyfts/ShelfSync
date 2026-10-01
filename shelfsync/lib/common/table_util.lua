@@ -4,6 +4,9 @@ function TableUtil.dig(t, ...)
   local result = t
 
   for _, k in ipairs({ ... }) do
+    if type(result) ~= "table" then
+      return nil
+    end
     result = result[k]
     if result == nil then
       return nil

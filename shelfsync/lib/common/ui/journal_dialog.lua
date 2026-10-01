@@ -240,11 +240,9 @@ function JournalDialog:init()
         title_text = _("Set date"),
         info_text = _("The date format is year, month, day."),
         callback = function(picker)
-          self.date = {
-            year = picker.year,
-            month = picker.month,
-            day = picker.day
-          }
+          self.date.year = picker.year
+          self.date.month = picker.month
+          self.date.day = picker.day
           self.date_button:setText(self.date_button.text_func(self), self.date_button.width)
         end
       }

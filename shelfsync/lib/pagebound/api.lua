@@ -44,7 +44,7 @@ local function raw_http(url, method, headers, body_string, timeout, maxtime)
 
   local sink = {}
   socketutil:set_timeout(timeout, maxtime)
-  local ok, _, code = pcall(http.request, {
+  local ok, request_result, code = pcall(http.request, {
     url = url,
     method = method,
     headers = headers,
@@ -54,7 +54,10 @@ local function raw_http(url, method, headers, body_string, timeout, maxtime)
   socketutil:reset_timeout()
 
   if not ok then
-    return nil, tostring(_)
+    return nil, tostring(request_result)
+  end
+  if not request_result then
+    return nil, tostring(code or "HTTP request failed")
   end
   return code, table.concat(sink)
 end
@@ -82,14 +85,15 @@ end
 
 local function error_message(body, fallback)
   local data = decode_json(body)
-  local message = _t.dig(data, "error", "message") or _t.dig(data, "message")
+  local message = type(data) == "table"
+    and (_t.dig(data, "error", "message") or _t.dig(data, "message"))
   if message and message ~= "" then return tostring(message) end
   return fallback
 end
 
-local function request_failure(code)
+local function request_failure(code, response)
   if type(code) == "number" then return "HTTP " .. tostring(code) end
-  return tostring(code or "no response")
+  return tostring(response or code or "no response")
 end
 
 local function stored_password(settings)
@@ -118,7 +122,7 @@ local function firebase_sign_in(email, password)
   )
   local data = decode_json(response)
   if tonumber(code) ~= 200 or not data or not data.idToken or not data.refreshToken then
-    return nil, error_message(response, "Firebase sign-in failed (" .. request_failure(code) .. ")")
+    return nil, error_message(response, "Firebase sign-in failed (" .. request_failure(code, response) .. ")"), code == nil
   end
   return {
     id_token = data.idToken,
@@ -142,7 +146,7 @@ local function firebase_refresh(refresh_token)
   )
   local data = decode_json(response)
   if tonumber(code) ~= 200 or not data or not data.id_token or not data.refresh_token then
-    return nil, error_message(response, "Firebase session refresh failed")
+    return nil, error_message(response, "Firebase session refresh failed (" .. request_failure(code, response) .. ")"), code == nil
   end
   return {
     id_token = data.id_token,
@@ -168,7 +172,7 @@ local function exchange_firebase_token(id_token)
   )
   local data = decode_json(response)
   if tonumber(code) ~= 200 or not data or not data.token then
-    return nil, error_message(response, "Pagebound token exchange failed (" .. request_failure(code) .. ")")
+    return nil, error_message(response, "Pagebound token exchange failed (" .. request_failure(code, response) .. ")"), code == nil
   end
   return {
     api_token = data.token,
@@ -278,7 +282,7 @@ local function response_from_subprocess(content)
   meta_len = tonumber(meta_len) or 0
   local meta = decode_json(rest:sub(1, meta_len)) or {}
   local body = rest:sub(meta_len + 1)
-  return tonumber(code), meta, body
+  return tonumber(code) or code, meta, body
 end
 
 function PageboundApi:request(path, method, body)
@@ -314,8 +318,8 @@ function PageboundApi:request(path, method, body)
       if email == "" or not password then
         return nil, "Pagebound login expired; log in again from the Pagebound menu"
       end
-      local session, err = firebase_sign_in(email, password)
-      if not session then return nil, err end
+      local session, err, transport_error = firebase_sign_in(email, password)
+      if not session then return nil, err, transport_error end
       apply_firebase(session)
       return true
     end
@@ -331,16 +335,17 @@ function PageboundApi:request(path, method, body)
       if id_token ~= "" and expires_at > os.time() + 60 then
         return true
       end
-      return sign_in_again()
+      local ok, err, transport_error = sign_in_again()
+      return ok, err, transport_error
     end
 
     local function exchange()
       if id_token == "" then
-        local ok, err = refresh_firebase()
-        if not ok then return nil, err end
+        local ok, err, transport_error = refresh_firebase()
+        if not ok then return nil, err, transport_error end
       end
-      local session, err = exchange_firebase_token(id_token)
-      if not session then return nil, err end
+      local session, err, transport_error = exchange_firebase_token(id_token)
+      if not session then return nil, err, transport_error end
       api_token = session.api_token
       session_changed.api_token = api_token
       if session.user_id then
@@ -357,8 +362,8 @@ function PageboundApi:request(path, method, body)
     local function ensure_session(force)
       local token_expiring = id_token == "" or expires_at <= os.time() + 60
       if force or token_expiring then
-        local ok, err = refresh_firebase()
-        if not ok then return nil, err end
+        local ok, err, transport_error = refresh_firebase()
+        if not ok then return nil, err, transport_error end
       end
       if force or api_token == "" or token_expiring then
         return exchange()
@@ -383,19 +388,26 @@ function PageboundApi:request(path, method, body)
       )
     end
 
-    local ok, auth_error = ensure_session(false)
+    local ok, auth_error, auth_transport_error = ensure_session(false)
     local code, response_body
     if ok then
       code, response_body = send_request()
       if (tonumber(code) == 401 or tonumber(code) == 403) then
-        local renewed = ensure_session(true)
+        local renewed, renewal_error, renewal_transport_error = ensure_session(true)
         if renewed then
           code, response_body = send_request()
+        elseif renewal_transport_error then
+          code, response_body = nil, renewal_error
         end
       end
     else
-      code = 401
-      response_body = json.encode({ error = { message = auth_error or "Unauthorized" } })
+      if auth_transport_error then
+        code = nil
+        response_body = auth_error
+      else
+        code = 401
+        response_body = json.encode({ error = { message = auth_error or "Unauthorized" } })
+      end
     end
 
     local metadata = json.encode(session_changed)
@@ -414,6 +426,10 @@ function PageboundApi:request(path, method, body)
   local code, session, response_body = response_from_subprocess(content)
   if not code then return nil, "Invalid response from Pagebound" end
   persist_session(self.settings, session)
+
+  if code == "error" then
+    return nil, response_body or "Pagebound request failed"
+  end
 
   if code == 401 or code == 403 then
     self:notifyAuthFailure()
@@ -874,6 +890,9 @@ function PageboundApi:updateProgress(book_id, status, current_read, value, updat
   }
   local code, data = self:request("/api/v1/reading_updates", "POST", payload)
   if code ~= 201 and code ~= 200 then
+    if not code then
+      return nil, type(data) == "string" and data or "Pagebound progress update failed"
+    end
     return nil, "Pagebound progress update failed (HTTP " .. tostring(code or "unknown") .. ")"
   end
   return self:findUserBook(book_id)

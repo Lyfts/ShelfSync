@@ -187,6 +187,9 @@ local CONNECT_DELAY = 2 -- seconds for a simulated real wifi association
 local NetworkMgr = {
   _wifi_on = false,
   _connected = false,
+  _online = false,
+  _online_delay = 0,
+  _never_online = false,
   pending_connection = false,
   wifi_was_on = false,
 }
@@ -194,6 +197,8 @@ local NetworkMgr = {
 function NetworkMgr:isWifiOn() return self._wifi_on end
 
 function NetworkMgr:isConnected() return self._connected end
+
+function NetworkMgr:isOnline() return self._online end
 
 function NetworkMgr:restoreWifiAsync()
   log("[NetworkMgr] restoreWifiAsync() called at t=" .. Clock.now)
@@ -204,6 +209,12 @@ function NetworkMgr:restoreWifiAsync()
   UIManager:scheduleIn(CONNECT_DELAY, function()
     self._connected = true
     log("[NetworkMgr] actually connected at t=" .. Clock.now)
+    if not self._never_online then
+      UIManager:scheduleIn(self._online_delay, function()
+        self._online = true
+        log("[NetworkMgr] internet became available at t=" .. Clock.now)
+      end)
+    end
   end)
 end
 
@@ -223,6 +234,7 @@ end
 function NetworkMgr:turnOffWifi(cb)
   self._wifi_on = false
   self._connected = false
+  self._online = false
   if cb then cb() end
 end
 
@@ -285,6 +297,9 @@ local function reset()
   Trapper.active_coroutines = {}
   NetworkMgr._wifi_on = false
   NetworkMgr._connected = false
+  NetworkMgr._online = false
+  NetworkMgr._online_delay = 0
+  NetworkMgr._never_online = false
   NetworkMgr.pending_connection = false
   NetworkMgr.wifi_was_on = false
   for k in pairs(doc_settings_stores) do doc_settings_stores[k] = nil end

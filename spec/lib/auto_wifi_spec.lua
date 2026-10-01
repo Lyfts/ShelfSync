@@ -44,4 +44,62 @@ describe("AutoWifi operation lifetime", function()
     assert.is_false(NetworkMgr:isConnected())
     assert.is_false(NetworkMgr.wifi_was_on)
   end)
+
+  it("waits for internet readiness after the interface connects", function()
+    NetworkMgr._online_delay = 3
+    local settings = {
+      readSetting = function(_, key)
+        return key == SETTING.SHARED.ENABLE_WIFI
+      end,
+      debugLog = function() end,
+      debugWarn = function() end,
+    }
+    local wifi = AutoWifi:new { settings = settings, label = "AutoWifi spec" }
+    local callback_started = false
+    local callback_error
+    local online_when_callback_started
+
+    wifi:withWifi(function(_, err)
+      callback_started = true
+      callback_error = err
+      online_when_callback_started = NetworkMgr:isOnline()
+    end)
+
+    UIManager:_runUntil(3)
+    assert.is_true(NetworkMgr:isConnected())
+    assert.is_false(NetworkMgr:isOnline())
+    assert.is_false(callback_started)
+
+    UIManager:_runUntil(6)
+    assert.is_true(callback_started)
+    assert.is_nil(callback_error)
+    assert.is_true(online_when_callback_started)
+
+    UIManager:_runUntilIdle()
+    assert.is_false(NetworkMgr:isWifiOn())
+  end)
+
+  it("reports and shuts down a restored connection that never becomes online", function()
+    NetworkMgr._never_online = true
+    local settings = {
+      readSetting = function(_, key)
+        return key == SETTING.SHARED.ENABLE_WIFI
+      end,
+      debugLog = function() end,
+      debugWarn = function() end,
+    }
+    local wifi = AutoWifi:new { settings = settings, label = "AutoWifi spec" }
+    local callback_error
+
+    wifi:withWifi(function(_, err)
+      callback_error = err
+    end)
+
+    UIManager:_runUntil(46)
+
+    assert.are.equal("timed out", callback_error)
+    assert.is_false(NetworkMgr:isWifiOn())
+    assert.is_false(NetworkMgr:isConnected())
+    assert.is_false(NetworkMgr:isOnline())
+  end)
 end)
