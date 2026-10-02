@@ -103,7 +103,9 @@ local function decode_entities(str)
   }
   return str:gsub("(&%w+;)", entities):gsub("(&#%d+;)", function(n)
     local code = n:match("%d+")
-    return string.char(tonumber(code))
+    local codepoint = tonumber(code)
+    if not codepoint or codepoint > 255 then return n end
+    return string.char(codepoint)
   end)
 end
 
@@ -524,7 +526,7 @@ function StoryGraphApi:findBooks(title, author, userId)
           local info_text = get_node_text(info_el)
           local pages = info_text:match("(%d+) pages")
           if pages then
-            page_count = tonumber(pages)
+            page_count = tonumber(pages) or 0
           end
         end
         
@@ -669,7 +671,7 @@ function StoryGraphApi:findUserBook(book_id, user_id, is_recursion)
 
   local bar_pct = html:match("edit%-progress[^>]*>%s*<div[^>]*style=\"width:%s*(%d+)%%\"")
   if bar_pct then
-    last_reached_percent = tonumber(bar_pct)
+    last_reached_percent = tonumber(bar_pct) or 0
     logger.info("StoryGraph: progress from bar = " .. last_reached_percent .. "%")
   else
     local percent_str = html:match('name="read_status%[last_reached_percent%]"%s+[^>]*value="([^"]+)"')
