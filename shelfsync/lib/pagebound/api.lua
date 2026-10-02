@@ -1,4 +1,4 @@
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
 local json = require("json")
@@ -923,7 +923,10 @@ function PageboundApi:createJournalEntry(data)
   )
   if not updated then
     progress_error = progress_error or "Pagebound progress update failed"
-    logger.warn("Pagebound: journal entry stopped before forum posting: " .. tostring(progress_error))
+    local http_status = type(progress_error) == "string"
+      and progress_error:match("[Hh][Tt][Tt][Pp]%s+(%d%d%d)") or "unknown"
+    logger.warn("Pagebound: journal entry stopped before forum posting (http_status="
+      .. http_status .. ", error_length=" .. #tostring(progress_error) .. ")")
     return nil, progress_error
   end
 
@@ -934,7 +937,10 @@ function PageboundApi:createJournalEntry(data)
     local post, post_error = self:createForumPost(data.book_id, title, note)
     if not post then
       post_error = post_error or "unknown error"
-      logger.warn("Pagebound: forum note posting failed: " .. tostring(post_error))
+      local http_status = type(post_error) == "string"
+        and post_error:match("[Hh][Tt][Tt][Pp]%s+(%d%d%d)") or "unknown"
+      logger.warn("Pagebound: forum note posting failed (http_status="
+        .. http_status .. ", error_length=" .. #tostring(post_error) .. ")")
       return updated, "Progress was saved to Pagebound, but the note could not be posted: " .. tostring(post_error)
     end
     logger.info("Pagebound: forum note posted successfully")

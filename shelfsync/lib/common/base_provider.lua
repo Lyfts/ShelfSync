@@ -11,7 +11,7 @@
 -- (e.g. "StoryGraph") must be set on the instance -- it's used to prefix the
 -- debug log lines below, same as menu.lua/auto_wifi.lua's `label`.
 local _ = require("gettext")
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 local util = require("util")
 
 local Trapper = require("ui/trapper")

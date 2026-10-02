@@ -20,7 +20,7 @@
 -- its own `shared` (i.e. it owns those keys itself).
 local LuaSettings = require("luasettings")
 local DocSettings = require("docsettings")
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 
 local _t = require("shelfsync/lib/common/table_util")
 local SETTING = require("shelfsync/lib/common/constants/settings")

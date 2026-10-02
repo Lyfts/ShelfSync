@@ -1,5 +1,5 @@
 -- vendored from frontend/ui/wikipedia
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 
 local function getUrlContent(url, timeout, maxtime)
   local http = require("socket.http")
@@ -25,10 +25,6 @@ local function getUrlContent(url, timeout, maxtime)
   local code, headers, status = socket.skip(1, http.request(request))
   socketutil:reset_timeout()
   local content = table.concat(sink) -- empty or content accumulated till now
-  -- logger.dbg("code:", code)
-  -- logger.dbg("headers:", headers)
-  -- logger.dbg("status:", status)
-  -- logger.dbg("#content:", #content)
 
   if code == socketutil.TIMEOUT_CODE or
       code == socketutil.SSL_HANDSHAKE_CODE or

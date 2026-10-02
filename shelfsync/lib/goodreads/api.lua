@@ -20,7 +20,7 @@
 --    and CSRF-priming for a write.
 local config_ok, shelfsync_config = pcall(require, "shelfsync_config")
 local config = (config_ok and shelfsync_config.goodreads) or {}
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
 local Trapper = require("ui/trapper")
@@ -35,6 +35,18 @@ local GoodreadsApi = {
   enabled = true,
   settings = nil, -- Injected by main.lua
 }
+
+local function request_field_names(data)
+  if type(data) ~= "table" then
+    return "unknown"
+  end
+  local names = {}
+  for key in pairs(data) do
+    names[#names + 1] = tostring(key)
+  end
+  table.sort(names)
+  return table.concat(names, ",")
+end
 
 -- Private helper to build headers with cookies
 local function get_headers(self, custom_headers)
@@ -312,6 +324,8 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
       end
       headers["Content-Length"] = tostring(#body)
+      logger.info("Goodreads: POST request fields=" .. request_field_names(data)
+        .. " body_length=" .. #body)
     end
 
     -- Goodreads relies on a couple of real 30x redirects as part of normal
@@ -338,11 +352,6 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         sink = socketutil.table_sink(sink),
       }
 
-      if current_method == "POST" then
-        logger.info("Goodreads: POST URL: " .. current_url)
-        logger.info("Goodreads: POST Body: " .. (body or "nil"))
-      end
-
       local ok
       ok, code, _headers = http.request(request)
       socketutil:reset_timeout()
@@ -363,6 +372,7 @@ function GoodreadsApi:request(url, method, data, custom_headers)
       end
 
       local location = _headers and _headers["location"]
+      local content_type = _headers and _headers["content-type"] or "unknown"
       -- Confirmed via live testing: an anonymous request gets a real 302 for
       -- an exact single-result match (eg. by ISBN), but an authenticated
       -- session -- what this plugin always sends -- gets a 200 with the
@@ -376,7 +386,8 @@ function GoodreadsApi:request(url, method, data, custom_headers)
       local waf_action = _headers and _headers["x-amzn-waf-action"]
       logger.info("Goodreads: hop " .. hop .. " url=" .. current_url .. " code=" .. tostring(code)
         .. " location=" .. tostring(location) .. " set_cookie=" .. tostring(set_cookie ~= nil)
-        .. " waf_action=" .. tostring(waf_action))
+        .. " waf_action=" .. tostring(waf_action) .. " content_type=" .. tostring(content_type)
+        .. " response_length=" .. #response_body)
       local waf_retry_now = false
       if waf_action then
         -- Stored setting is just the refresher's base URL (e.g.
@@ -752,7 +763,8 @@ function GoodreadsApi:updateUserBook(book_id, status_id)
   if code and code >= 200 and code < 300 then
     return self:findUserBook(book_id)
   end
-  self.settings:debugWarn("Goodreads: updateUserBook failed - code=" .. tostring(code) .. " resp=" .. tostring(resp))
+  self.settings:debugWarn("Goodreads: updateUserBook failed - code=" .. tostring(code)
+    .. " response_length=" .. tostring(type(resp) == "string" and #resp or 0))
   return nil
 end
 
@@ -823,7 +835,8 @@ function GoodreadsApi:updateProgress(book_id, value, update_type, note)
   if code and code >= 200 and code < 300 then
     return self:findUserBook(book_id)
   end
-  self.settings:debugWarn("Goodreads: updateProgress failed - code=" .. tostring(code) .. " resp=" .. tostring(resp))
+  self.settings:debugWarn("Goodreads: updateProgress failed - code=" .. tostring(code)
+    .. " response_length=" .. tostring(type(resp) == "string" and #resp or 0))
   return nil
 end
 

@@ -9,7 +9,7 @@
 -- plugin-wide rather than per-provider.
 local _ = require("gettext")
 local DocSettings = require("docsettings")
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 local math = require("math")
 
 local Event = require("ui/event")
@@ -166,7 +166,11 @@ function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback, supp
   if self.ui.document and self.settings:bookLinked() then
     local function finish(result, reason)
       if not result then
-        logger.warn("Unsuccessful updating page progress", self.ui.document.file, reason)
+        local http_status = type(reason) == "string"
+          and reason:match("[Hh][Tt][Tt][Pp]%s+(%d%d%d)") or "unknown"
+        logger.warn("Unsuccessful updating page progress for " .. self.label
+          .. " (http_status=" .. http_status
+          .. ", reason_length=" .. tostring(type(reason) == "string" and #reason or 0) .. ")")
       end
 
       if not suppress_provider_feedback then

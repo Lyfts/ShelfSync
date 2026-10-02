@@ -1,4 +1,4 @@
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
 local json = require("json")

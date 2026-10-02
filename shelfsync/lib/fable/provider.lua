@@ -1,6 +1,6 @@
 -- wrapper around fable_api to add higher level methods
 local _ = require("gettext")
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 
 local UIManager = require("ui/uimanager")
 local InfoMessage = require("ui/widget/infomessage")
