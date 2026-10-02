@@ -794,7 +794,8 @@ function PageboundApi:setReview(book_id, user_book_id, rating, review_text)
 
   local message = type(data) == "table"
     and (_t.dig(data, "error", "message") or _t.dig(data, "message"))
-  return false, message or "Pagebound review submission failed (HTTP " .. tostring(code) .. ")"
+  local fallback_message = ("Pagebound review submission failed (HTTP " .. tostring(code) .. ")")
+  return false, message or fallback_message
 end
 
 local function pagebound_note_title(data, status, settings)

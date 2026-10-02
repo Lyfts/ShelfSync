@@ -68,6 +68,7 @@ describe("Review composer", function()
       { key = "goodreads", label = "Goodreads" },
       { key = "hardcover", label = "Hardcover" },
       { key = "fable", label = "Fable" },
+      { key = "pagebound", label = "Pagebound" },
     })
     local engines = {}
     for _, provider in ipairs(require("shelfsync/lib/common/constants/providers")) do
@@ -108,7 +109,7 @@ describe("Review composer", function()
     assert.equals(0, composer.review.rating)
     assert.is_false(control("less").enabled_func())
     assert.equals(menu, composer.menu)
-    assert.equals(4, cached)
+    assert.equals(5, cached)
   end)
 
   it("preserves drafts on close and clears them for another book", function()
@@ -118,12 +119,12 @@ describe("Review composer", function()
     assert.is_nil(composer.menu)
     composer:show()
     assert.equals("A draft", composer.review.text)
-    assert.equals(4, cached)
+    assert.equals(5, cached)
     composer.menu:onClose()
     composer.app.ui.document.file = "two.epub"
     composer:show()
     assert.equals("", composer.review.text)
-    assert.equals(8, cached)
+    assert.equals(10, cached)
   end)
 
   it("saves multiline text and cancels edits without altering the draft", function()
@@ -147,11 +148,13 @@ describe("Review composer", function()
     composer.app.engines.goodreads.settings.providerEnabled = function() return false end
     composer.app.engines.fable.api.hasCredential = function() return false end
     composer.app.engines.hardcover.settings.bookLinked = function() return false end
+    composer.app.engines.pagebound.settings.bookLinked = function() return false end
     composer:show()
     assert.is_false(control("goodreads").enabled)
     assert.matches("disabled", control("goodreads").text_func())
     assert.matches("not logged in", control("fable").text_func())
     assert.matches("not linked", control("hardcover").text_func())
+    assert.matches("not linked", control("pagebound").text_func())
     control("storygraph").callback()
     assert.is_false(control("submit").enabled_func())
     control("storygraph").callback()
@@ -162,6 +165,21 @@ describe("Review composer", function()
     assert.same({ storygraph = { "one.epub", 4.25, "Worth reading" } }, submitted)
     assert.is_true(menu.closed)
     assert.is_nil(composer.review)
+  end)
+
+  it("includes Pagebound as an eligible review destination", function()
+    composer:show()
+    assert.is_true(control("pagebound").enabled)
+    assert.is_true(composer.review.selected.pagebound)
+
+    for _, key in ipairs({ "storygraph", "goodreads", "hardcover", "fable" }) do
+      control(key).callback()
+    end
+    composer.review.rating = 4.25
+    composer.review.text = "A Pagebound review"
+    control("submit").callback()
+
+    assert.same({ pagebound = { "one.epub", 4.25, "A Pagebound review" } }, submitted)
   end)
 
   it("keeps the composer open when submission fails validation", function()

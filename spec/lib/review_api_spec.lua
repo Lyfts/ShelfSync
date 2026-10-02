@@ -2,6 +2,7 @@ require("spec.support.koreader_mocks")
 local Goodreads = require("shelfsync/lib/goodreads/api")
 local Hardcover = require("shelfsync/lib/hardcover/api")
 local Fable = require("shelfsync/lib/fable/api")
+local Pagebound = require("shelfsync/lib/pagebound/api")
 local json = require("json")
 
 describe("Review requests", function()
@@ -89,5 +90,42 @@ describe("Review requests", function()
     local ok, err = api:setReview(123, 4, "Review")
     assert.is_false(ok)
     assert.matches("HTTP 401", err)
+  end)
+
+  it("submits Pagebound reviews to the native review endpoint with both book IDs", function()
+    local request_body
+    local api = setmetatable({
+      request = function(_, path, method, body)
+        assert.equals("/api/v1/reviews", path)
+        assert.equals("POST", method)
+        request_body = body
+        return 201, { id = 789 }
+      end,
+    }, { __index = Pagebound })
+
+    assert.is_true(api:setReview("123", "456", 4.5, "Pagebound review"))
+    local review = request_body.review
+    assert.equals(4.5, review.overall_rating)
+    assert.equals(123, review.book_id)
+    assert.equals(456, review.user_book_id)
+    assert.equals("Pagebound review", review.review)
+    assert.is_false(review.is_spoiler)
+    assert.is_false(review.is_dnf)
+    assert.same({}, review.emojis)
+    assert.equals(json.util.null, review.quality_rating)
+  end)
+
+  it("sends a Pagebound text-only review without a rating", function()
+    local request_body
+    local api = setmetatable({
+      request = function(_, _, _, body)
+        request_body = body
+        return 200, {}
+      end,
+    }, { __index = Pagebound })
+
+    assert.is_true(api:setReview(123, 456, nil, "Text only"))
+    assert.equals(json.util.null, request_body.review.overall_rating)
+    assert.equals("Text only", request_body.review.review)
   end)
 end)
