@@ -759,6 +759,44 @@ function PageboundApi:createForumPost(book_id, title, content)
   return data or true
 end
 
+-- Saves the review shape captured from Pagebound's native review form.
+function PageboundApi:setReview(book_id, user_book_id, rating, review_text)
+  if not book_id then
+    return false, "No linked book found on Pagebound"
+  end
+  if not user_book_id then
+    return false, "No Pagebound reading-list entry found for this book"
+  end
+
+  local code, data = self:request("/api/v1/reviews", "POST", {
+    review = {
+      overall_rating = rating ~= nil and tonumber(rating) or json.util.null,
+      quality_rating = json.util.null,
+      entertainment_rating = json.util.null,
+      plot_rating = json.util.null,
+      audiobook_rating = json.util.null,
+      character_rating = json.util.null,
+      is_spoiler = false,
+      review = review_text or "",
+      emojis = init_array({}),
+      book_id = tonumber(book_id) or book_id,
+      user_book_id = tonumber(user_book_id) or user_book_id,
+      is_dnf = false,
+    },
+  })
+
+  if code and code >= 200 and code < 300 then
+    return true, data
+  end
+  if not code then
+    return false, tostring(data or "Pagebound review request failed")
+  end
+
+  local message = type(data) == "table"
+    and (_t.dig(data, "error", "message") or _t.dig(data, "message"))
+  return false, message or "Pagebound review submission failed (HTTP " .. tostring(code) .. ")"
+end
+
 local function pagebound_note_title(data, status, settings)
   local percent = tonumber(data.progress_percent)
   local page = tonumber(data.local_page)

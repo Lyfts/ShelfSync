@@ -274,6 +274,19 @@ function ShelfSyncApp:init()
     self.engines[provider.key] = self:_buildEngine(provider, settings, plugin_settings)
   end
 
+  local hardcover = self.engines.hardcover
+  hardcover.api:checkOAuthScopeRevision()
+  if hardcover.settings:hasPendingOAuthScopeNotice() then
+    UIManager:nextTick(function()
+      if not hardcover.settings:hasPendingOAuthScopeNotice() then return end
+      UIManager:show(InfoMessage:new {
+        text = _([[Hardcover OAuth permissions changed. You have been signed out of OAuth; sign in again from Hardcover > Account (OAuth / API Token) to authorize the current permissions. Your API token fallback is unchanged.]]),
+        icon = "notice-warning",
+      })
+      hardcover.settings:clearPendingOAuthScopeNotice()
+    end)
+  end
+
   self.common_menu = CommonMenu:new { settings = plugin_settings, app = self }
   self.review_menu = ReviewMenu:new { settings = plugin_settings, app = self }
 

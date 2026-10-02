@@ -17,6 +17,7 @@ local VERSION = require("shelfsync_version")
 local SETTING = require("shelfsync/lib/common/constants/settings")
 local HARDCOVER = require("shelfsync/lib/hardcover/constants")
 local OAuthClient = require("shelfsync/lib/hardcover/oauth_client")
+local OAUTH = require("shelfsync/lib/hardcover/oauth_constants")
 
 local api_url = "https://api.hardcover.app/v1/graphql"
 
@@ -192,6 +193,28 @@ function HardcoverApi:saveOAuthTokens(tokens)
   end
   self.settings:saveOAuthTokens(tokens, true)
   return true
+end
+
+-- Persist which OAuth scope set the saved grant covers. Increment
+-- OAUTH.SCOPE_REVISION when the requested scopes change; existing sessions
+-- are logged out once so the next sign-in grants the new permissions.
+function HardcoverApi:checkOAuthScopeRevision()
+  if not self.settings then
+    return false
+  end
+
+  local saved_revision = tonumber(self.settings:readSetting(SETTING.HARDCOVER.OAUTH_SCOPE_REVISION))
+  if saved_revision == OAUTH.SCOPE_REVISION then
+    return false
+  end
+
+  local had_oauth_session = self.settings:hasOAuthSession()
+  if had_oauth_session then
+    self:logoutOAuth()
+    self.settings:updateSetting(SETTING.HARDCOVER.OAUTH_SCOPE_NOTICE_PENDING, true)
+  end
+  self.settings:updateSetting(SETTING.HARDCOVER.OAUTH_SCOPE_REVISION, OAUTH.SCOPE_REVISION)
+  return had_oauth_session
 end
 
 function HardcoverApi:refreshOAuthToken()

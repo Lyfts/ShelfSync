@@ -69,6 +69,8 @@ Settings.HARDCOVER = {
   ACCESS_TOKEN = "oauth_access_token",
   REFRESH_TOKEN = "oauth_refresh_token",
   TOKEN_EXPIRES_AT = "oauth_token_expires_at",
+  OAUTH_SCOPE_REVISION = "oauth_scope_revision",
+  OAUTH_SCOPE_NOTICE_PENDING = "oauth_scope_notice_pending",
 }
 
 Settings.FABLE = {

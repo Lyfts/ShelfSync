@@ -84,11 +84,10 @@ function ReviewMenu:_state()
     local selected = {}
 
     -- Refresh each provider's cached book status once per book-open --
-    -- Hardcover and StoryGraph both need a live user_book id
-    -- (state.book_status.id) rather than the sidecar-stored book_id, same as
-    -- their own menus do before showing anything status-dependent. This is
-    -- the only network activity the review menu does before Submit is
-    -- actually pressed.
+    -- Hardcover and StoryGraph need a live user_book id, and Pagebound needs
+    -- its user_book_id for review writes. Refresh cached status as their
+    -- menus do before showing anything status-dependent. This is the only
+    -- network activity the review menu does before Submit is pressed.
     if #eligible > 0 then
       local loading = InfoMessage:new { text = _("Loading book status...") }
       UIManager:show(loading)
@@ -171,9 +170,10 @@ function ReviewMenu:_ratingHelp()
   UIManager:show(InfoMessage:new {
     text = _([[Set a star rating from 0 to 5 in quarter-star steps.
 
-Each provider rounds this down to whatever precision it actually supports when you submit:
+When submitted, each provider handles the rating as follows:
 - Goodreads: round down to a whole star
 - Hardcover: round down to a half star
+- Pagebound: round down to a half star
 - StoryGraph and Fable: exact value (quarter-star precision)]]),
   })
 end
