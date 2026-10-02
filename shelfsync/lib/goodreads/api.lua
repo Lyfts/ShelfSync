@@ -31,6 +31,47 @@ local SETTING = require("shelfsync/lib/common/constants/settings")
 
 local base_url = "https://www.goodreads.com"
 
+-- Goodreads cookies are stored as one opaque header, so their original
+-- per-cookie domain and path scopes are unavailable. Keep that header on the
+-- exact HTTPS origin it was copied from.
+local function is_goodreads_origin(url)
+  if type(url) ~= "string" then return false end
+  local scheme, authority = url:match("^([%a][%w+%.%-]*)://([^/%?#]*)")
+  if not scheme or not authority or scheme:lower() ~= "https" then return false end
+  authority = authority:lower()
+  return authority == "www.goodreads.com" or authority == "www.goodreads.com:443"
+end
+
+local function remove_cookie_headers(headers)
+  for name in pairs(headers) do
+    if type(name) == "string" and name:lower() == "cookie" then
+      headers[name] = nil
+    end
+  end
+end
+
+local function resolve_redirect(current_url, location)
+  if type(location) ~= "string" or location == "" then return nil end
+  if location:match("^[%a][%w+%.%-]*:") then return location end
+
+  local scheme, authority, path = current_url:match("^([%a][%w+%.%-]*)://([^/%?#]+)([^?#]*)")
+  if not scheme or not authority then return nil end
+  local origin = scheme .. "://" .. authority
+  if location:sub(1, 2) == "//" then
+    return scheme .. ":" .. location
+  elseif location:sub(1, 1) == "/" then
+    return origin .. location
+  end
+
+  path = path ~= "" and path or "/"
+  if location:sub(1, 1) == "?" then return origin .. path .. location end
+  if location:sub(1, 1) == "#" then return origin .. path .. location end
+
+  local directory = path:match("^(.*)/") or ""
+  if directory == "" then directory = "/" else directory = directory .. "/" end
+  return origin .. directory .. location
+end
+
 local GoodreadsApi = {
   enabled = true,
   settings = nil, -- Injected by main.lua
@@ -297,7 +338,7 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     -- never filled in) -- try the local cookie-refresher's cached cookie
     -- before ever making a request, instead of failing until the user
     -- manually pastes one in.
-    if not headers["Cookie"] or headers["Cookie"] == "" then
+    if is_goodreads_origin(url) and (not headers["Cookie"] or headers["Cookie"] == "") then
       local refresh_base = self.settings and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_URL)
       if refresh_base and refresh_base ~= "" then
         local refresh_token = self.settings and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_TOKEN)
@@ -332,8 +373,8 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     -- navigation, not just error handling: signing in bootstraps the Rails
     -- session with a self-redirect back to the same URL, and a search with
     -- exactly one match (eg. by ISBN) redirects straight to the book page
-    -- instead of returning a results list. Only GET/HEAD are auto-followed,
-    -- matching real browser behaviour for 301/302/303.
+    -- instead of returning a results list. This loop follows GET/HEAD redirects
+    -- itself so every hop can be restricted to Goodreads' HTTPS origin.
     local current_url = url
     local current_method = method or "GET"
     local max_hops = 5
@@ -341,6 +382,12 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     local waf_retried = false
 
     for hop = 0, max_hops do
+      -- The request may be initiated by an internal caller with a URL other
+      -- than Goodreads. Never attach this opaque credential bundle there.
+      if not is_goodreads_origin(current_url) then
+        remove_cookie_headers(headers)
+      end
+
       local sink = {}
       socketutil:set_timeout(timeout, maxtime)
 
@@ -348,6 +395,9 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         url = current_url,
         method = current_method,
         headers = headers,
+        -- LuaSocket otherwise follows GET/HEAD redirects before this loop can
+        -- validate their destinations, reusing the same headers table.
+        redirect = false,
         source = (current_method == "POST" and body) and ltn12.source.string(body) or nil,
         sink = socketutil.table_sink(sink),
       }
@@ -389,7 +439,7 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         .. " waf_action=" .. tostring(waf_action) .. " content_type=" .. tostring(content_type)
         .. " response_length=" .. #response_body)
       local waf_retry_now = false
-      if waf_action then
+      if waf_action and is_goodreads_origin(current_url) then
         -- Stored setting is just the refresher's base URL (e.g.
         -- http://192.168.1.50:5080) -- the /refresh path is always the
         -- same, so there's no reason to make the user type it.
@@ -418,13 +468,12 @@ function GoodreadsApi:request(url, method, data, custom_headers)
 
       if is_redirect and location and hop < max_hops
           and (current_method == "GET" or current_method == "HEAD") then
-        if location:match("^https?://") then
-          current_url = location
-        elseif location:sub(1, 1) == "/" then
-          local scheme_host = current_url:match("^(https?://[^/]+)")
-          current_url = (scheme_host or base_url) .. location
+        local next_url = resolve_redirect(current_url, location)
+        if is_goodreads_origin(next_url) then
+          current_url = next_url
         else
-          current_url = location
+          logger.warn("Goodreads: refusing redirect outside https://www.goodreads.com")
+          break
         end
       elseif waf_retry_now and hop < max_hops then
         -- current_url/current_method unchanged: same request, fresh cookie
