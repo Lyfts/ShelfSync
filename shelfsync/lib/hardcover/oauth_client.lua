@@ -2,7 +2,6 @@ local _ = require("gettext")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
 local json = require("json")
-local url = require("socket.url")
 local socketutil = require("socketutil")
 local Trapper = require("ui/trapper")
 local VERSION = require("shelfsync_version")
@@ -14,10 +13,16 @@ local user_agent = ("ShelfSync/%s (https://github.com/Lyfts/ShelfSync)")
   :format(table.concat(VERSION, "."))
 
 local function formEncode(fields)
+  local function escape(value)
+    return tostring(value):gsub("([^A-Za-z0-9_%.%-~])", function(char)
+      return string.format("%%%02X", string.byte(char))
+    end)
+  end
+
   local parts = {}
   for key, value in pairs(fields) do
     if value ~= nil then
-      table.insert(parts, url.escape(tostring(key)) .. "=" .. url.escape(tostring(value)))
+      table.insert(parts, escape(key) .. "=" .. escape(value))
     end
   end
   return table.concat(parts, "&")
