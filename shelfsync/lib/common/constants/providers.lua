@@ -66,12 +66,13 @@ Re-enable syncing afterwards from the StoryGraph menu.]]),
     menu_class = HardcoverMenu,
     highlight_menu_name = "13_1_make_hardcover_highlight_item",
     auth_setting_key = SETTING.HARDCOVER.API_TOKEN,
-    auth_help_text = _([[Your Hardcover API token is invalid or has expired. Syncing is paused.
+    auth_setting_keys = {
+      SETTING.HARDCOVER.ACCESS_TOKEN,
+      SETTING.HARDCOVER.REFRESH_TOKEN,
+    },
+    auth_help_text = _([[Your Hardcover OAuth session or API token is invalid or has expired. Syncing is paused.
 
-To fix it:
-1. Go to hardcover.app/account/api in a browser
-2. Copy your API token
-3. In KOReader: Hardcover menu > Settings > Account (API Token), paste it in
+To fix it, sign in again from Hardcover > Account (OAuth / API Token), or update the API token fallback there.
 
 Re-enable syncing afterwards from the Hardcover menu.]]),
   },

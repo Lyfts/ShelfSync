@@ -195,7 +195,7 @@ function HardcoverMenu:getSubMenuItems(book_view)
       keep_menu_open = true
     },
     {
-      text = _("Account (API Token)"),
+      text = _("Account (OAuth / API Token)"),
       sub_item_table_func = function()
         return self:getAuthSubMenuItems()
       end,
@@ -475,38 +475,84 @@ end
 function HardcoverMenu:getAuthSubMenuItems()
   return {
     {
-      text = _("How to get your API token"),
+      text = _("How Hardcover authentication works"),
       keep_menu_open = true,
       callback = function()
         UIManager:show(InfoMessage:new {
-          text = _([[Hardcover uses an API token for authentication.
+          text = _([[Sign in with Hardcover using the device code shown by ShelfSync.
+OAuth is used whenever you are signed in. The API token below is used as a fallback when OAuth is signed out.
 
-1. Log in to hardcover.app in a browser
-2. Go to hardcover.app/account/api
-3. Copy your API token into "Hardcover API Token" below
-
-The token does not expire automatically, but can be regenerated (which invalidates the old one) from the same page.]]),
+To use an API token instead, create one at hardcover.app/account/api and paste it below. The token remains on this device and can be regenerated from the same page.]]),
         })
       end,
       separator = true,
     },
     {
-      text = _("Hardcover API Token"),
+      text_func = function()
+        return self.settings:hasOAuthSession()
+          and _("Signed in with Hardcover (OAuth)")
+          or _("Sign in with Hardcover (OAuth)")
+      end,
+      keep_menu_open = true,
+      callback = function(menu_instance)
+        local DeviceAuthDialog = require("shelfsync/lib/hardcover/device_auth_dialog")
+        DeviceAuthDialog:new():show(function(tokens)
+          if self.api:saveOAuthTokens(tokens) then
+            menu_instance:updateItems()
+            UIManager:show(InfoMessage:new { text = _("Signed in to Hardcover") })
+          else
+            UIManager:show(InfoMessage:new {
+              text = _("Hardcover did not return an access token"),
+              icon = "notice-warning",
+            })
+          end
+        end, function(error_message)
+          UIManager:show(InfoMessage:new {
+            text = _("Hardcover sign-in failed: " .. tostring(error_message)),
+            icon = "notice-warning",
+          })
+        end)
+      end,
+      separator = true,
+    },
+    {
+      text = _("Sign out of Hardcover OAuth"),
+      enabled_func = function()
+        return self.settings:hasOAuthSession()
+      end,
+      keep_menu_open = true,
+      callback = function(menu_instance)
+        self.dialog_manager:maybeConfirm({
+          text = _("Sign out of Hardcover OAuth on this device? Your API token fallback will be kept."),
+          ok_callback = function()
+            self.api:logoutOAuth()
+            menu_instance:updateItems()
+            UIManager:show(InfoMessage:new {
+              text = self.api:hasCredential()
+                  and _("Signed out of OAuth. The configured API token is now in use.")
+                or _("Signed out of Hardcover"),
+            })
+          end,
+        })
+      end,
+      separator = true,
+    },
+    {
       text_func = function()
         local set = self.settings:readSetting(SETTING.HARDCOVER.API_TOKEN)
         if not set or set == "" then set = legacy_config.token end
-        return _("Hardcover API Token") .. (set and set ~= "" and _(" (set)") or _(" (not set)"))
+        return _("Hardcover API Token fallback") .. (set and set ~= "" and _(" (set)") or _(" (not set)"))
       end,
       hold_callback = function()
         UIManager:show(InfoMessage:new {
-          text = _("Value of your Hardcover API token. See \"How to get your API token\" above."),
+          text = _("Used when OAuth is signed out. See \"How Hardcover authentication works\" above."),
         })
       end,
-      callback = function()
+      callback = function(menu_instance)
         local MultiInputDialog = require("ui/widget/multiinputdialog")
         local dialog
         dialog = MultiInputDialog:new {
-          title = _("Hardcover API Token"),
+          title = _("Hardcover API Token fallback"),
           fields = {
             {
               text = self.settings:readSetting(SETTING.HARDCOVER.API_TOKEN) or legacy_config.token or "",
@@ -526,6 +572,7 @@ The token does not expire automatically, but can be regenerated (which invalidat
                   local value = dialog:getFields()[1]
                   self.settings:updateSetting(SETTING.HARDCOVER.API_TOKEN, value)
                   UIManager:close(dialog)
+                  menu_instance:updateItems()
                 end,
               },
             },

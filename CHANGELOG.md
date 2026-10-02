@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Add Hardcover OAuth device-code sign-in, based on [hardcoverapp.koplugin PR #70](https://github.com/Billiam/hardcoverapp.koplugin/pull/70). OAuth is used when signed in; the configured API token remains available as a fallback.
+- Confirm Hardcover journal writes using the mutation ID, without requiring journal-read access.
 
 ## 1.4.4
 ##### Plugin

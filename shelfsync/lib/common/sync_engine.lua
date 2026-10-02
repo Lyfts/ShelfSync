@@ -339,14 +339,25 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
       self.state.process_page_turns = false
       self:registerHighlight()
     end
-  elseif field == self.auth_setting_key then
-    if change and change ~= "" and not self.enabled then
-      self.enabled = true
-      self.menu.enabled = true
-      self.api.last_auth_warning = nil
-      UIManager:show(Notification:new {
-        text = _(self.label .. " syncing re-enabled"),
-      })
+  else
+    local auth_setting_changed = field == self.auth_setting_key
+    if not auth_setting_changed then
+      for _, key in ipairs(self.auth_setting_keys or {}) do
+        if field == key then
+          auth_setting_changed = true
+          break
+        end
+      end
+    end
+    if auth_setting_changed then
+      if change and change ~= "" and not self.enabled then
+        self.enabled = true
+        self.menu.enabled = true
+        self.api.last_auth_warning = nil
+        UIManager:show(Notification:new {
+          text = _(self.label .. " syncing re-enabled"),
+        })
+      end
     end
   end
 end

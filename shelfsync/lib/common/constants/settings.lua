@@ -66,6 +66,9 @@ Settings.GOODREADS = {
 
 Settings.HARDCOVER = {
   API_TOKEN = "api_token",
+  ACCESS_TOKEN = "oauth_access_token",
+  REFRESH_TOKEN = "oauth_refresh_token",
+  TOKEN_EXPIRES_AT = "oauth_token_expires_at",
 }
 
 Settings.FABLE = {

@@ -181,6 +181,7 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
     constants = provider.constants,
     highlight_menu_name = provider.highlight_menu_name,
     auth_setting_key = provider.auth_setting_key,
+    auth_setting_keys = provider.auth_setting_keys,
     api = provider.api,
     user = user,
     cache = cache,

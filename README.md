@@ -23,7 +23,7 @@ StoryGraph, Hardcover, and Goodreads share a single config file: rename `shelfsy
 > 2. Download `shelfsync-fetch-cookies.zip` from the [latest release](/releases/latest), extract it, and run `fetch-cookies.sh` (macOS/Linux) or `fetch-cookies.bat` (Windows). Needs Python 3; it'll use [uv](https://docs.astral.sh/uv/) if you have it to grab `browser_cookie3` automatically, otherwise `pip install browser_cookie3` first.
 > 3. It writes the cookies straight into `shelfsync_config.lua` — nothing is sent anywhere else. Use `--help` for options like `--browser firefox`.
 >
-> Hardcover isn't cookie-based, so its token still needs to be pasted in by hand (see below).
+> Hardcover supports OAuth device-code sign-in from the KOReader menu. Its API token can still be configured as a fallback (see below).
 
 ### StoryGraph authentication
 Open **ShelfSync > Providers > StoryGraph > Account (Cookies & Tokens) > Log in** and enter your StoryGraph email and password. The plugin saves the session and remember-me cookies returned by StoryGraph; it does not store your password. Log in again if your session expires.
@@ -36,9 +36,11 @@ If Cloudflare blocks login on your device, import browser cookies using the help
 4. Copy the value of the `remember_user_token` cookie and paste it into the `remember_user_token` field of the `storygraph` section in `shelfsync_config.lua`.
 
 ### Hardcover authentication
+Open **ShelfSync > Providers > Hardcover > Account (OAuth / API Token) > Sign in with Hardcover (OAuth)** and follow the device-code instructions. When signed in, ShelfSync uses OAuth; it refreshes the session automatically and falls back to an API token only when OAuth is signed out or its session is rejected.
+
+API-token authentication remains available as a fallback:
 1. Go to [hardcover.app/account/api](https://hardcover.app/account/api) in your browser and copy your API token.
-2. Paste it into the `token` field of the `hardcover` section in `shelfsync_config.lua`.
-   - Alternatively, you can paste the token directly into the **Hardcover** menu's **Settings > Account (API Token)** field from within KOReader instead of editing the config file.
+2. Paste it into the `token` field of the `hardcover` section in `shelfsync_config.lua`, or open **Hardcover > Account (OAuth / API Token) > Hardcover API Token fallback** in KOReader.
 
 ### Goodreads authentication
 Goodreads accounts are linked through Amazon, so a valid session is a bundle of cookies rather than one or two named values, and it can go stale periodically from an AWS WAF bot-challenge on Goodreads' side.
@@ -67,7 +69,7 @@ Unlike the other services, Fable has a real login API, so the plugin logs in dir
 Open **ShelfSync > Providers > Pagebound > Account > Log in** and enter your Pagebound email and password. The plugin signs in through Firebase, exchanges that session for a Pagebound API token, and refreshes the token automatically. It caches your password on the device, encrypted at rest where available, so it can recover if the refresh token stops working. Use **Log out** to clear the credentials cached by ShelfSync.
 
 > [!TIP]
-> If you usually sign in to Pagebound with **Apple or Google**, reset the password for the email address on your account through Pagebound. You can then log in with that email and password; ShelfSync uses this regular email/password account.
+> If you usually sign in to Pagebound with **Google or Apple**, reset the password for the email address on your account through Pagebound. You can then log in with that email and password; ShelfSync uses this regular email/password account.
 
 Notes entered in Pagebound's progress dialog are published as posts in that book's forum. The post body is your note, and its title includes the selected progress percentage and page position; other Pagebound users may be able to see it.
 
