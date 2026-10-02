@@ -1,9 +1,15 @@
 local http = require("socket.http")
-local ltn12 = require("ltn12")
+local socketutil = require("socketutil")
 
 local VERSION = require("shelfsync_version")
 
 local META_URL = "https://raw.githubusercontent.com/Lyfts/ShelfSync/main/_meta.lua"
+
+-- The check runs on the UI thread every time a book is opened, so keep it
+-- short: without this it falls back to KOReader's defaults (60s per blocking
+-- call, no overall limit) and a flaky network freezes the reader that long.
+local BLOCK_TIMEOUT = 5
+local TOTAL_TIMEOUT = 10
 
 local Github = {}
 
@@ -24,10 +30,12 @@ end
 
 function Github:fetchVersionInfo()
   local responseBody = {}
+  socketutil:set_timeout(BLOCK_TIMEOUT, TOTAL_TIMEOUT)
   local res, code, responseHeaders = http.request {
     url = META_URL,
-    sink = ltn12.sink.table(responseBody),
+    sink = socketutil.table_sink(responseBody),
   }
+  socketutil:reset_timeout()
 
   if code == 200 then
     local source = table.concat(responseBody)
