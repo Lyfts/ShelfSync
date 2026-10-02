@@ -1,7 +1,7 @@
 
 return {
   fullname = "ShelfSync",
-  description = "Synchronize reading progress to app.thestorygraph.com, hardcover.app, and goodreads.com",
-  version = "1.3.2",
+  description = "Synchronize reading progress, notes, and status to The StoryGraph, Hardcover, Goodreads, Fable, and Pagebound",
+  version = "1.4.4",
   api_version = 1
 }

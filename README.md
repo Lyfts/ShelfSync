@@ -1,9 +1,9 @@
 # ShelfSync for KOReader
 
-A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com), [Hardcover](https://hardcover.app), [Goodreads](https://goodreads.com), and/or [Fable](https://fable.co). All services can be linked and tracked independently, side by side, from the same install.
+A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com), [Hardcover](https://hardcover.app), [Goodreads](https://goodreads.com), [Fable](https://fable.co), and/or [Pagebound](https://pagebound.co). All services can be linked and tracked independently, side by side, from the same install.
 
 > [!CAUTION]
-> **Disclaimer**: StoryGraph and Goodreads sync both use unofficial APIs based on session cookies. Because of this, they are inherently brittle and may break if either service updates their website or cookie structure. If sync stops working, please ensure you are using the latest version of the plugin and try re-fetching your session cookie(s). Hardcover and Fable sync use their services' official APIs and do not have this issue.
+> **Disclaimer**: StoryGraph and Goodreads sync use unofficial APIs based on session cookies. Hardcover, Fable, and Pagebound sync use their services' official APIs; Pagebound uses the same API as its website. Any integration may break if a service changes its website or API.
 
 > [!NOTE]
 > **Goodreads limitations**: Goodreads' website doesn't expose a way to read back your current page position, only your shelf (status), so "Jump to linked book position" isn't available and background sync can't detect when your local progress is behind what's on Goodreads — it always pushes forward. Paused/Did Not Finish statuses can be set but aren't reliably read back either. Posting reviews/ratings isn't supported yet.
@@ -13,7 +13,7 @@ A KOReader plugin to synchronize your reading progress, notes, and status to [Th
 1. Download the latest release and extract it to your KOReader `plugins/` folder.
 2. Set up authentication for whichever service(s) you want to use — all are optional and independent.
 
-StoryGraph, Hardcover, and Goodreads share a single config file: rename `shelfsync_config.example.lua` to `shelfsync_config.lua`, then fill in whichever section(s) below you want — the `storygraph`, `hardcover`, and `goodreads` sections are all optional and independent, and leaving one blank (or the whole file missing) doesn't affect the others. Fable has no config file section — it's set up entirely from within KOReader (see below).
+StoryGraph, Hardcover, and Goodreads share a single config file: rename `shelfsync_config.example.lua` to `shelfsync_config.lua`, then fill in whichever section(s) below you want — the `storygraph`, `hardcover`, and `goodreads` sections are all optional and independent, and leaving one blank (or the whole file missing) doesn't affect the others. Fable and Pagebound have no config file section — set them up entirely from within KOReader (see below).
 - *Note: If you are upgrading from an older version, the plugin will automatically merge an existing `storygraph_config.lua` and/or `hardcover_config.lua` into `shelfsync_config.lua`.*
 
 > [!TIP]
@@ -23,18 +23,24 @@ StoryGraph, Hardcover, and Goodreads share a single config file: rename `shelfsy
 > 2. Download `shelfsync-fetch-cookies.zip` from the [latest release](/releases/latest), extract it, and run `fetch-cookies.sh` (macOS/Linux) or `fetch-cookies.bat` (Windows). Needs Python 3; it'll use [uv](https://docs.astral.sh/uv/) if you have it to grab `browser_cookie3` automatically, otherwise `pip install browser_cookie3` first.
 > 3. It writes the cookies straight into `shelfsync_config.lua` — nothing is sent anywhere else. Use `--help` for options like `--browser firefox`.
 >
-> Hardcover isn't cookie-based, so its token still needs to be pasted in by hand (see below).
+> Hardcover supports OAuth device-code sign-in from the KOReader menu. Its API token can still be configured as a fallback (see below).
 
 ### StoryGraph authentication
+Open **ShelfSync > Providers > StoryGraph > Account (Cookies & Tokens) > Log in** and enter your StoryGraph email and password. The plugin saves the session and remember-me cookies returned by StoryGraph; it does not store your password. Log in again if your session expires.
+
+If Cloudflare blocks login on your device, import browser cookies using the helper above or these manual steps:
+
 1. Log in to [thestorygraph.com](https://thestorygraph.com) in your browser.
 2. Open your browser's Developer Tools (F12) -> Application/Storage -> Cookies.
 3. Copy the value of the `_storygraph_session` cookie and paste it into the `session_cookie` field of the `storygraph` section in `shelfsync_config.lua`.
 4. Copy the value of the `remember_user_token` cookie and paste it into the `remember_user_token` field of the `storygraph` section in `shelfsync_config.lua`.
 
 ### Hardcover authentication
+Open **ShelfSync > Providers > Hardcover > Account (OAuth / API Token) > Sign in with Hardcover (OAuth)** and follow the device-code instructions. When signed in, ShelfSync uses OAuth; it refreshes the session automatically and falls back to an API token only when OAuth is signed out or its session is rejected.
+
+API-token authentication remains available as a fallback:
 1. Go to [hardcover.app/account/api](https://hardcover.app/account/api) in your browser and copy your API token.
-2. Paste it into the `token` field of the `hardcover` section in `shelfsync_config.lua`.
-   - Alternatively, you can paste the token directly into the **Hardcover** menu's **Settings > Account (API Token)** field from within KOReader instead of editing the config file.
+2. Paste it into the `token` field of the `hardcover` section in `shelfsync_config.lua`, or open **Hardcover > Account (OAuth / API Token) > Hardcover API Token fallback** in KOReader.
 
 ### Goodreads authentication
 Goodreads accounts are linked through Amazon, so a valid session is a bundle of cookies rather than one or two named values, and it can go stale periodically from an AWS WAF bot-challenge on Goodreads' side.
@@ -54,25 +60,33 @@ This cookie will go stale again periodically unless you set up the Docker refres
 Unlike the other services, Fable has a real login API, so the plugin logs in directly with your Fable email and password rather than a cookie/token you have to fetch by hand.
 
 1. In KOReader, open **Fable** menu -> **Account** -> **Log in**, and enter your Fable email and password.
-2. Your password itself is never stored — only the access/refresh token pair Fable's own login returns, the same thing its official app keeps. That pair refreshes itself automatically from then on; if it's ever revoked (e.g. after changing your password), just log in again the same way.
+2. ShelfSync caches your password on the device so it can silently sign in again if the refresh token stops working. The password is encrypted at rest when `libcrypto` is available; otherwise, it is stored in plaintext. Your access/refresh tokens refresh automatically, and **Log out** clears the cached password and tokens.
 
 > [!TIP]
 > If you signed up to Fable with **Google or Apple**, there's no password to log in with here. Convert the account to a regular email/password account first: in the Fable app, go to **Account settings** and set/add a password for your account. Once that's done, log in above using that email and password like any other account.
 
+### Pagebound authentication
+Open **ShelfSync > Providers > Pagebound > Account > Log in** and enter your Pagebound email and password. The plugin signs in through Firebase, exchanges that session for a Pagebound API token, and refreshes the token automatically. It caches your password on the device, encrypted at rest where available, so it can recover if the refresh token stops working. Use **Log out** to clear the credentials cached by ShelfSync.
+
+> [!TIP]
+> If you usually sign in to Pagebound with **Google or Apple**, reset the password for the email address on your account through Pagebound. You can then log in with that email and password; ShelfSync uses this regular email/password account.
+
+Notes entered in Pagebound's progress dialog are published as posts in that book's forum. The post body is your note, and its title includes the selected progress percentage and page position; other Pagebound users may be able to see it.
+
 ## Usage
 
-Everything lives under a single **ShelfSync** menu in **Tools > More tools** when a document is active, with a **Providers** sub-menu containing **StoryGraph**, **Hardcover**, **Goodreads**, and **Fable**. They work the same way and can be used together or independently.
+Everything lives under a single **ShelfSync** menu in **Tools > More tools** when a document is active, with a **Providers** sub-menu containing **StoryGraph**, **Hardcover**, **Goodreads**, **Fable**, and **Pagebound**. They work independently and can be used together.
 
 ### Updating Progress & Notes
 Each menu provides a unified **"Update progress: [XX]%"** item. This opens a powerful dialog where you can:
 - **Set Progress**: Tap the progress button to open a native picker showing both your **KOReader** and remote synced percentages.
-- **Add a Note**: Write your thoughts directly in the note field.
+- **Add a Note**: Write your thoughts directly in the note field. Pagebound publishes the note as a post in the book's forum; other Pagebound users may be able to see it.
 - **Location Context**: By default, notes sent via the highlight menu automatically include your current **Chapter, Page, and Percentage**. You can enable this for regular notes in the settings.
 
 ### Linking a Book
 Before updates can be sent, a document needs to be linked to a book on each service you want to sync to.
 - Use **"Link book"** to search by metadata or ISBN. The plugin automatically tries to link the correct edition (e.g. by matching ISBN) — "Change edition" and the other settings below are mostly for changing which specific edition ends up linked, when you want something other than what was auto-selected.
-- Use **"Change edition"** to switch to a different edition (StoryGraph) or select a specific edition (Hardcover). Goodreads and Fable have no edition-switching concept, so they have no "Change edition" item — linking picks whichever edition the search returns.
+- Use **"Change edition"** to switch to a different edition (StoryGraph) or select a specific edition (Hardcover). Goodreads, Fable, and Pagebound have no edition-switching concept, so they have no "Change edition" item — linking picks whichever book the search returns.
 - Audio editions are filtered out of the search results (StoryGraph, Hardcover).
 - If a book is not currently tracked, the plugin will set its status to Currently Reading.
 - On StoryGraph, if another edition of the book is set as 'Currently Reading' or 'Want to Read' then the plugin will automatically link to that edition, but not change the status. You can use "Change edition" to link to a different edition if needed.
@@ -90,7 +104,7 @@ KOReader's gesture manager includes a **ShelfSync: Update progress for all linke
 ## Settings
 
 Each service has its own **Settings** submenu for linking and account options:
-- **Automatically link by provider identifier/ISBN/Title**: Attempt to find matching books automatically when opening a new document, in that priority order — a provider identifier embedded in the book's metadata first, then ISBN, then title+author. Each method can be toggled independently, and all are enabled by default; disable any of them here if you'd rather link books manually. Identifier-based linking is supported for Goodreads (`goodreads:` tag), Hardcover (`hardcover:`/`hardcover-slug:`/`hardcover-edition:` tags), and StoryGraph (`storygraph:`/`storygraph-edition:` tags); Fable currently doesn't expose a matching identifier scheme, so that method has no effect there yet.
+- **Automatically link by provider identifier/ISBN/Title**: Attempt to find matching books automatically when opening a new document, in that priority order — a provider identifier embedded in the book's metadata first, then ISBN, then title+author. Each method can be toggled independently, and all are enabled by default; disable any of them here if you'd rather link books manually. Identifier-based linking is supported for Goodreads (`goodreads:` tag), Hardcover (`hardcover:`/`hardcover-slug:`/`hardcover-edition:` tags), and StoryGraph (`storygraph:`/`storygraph-edition:` tags). Fable and Pagebound currently don't expose matching identifier schemes.
 - **Account**: Cookies/tokens/login for that service.
 
 Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Settings**, since it applies to the whole plugin rather than one service:
@@ -100,7 +114,7 @@ Everything else — progress tracking settings, "Enable wifi on demand", "Confir
 
 ## Versioning & Mandatory Updates
 
-To prevent data corruption and ensure compatibility with StoryGraph's and Goodreads' unofficial APIs, the plugin includes a remote versioning system. This applies to the plugin as a whole (StoryGraph, Hardcover, Goodreads, and Fable sync).
+To prevent data corruption and ensure compatibility with the providers' APIs, the plugin includes a remote versioning system. This applies to the plugin as a whole (StoryGraph, Hardcover, Goodreads, Fable, and Pagebound sync).
 
 - **Automatic Checks**: The plugin periodically checks for mandatory updates via GitHub. If the StoryGraph API changes in a way that breaks older versions, the plugin will automatically disable sync to prevent errors.
 - **Blocking**: When a mandatory update is required, the plugin menus will be greyed out.

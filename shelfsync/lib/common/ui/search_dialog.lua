@@ -59,6 +59,7 @@ function BookSearchDialog:createListItem(book, active_item)
     mandatory_dim = true,
     file = "book-" .. book.book_id,
     book_id = book.book_id,
+    book_uuid = book.book_uuid or book.uuid,
     edition_format = book.edition_format,
     highlight = active,
   }

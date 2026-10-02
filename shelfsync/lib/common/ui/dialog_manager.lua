@@ -19,16 +19,6 @@ function DialogManager:new(o)
   return setmetatable(o or {}, self)
 end
 
-local function mapJournalData(data)
-  return {
-    book_id = data.book_id,
-    entry = data.text,
-    progress = data.progress,
-    progress_type = data.progress_type or "percentage",
-    date = data.date
-  }
-end
-
 function DialogManager:buildSearchDialog(title, items, active_item, book_callback, search_callback, search)
   local callback = function(book)
     self.search_dialog:onClose()
@@ -177,35 +167,44 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
     input_box_height = 250,
     label = self.label,
     book_id = settings.book_id,
+    edition_id = settings.edition_id,
     page = initial_percent,
     remote_page = remote_pages,
     remote_percent = remote_percent,
     progress_type = sync_by_pages and "pages" or "percentage",
+    event_type = event_type or "note",
     page_mapper = self.page_mapper,
     save_dialog_callback = function(book_data)
-      local api_data = mapJournalData(book_data)
       local saving_msg = InfoMessage:new{
         text = _("Saving progress to " .. self.label .. "..."),
       }
       UIManager:show(saving_msg)
 
       UIManager:scheduleIn(0.1, function()
-        local result = self.api:createJournalEntry(api_data)
-        UIManager:close(saving_msg)
-        
-        if result then
-          UIManager:close(dialog)
-          UIManager:setDirty(nil, "full")
+        -- Scheduled UI callbacks aren't inside the Trapper coroutine that
+        -- dismissableRunInSubprocess() needs for provider network requests.
+        Trapper:wrap(function()
+          local result, err = self.api:createJournalEntry(book_data)
+          UIManager:close(saving_msg)
 
-          if wifi_was_off then
-            UIManager:nextTick(function()
-              self.wifi:wifiDisablePrompt()
-            end)
+          if result then
+            UIManager:close(dialog)
+            UIManager:setDirty(nil, "full")
+
+            if err then
+              self:showError(err)
+            end
+
+            if wifi_was_off then
+              UIManager:nextTick(function()
+                self.wifi:wifiDisablePrompt()
+              end)
+            end
+          else
+            self:showError(err or _("Failed to update " .. self.label))
+            UIManager:setDirty(nil, "full")
           end
-        else
-          self:showError(_("Failed to update " .. self.label))
-          UIManager:setDirty(nil, "full")
-        end
+        end)
       end)
     end,
 

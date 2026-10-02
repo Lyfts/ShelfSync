@@ -66,6 +66,9 @@ Settings.GOODREADS = {
 
 Settings.HARDCOVER = {
   API_TOKEN = "api_token",
+  ACCESS_TOKEN = "oauth_access_token",
+  REFRESH_TOKEN = "oauth_refresh_token",
+  TOKEN_EXPIRES_AT = "oauth_token_expires_at",
 }
 
 Settings.FABLE = {
@@ -77,6 +80,16 @@ Settings.FABLE = {
   -- refresh token itself dies (see fable/api.lua's request()). Encrypted at
   -- rest via crypto_util when libcrypto is available (PASSWORD_ENC), else
   -- stored raw in PASSWORD_PLAIN -- exactly one of the two is ever set.
+  PASSWORD_ENC = "password_enc",
+  PASSWORD_PLAIN = "password_plain",
+}
+
+Settings.PAGEBOUND = {
+  EMAIL = "email",
+  FIREBASE_ID_TOKEN = "firebase_id_token",
+  REFRESH_TOKEN = "refresh_token",
+  TOKEN_EXPIRES_AT = "token_expires_at",
+  API_TOKEN = "api_token",
   PASSWORD_ENC = "password_enc",
   PASSWORD_PLAIN = "password_plain",
 }

@@ -11,32 +11,48 @@ local InfoMessage = require("ui/widget/infomessage")
 
 local _t = require("shelfsync/lib/common/table_util")
 
-local FABLE = require("shelfsync/lib/fable/constants")
+local PAGEBOUND = require("shelfsync/lib/pagebound/constants")
 local ICON = require("shelfsync/lib/common/constants/icons")
 local SETTING = require("shelfsync/lib/common/constants/settings")
 
-local FableMenu = {}
-FableMenu.__index = FableMenu
+local PageboundMenu = {}
+PageboundMenu.__index = PageboundMenu
 
-function FableMenu:new(o)
+function PageboundMenu:new(o)
   return setmetatable(o or {
     enabled = true
   }, self)
 end
 
-function FableMenu:isActive()
+function PageboundMenu:isActive()
   return self.settings:providerEnabled()
     and self.api:hasCredential()
     and (self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true)
 end
 
-function FableMenu:mainMenu()
+function PageboundMenu:trackingDisabledReason()
+  if not self.settings:providerEnabled() then
+    return _("enable Pagebound first")
+  end
+  if not self.api:hasCredential() then
+    return _("log in first")
+  end
+  if not self.enabled and self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) ~= true then
+    return _("update ShelfSync to continue")
+  end
+  if not self.settings:bookLinked() then
+    return _("link this book first")
+  end
+  return nil
+end
+
+function PageboundMenu:mainMenu()
   return {
     enabled_func = function()
       return true
     end,
     text_func = function()
-      return self.settings:bookLinked() and _("Fable: " .. ICON.LINK) or _("Fable")
+      return self.settings:bookLinked() and _("Pagebound: " .. ICON.LINK) or _("Pagebound")
     end,
     sub_item_table_func = function()
       local has_book = self.ui.document and true or false
@@ -45,7 +61,7 @@ function FableMenu:mainMenu()
   }
 end
 
-function FableMenu:getSubMenuItems(book_view)
+function PageboundMenu:getSubMenuItems(book_view)
   local menu_items = {
     {
       text = _("Enabled"),
@@ -77,7 +93,7 @@ function FableMenu:getSubMenuItems(book_view)
           self.settings:updateBookSetting(
             self.ui.document.file,
             {
-              _delete = { 'book_id', 'pages', 'title' }
+              _delete = { 'book_id', 'book_uuid', 'pages', 'title' }
             }
           )
 
@@ -92,14 +108,20 @@ function FableMenu:getSubMenuItems(book_view)
 
         local force_search = self.settings:bookLinked()
 
-        self.fable:showLinkBookDialog(force_search, function()
+        self.pagebound:showLinkBookDialog(force_search, function()
           menu_instance:updateItems()
         end)
       end,
       separator = true
     },
     book_view and {
-      text = _("Automatically track progress"),
+      text_func = function()
+        local reason = self:trackingDisabledReason()
+        if reason then
+          return T(_("Automatically track progress (%1)"), reason)
+        end
+        return _("Automatically track progress")
+      end,
       checked_func = function()
         return self.settings:syncEnabled()
       end,
@@ -129,7 +151,7 @@ function FableMenu:getSubMenuItems(book_view)
         return self:isActive() and self.settings:bookLinked()
       end,
       callback = function()
-        UIManager:broadcastEvent(Event:new("FablePullPosition"))
+        UIManager:broadcastEvent(Event:new("PageboundPullPosition"))
       end,
       separator = true
     },
@@ -146,20 +168,18 @@ function FableMenu:getSubMenuItems(book_view)
 end
 
 -- Builds a radio menu item that marks the current book with `status_id` on
--- Fable (after confirmation), used for every entry in the status list below
--- except "Remove", which has no status_id of its own to set. Unlike
--- Goodreads/Hardcover, there's no Paused entry, since Fable has no "paused"
--- system list to shelve it on (confirmed via HAR, see fable/constants.lua's
--- SYSTEM_TYPE).
-function FableMenu:_statusMenuItem(icon, status_id)
+-- Pagebound (after confirmation), used for every entry in the status list below
+-- except "Remove", which has no status_id of its own to set. Pagebound uses
+-- its own current/interested/finished/paused/dnf status strings.
+function PageboundMenu:_statusMenuItem(icon, status_id)
   return {
-    text = _(icon .. " " .. FABLE.STATUS_NAME[status_id]),
+    text = _(icon .. " " .. PAGEBOUND.STATUS_NAME[status_id]),
     checked_func = function()
       return self.state.book_status.status_id == status_id
     end,
     callback = function(menu_instance)
       self.dialog_manager:maybeConfirm({
-        text = ("Mark book as %s?"):format(FABLE.STATUS_NAME[status_id]),
+        text = ("Mark book as %s?"):format(PAGEBOUND.STATUS_NAME[status_id]),
         ok_callback = function()
           self.cache:updateBookStatus(self.ui.document.file, status_id)
           menu_instance.item_table = self:getStatusSubMenuItems()
@@ -174,12 +194,13 @@ function FableMenu:_statusMenuItem(icon, status_id)
   }
 end
 
-function FableMenu:getStatusSubMenuItems()
+function PageboundMenu:getStatusSubMenuItems()
   local items = {
-    self:_statusMenuItem(ICON.BOOKMARK, FABLE.STATUS.TO_READ),
-    self:_statusMenuItem(ICON.OPEN_BOOK, FABLE.STATUS.READING),
-    self:_statusMenuItem(ICON.CHECKMARK, FABLE.STATUS.FINISHED),
-    self:_statusMenuItem(ICON.STOP_CIRCLE, FABLE.STATUS.DNF),
+    self:_statusMenuItem(ICON.BOOKMARK, PAGEBOUND.STATUS.TO_READ),
+    self:_statusMenuItem(ICON.OPEN_BOOK, PAGEBOUND.STATUS.READING),
+    self:_statusMenuItem(ICON.CHECKMARK, PAGEBOUND.STATUS.FINISHED),
+    self:_statusMenuItem(ICON.PAUSE, PAGEBOUND.STATUS.PAUSED),
+    self:_statusMenuItem(ICON.STOP_CIRCLE, PAGEBOUND.STATUS.DNF),
     {
       text = _(ICON.TRASH .. " Remove"),
       enabled_func = function()
@@ -204,8 +225,8 @@ function FableMenu:getStatusSubMenuItems()
 
   local status = self.state.book_status.status_id
 
-  -- Update progress: only when NOT read, DNF, or want to read
-  if status and status ~= FABLE.STATUS.FINISHED and status ~= FABLE.STATUS.DNF and status ~= FABLE.STATUS.TO_READ then
+  -- Progress updates are available only during an active reading session.
+  if status == PAGEBOUND.STATUS.READING then
     table.insert(items, {
       text_func = function()
         local current_page = self.ui:getCurrentPage()
@@ -213,15 +234,15 @@ function FableMenu:getStatusSubMenuItems()
         local remote_pages = self.settings:pages()
         if self.settings:syncByRemotePages() then
           local mapped_page = self.page_mapper:getMappedPage(current_page, total_pages, remote_pages)
-          return T(_("Update progress: Page %1 / %2"), mapped_page, remote_pages or "?")
+          return T(_("Update progress or add forum note: Page %1 / %2"), mapped_page, remote_pages or "?")
         else
           local current_percent = math.floor((current_page / total_pages) * 100 + 0.5)
-          return T(_("Update progress: %1%"), current_percent)
+          return T(_("Update progress or add forum note: %1%"), current_percent)
         end
       end,
       callback = function()
         local current_page = self.ui:getCurrentPage()
-        local remote_percent = self.fable:getRemotePercent(self.state.book_status) or 0
+        local remote_percent = self.pagebound:getRemotePercent(self.state.book_status) or 0
 
         self.dialog_manager:journalEntryForm(
           "",
@@ -240,34 +261,32 @@ function FableMenu:getStatusSubMenuItems()
   return items
 end
 
-function FableMenu:getAuthSubMenuItems()
+function PageboundMenu:getAuthSubMenuItems()
   return {
     {
-      text = _("How Fable login works"),
+      text = _("How Pagebound login works"),
       keep_menu_open = true,
       callback = function()
         UIManager:show(InfoMessage:new {
-          text = _([[This plugin logs in directly with your Fable email and password using Firebase authentication.
-
-The access/refresh token pair Fable's own login returns (the same thing its official app keeps) refreshes itself automatically from then on. Your password is also cached on this device -- encrypted at rest where possible -- so that if the refresh token itself ever dies, the plugin can silently log back in instead of asking you to retype it. If you change your Fable password, just log in again here once; "Log out" below clears everything this plugin has cached.]]),
+          text = _([[This plugin signs in with your Pagebound email and password through Firebase, then exchanges that session for a Pagebound API token. Firebase refresh tokens renew automatically. Your password is cached on this device -- encrypted at rest where possible -- so the plugin can re-authenticate if the refresh token stops working. If you change your Pagebound password, log in again here; "Log out" clears the credentials cached by this plugin.]]),
         })
       end,
       separator = true,
     },
     {
       text_func = function()
-        local email = self.settings:readSetting(SETTING.FABLE.EMAIL)
-        return (email and email ~= "") and _("Logged in as: " .. email) or _("Log in")
+        local email = self.settings:readSetting(SETTING.PAGEBOUND.EMAIL)
+        return (email and email ~= "") and _("Saved account: " .. email) or _("Log in")
       end,
       keep_menu_open = true,
       callback = function(menu_instance)
         local MultiInputDialog = require("ui/widget/multiinputdialog")
         local dialog
         dialog = MultiInputDialog:new {
-          title = _("Fable Login"),
+          title = _("Pagebound Login"),
           fields = {
             {
-              text = self.settings:readSetting(SETTING.FABLE.EMAIL) or "",
+              text = self.settings:readSetting(SETTING.PAGEBOUND.EMAIL) or "",
               hint = _("Email"),
             },
             {
@@ -292,17 +311,27 @@ The access/refresh token pair Fable's own login returns (the same thing its offi
                   UIManager:close(dialog)
 
                   Trapper:wrap(function()
-                    local info = InfoMessage:new { text = _("Logging in to Fable...") }
-                    UIManager:show(info)
-                    local ok, err = self.api:login(email, password)
+                    local info
+                    local function showLoginStatus(text)
+                      if info then UIManager:close(info) end
+                      info = InfoMessage:new { text = text }
+                      UIManager:show(info)
+                    end
+
+                    showLoginStatus(_("Checking your Pagebound credentials..."))
+                    local ok, err = self.api:login(email, password, function(stage)
+                      if stage == "pagebound_exchange" then
+                        showLoginStatus(_("Connecting to Pagebound (the first connection can take a minute)..."))
+                      end
+                    end)
                     UIManager:close(info)
 
                     if ok then
                       menu_instance:updateItems()
-                      UIManager:show(InfoMessage:new { text = _("Logged in to Fable") })
+                      UIManager:show(InfoMessage:new { text = _("Logged in to Pagebound") })
                     else
                       UIManager:show(InfoMessage:new {
-                        text = _("Fable login failed: " .. (err or "unknown error")),
+                        text = _("Pagebound login failed: " .. (err or "unknown error")),
                         icon = "notice-warning",
                       })
                     end
@@ -324,14 +353,15 @@ The access/refresh token pair Fable's own login returns (the same thing its offi
       keep_menu_open = true,
       callback = function(menu_instance)
         self.dialog_manager:maybeConfirm({
-          text = _("Log out of Fable on this device?"),
+          text = _("Log out of Pagebound on this device?"),
           ok_callback = function()
-            self.settings:updateSetting(SETTING.FABLE.EMAIL, "")
-            self.settings:updateSetting(SETTING.FABLE.ID_TOKEN, "")
-            self.settings:updateSetting(SETTING.FABLE.REFRESH_TOKEN, "")
-            self.settings:updateSetting(SETTING.FABLE.TOKEN_EXPIRES_AT, 0)
-            self.settings:updateSetting(SETTING.FABLE.PASSWORD_ENC, "")
-            self.settings:updateSetting(SETTING.FABLE.PASSWORD_PLAIN, "")
+            self.settings:updateSetting(SETTING.PAGEBOUND.EMAIL, "")
+            self.settings:updateSetting(SETTING.PAGEBOUND.FIREBASE_ID_TOKEN, "")
+            self.settings:updateSetting(SETTING.PAGEBOUND.REFRESH_TOKEN, "")
+            self.settings:updateSetting(SETTING.PAGEBOUND.TOKEN_EXPIRES_AT, 0)
+            self.settings:updateSetting(SETTING.PAGEBOUND.API_TOKEN, "")
+            self.settings:updateSetting(SETTING.PAGEBOUND.PASSWORD_ENC, "")
+            self.settings:updateSetting(SETTING.PAGEBOUND.PASSWORD_PLAIN, "")
             menu_instance:updateItems()
           end,
         })
@@ -340,4 +370,4 @@ The access/refresh token pair Fable's own login returns (the same thing its offi
   }
 end
 
-return FableMenu
+return PageboundMenu

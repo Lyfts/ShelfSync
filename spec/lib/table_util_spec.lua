@@ -26,6 +26,11 @@ describe("table_util", function()
       }
       assert.is_nil(table_util.dig(t, "a", "c", 3))
     end)
+
+    it("returns nil when the root or an intermediate value is not a table", function()
+      assert.is_nil(table_util.dig(nil, "error", "message"))
+      assert.is_nil(table_util.dig({ error = "offline" }, "error", "message"))
+    end)
   end)
 
   describe("map", function()

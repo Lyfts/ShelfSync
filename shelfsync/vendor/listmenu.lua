@@ -370,7 +370,7 @@ function ListMenuItem:update()
         self.been_opened = true
         self.menu:updateCache(self.filepath, nil, true, pages) -- create new cache entry if absent
         pages, percent_finished, status, has_highlight =
-        unpack(self.menu.cover_info_cache[self.filepath], 1, self.menu.cover_info_cache[self.filepath].n)
+        table.unpack(self.menu.cover_info_cache[self.filepath], 1, self.menu.cover_info_cache[self.filepath].n)
       end
       -- right widget, first line
       local directory, filename = util.splitFilePathName(self.filepath) -- luacheck: no unused
@@ -510,16 +510,16 @@ function ListMenuItem:update()
         -- can display them on multiple lines, but limit to 2, and
         -- append "et al." to the 2nd if there are more
         if authors and authors:find("\n") then
-          authors = util.splitToArray(authors, "\n")
-          for i=1, #authors do
-            authors[i] = BD.auto(authors[i])
+          local author_list = util.splitToArray(authors, "\n")
+          for i=1, #author_list do
+            author_list[i] = BD.auto(author_list[i])
           end
-          if #authors > 1 and bookinfo.series and series_mode == "series_in_separate_line" then
-            authors = { T(_("%1 et al."), authors[1]) }
-          elseif #authors > 2 then
-            authors = { authors[1], T(_("%1 et al."), authors[2]) }
+          if #author_list > 1 and bookinfo.series and series_mode == "series_in_separate_line" then
+            author_list = { T(_("%1 et al."), author_list[1]) }
+          elseif #author_list > 2 then
+            author_list = { author_list[1], T(_("%1 et al."), author_list[2]) }
           end
-          authors = table.concat(authors, "\n")
+          authors = table.concat(author_list, "\n")
           -- as we'll fit 3 lines instead of 2, we can avoid some loops by starting from a lower font size
           fontsize_title = _fontSize(17, 21)
           fontsize_authors = _fontSize(15, 19)

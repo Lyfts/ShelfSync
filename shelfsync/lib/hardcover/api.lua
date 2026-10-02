@@ -4,6 +4,7 @@ local logger = require("logger")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
 local json = require("json")
+local os = require("os")
 local _t = require("shelfsync/lib/common/table_util")
 local T = require("ffi/util").template
 local Trapper = require("ui/trapper")
@@ -15,24 +16,162 @@ local VERSION = require("shelfsync_version")
 
 local SETTING = require("shelfsync/lib/common/constants/settings")
 local HARDCOVER = require("shelfsync/lib/hardcover/constants")
+local OAuthClient = require("shelfsync/lib/hardcover/oauth_client")
 
 local api_url = "https://api.hardcover.app/v1/graphql"
+
+local function formatErrors(errors)
+  if type(errors) ~= "table" then
+    return tostring(errors or "unspecified GraphQL error")
+  end
+
+  local messages = {}
+  for _, item in ipairs(errors) do
+    local message
+    if type(item) == "table" then
+      message = item.message or item.error or "GraphQL error"
+      local code = item.extensions and item.extensions.code
+      if code then
+        message = tostring(message) .. " (code: " .. tostring(code) .. ")"
+      end
+    else
+      message = tostring(item)
+    end
+    -- Keep diagnostics readable and avoid multi-line or unbounded log entries.
+    message = tostring(message):gsub("[%c]", " ")
+    if #message > 500 then
+      message = message:sub(1, 500) .. "..."
+    end
+    table.insert(messages, message)
+  end
+
+  if #messages == 0 then
+    return "unspecified GraphQL error"
+  end
+  return table.concat(messages, "; ")
+end
+
+local function formatRequestError(err)
+  if type(err) == "string" then
+    return err
+  end
+  if type(err) ~= "table" then
+    return "no response or error details returned"
+  end
+
+  if err.errors then
+    return formatErrors(err.errors)
+  elseif err.parse_error then
+    return "could not decode API response: " .. tostring(err.parse_error)
+  elseif err.request_error then
+    return "request failed: " .. tostring(err.request_error)
+  elseif err.completed == false then
+    return "request subprocess did not complete"
+  end
+  return "no response or error details returned"
+end
+
+local function sortedPayloadFields(object)
+  local fields = {}
+  for key in pairs(type(object) == "table" and object or {}) do
+    table.insert(fields, tostring(key))
+  end
+  table.sort(fields)
+  return table.concat(fields, ",")
+end
+
+-- The journal dialog's shared data is intentionally provider-neutral. Hardcover
+-- stores notes, progress and dates in a different shape from StoryGraph's
+-- progress-with-note endpoint.
+local function mapJournalData(data, default_privacy_setting_id)
+  local object = {
+    book_id = tonumber(data.book_id),
+    event = data.event_type == "quote" and "quote" or "note",
+    entry = data.text or "",
+    edition_id = tonumber(data.edition_id),
+    privacy_setting_id = tonumber(data.privacy_setting_id)
+      or tonumber(default_privacy_setting_id)
+      or 1,
+    -- The API requires tags even when the reader has not supplied any.
+    tags = json.util.InitArray({}),
+  }
+
+  local date = data.date
+  if type(date) == "table" and date.year and date.month and date.day then
+    object.action_at = string.format("%04d-%02d-%02d", date.year, date.month, date.day)
+  end
+
+  -- Hardcover stores a page position in metadata.position. Convert percentage
+  -- progress to the selected Hardcover edition's page count when available.
+  local value, possible
+  local remote_total_pages = tonumber(data.remote_total_pages)
+  if data.progress_type == "pages" then
+    value = tonumber(data.progress)
+    possible = remote_total_pages
+    if not possible or possible <= 0 then
+      value = tonumber(data.local_page)
+      possible = tonumber(data.local_total_pages)
+    end
+  else
+    local percent = tonumber(data.progress_percent or data.progress)
+    if percent and remote_total_pages and remote_total_pages > 0 then
+      value = math.floor((percent / 100) * remote_total_pages + 0.5)
+      possible = remote_total_pages
+    else
+      value = tonumber(data.local_page)
+      possible = tonumber(data.local_total_pages)
+    end
+  end
+
+  if value and possible and possible > 0 then
+    object.metadata = {
+      position = {
+        type = "pages",
+        value = math.max(0, math.min(math.floor(value + 0.5), math.floor(possible + 0.5))),
+        possible = math.floor(possible + 0.5),
+      },
+    }
+  end
+
+  return object
+end
 
 local HardcoverApi = {
   enabled = true,
   settings = nil, -- Injected by main.lua
 }
 
--- Private helper to build headers with the current API token
-local function get_headers(self)
+local function get_api_token(self)
   local token = ""
   if self.settings then
     token = self.settings:readSetting(SETTING.HARDCOVER.API_TOKEN)
   end
   if not token or token == "" then token = config.token or "" end
+  return token
+end
+
+function HardcoverApi:getAuthMethod()
+  if self.settings and self.settings:hasOAuthSession() then
+    return "oauth"
+  end
+  if get_api_token(self) ~= "" then
+    return "api_token"
+  end
+end
+
+-- OAuth wins whenever a session is active. The configured token (including
+-- the legacy config.lua value) remains the fallback when OAuth is signed out.
+local function get_headers(self)
+  local token
+  if self.settings and self.settings:hasOAuthSession() then
+    token = self.settings:readSetting(SETTING.HARDCOVER.ACCESS_TOKEN)
+  end
+  if not token or token == "" then
+    token = get_api_token(self)
+  end
 
   if token == "" then
-    logger.warn("Hardcover: No API token found!")
+    logger.warn("Hardcover: No OAuth session or API token found")
   end
 
   return {
@@ -43,16 +182,54 @@ local function get_headers(self)
   }
 end
 
--- Mirrors get_headers()'s token resolution (setting, then legacy config
--- fallback) so callers can check for a usable credential without triggering
--- a network request or the "no API token" warning log.
 function HardcoverApi:hasCredential()
-  local token = ""
-  if self.settings then
-    token = self.settings:readSetting(SETTING.HARDCOVER.API_TOKEN)
+  return self:getAuthMethod() ~= nil
+end
+
+function HardcoverApi:saveOAuthTokens(tokens)
+  if not self.settings or not tokens or not tokens.access_token then
+    return false
   end
-  if not token or token == "" then token = config.token or "" end
-  return token ~= ""
+  self.settings:saveOAuthTokens(tokens, true)
+  return true
+end
+
+function HardcoverApi:refreshOAuthToken()
+  if not self.settings then
+    return false, "No settings available"
+  end
+
+  local refresh_token = self.settings:readSetting(SETTING.HARDCOVER.REFRESH_TOKEN)
+  if not refresh_token or refresh_token == "" then
+    self.settings:clearOAuthSession()
+    return false, "rejected"
+  end
+
+  local tokens, err = OAuthClient:refresh(refresh_token)
+  if tokens then
+    self.settings:saveOAuthTokens(tokens, false)
+    return true
+  end
+  if err == "rejected" then
+    self.settings:clearOAuthSession()
+  end
+  return false, err
+end
+
+function HardcoverApi:logoutOAuth()
+  if not self.settings then
+    return
+  end
+
+  local access_token = self.settings:readSetting(SETTING.HARDCOVER.ACCESS_TOKEN)
+  local refresh_token = self.settings:readSetting(SETTING.HARDCOVER.REFRESH_TOKEN)
+  -- Clear local credentials even if Hardcover's revocation endpoint is
+  -- temporarily unavailable. Revoke both token types on a best-effort basis.
+  self.settings:clearOAuthSession()
+  Trapper:wrap(function()
+    OAuthClient:revoke(refresh_token, "refresh_token")
+    OAuthClient:revoke(access_token, "access_token")
+  end)
 end
 
 local book_fragment = [[
@@ -128,11 +305,37 @@ function HardcoverApi:me()
   return {}
 end
 
-function HardcoverApi:query(query, parameters)
-  if not NetworkManager:isConnected() or not self.enabled then
-    return
+local function graphQLErrorsAreAuthErrors(errors)
+  for _, item in ipairs(type(errors) == "table" and errors or {}) do
+    local message = type(item) == "table" and (item.message or item.error) or item
+    if message then
+      local normalized = tostring(message):lower()
+      if normalized:find(HARDCOVER.ERROR.JWT:lower(), 1, true)
+          or normalized:find(HARDCOVER.ERROR.TOKEN:lower(), 1, true)
+          or normalized:find("invalid_token", 1, true)
+          or normalized:find("invalid_grant", 1, true) then
+        return true
+      end
+    end
   end
+  return false
+end
 
+local function isAuthFailure(status_code, data)
+  if tonumber(status_code) == 401 then
+    return true
+  end
+  if type(data) ~= "table" then
+    return false
+  end
+  local oauth_error = tostring(data.error or ""):lower()
+  if oauth_error == "invalid_token" or oauth_error == "invalid_grant" then
+    return true
+  end
+  return graphQLErrorsAreAuthErrors(data.errors)
+end
+
+local function queryOnce(self, query, parameters, preserve_graphql_errors)
   -- Subprocess forking occasionally fails to complete on some devices (no
   -- network-level error, the fork itself just doesn't come back); one retry
   -- recovers most of these transient failures instead of failing outright.
@@ -144,37 +347,138 @@ function HardcoverApi:query(query, parameters)
     if completed then break end
   end
 
-  if completed and content then
-    local code, response = string.match(content, "^([^:]*):(.*)")
-    if string.find(code, "^%d%d%d") then
-      local data = json.decode(response, json.decode.simple)
-      if data.data then
-        return data.data
-      elseif data.errors or data.error then
-        local err = data.errors or { data.error }
-        self:notifyIfAuthError(err)
-
-        return nil, { errors = err }
-      end
-    else
-      return nil, { completed = false }
-    end
-  else
+  if not (completed and content) then
     return nil, { completed = completed }
   end
+
+  local code, response = string.match(content, "^([^:]*):(.*)")
+  local status_code = tonumber(code)
+  if not status_code then
+    return nil, {
+      completed = false,
+      request_error = code or "response did not include an HTTP status",
+    }
+  end
+  if status_code == 401 then
+    return nil, {
+      status_code = status_code,
+      auth_error = true,
+      request_error = "Hardcover rejected the current credential",
+    }
+  end
+
+  local decoded, data, decode_error = pcall(json.decode, response, json.decode.simple)
+  if not decoded or type(data) ~= "table" then
+    return nil, {
+      status_code = status_code,
+      parse_error = decoded and tostring(decode_error or "response was not a JSON object") or tostring(data),
+    }
+  end
+
+  local auth_error = isAuthFailure(status_code, data)
+  if data.data then
+    if preserve_graphql_errors and data.errors then
+      return data.data, {
+        errors = data.errors,
+        status_code = status_code,
+        auth_error = auth_error,
+      }
+    end
+    return data.data
+  elseif data.errors or data.error then
+    return nil, {
+      errors = data.errors or { data.error },
+      status_code = status_code,
+      auth_error = auth_error,
+    }
+  elseif auth_error then
+    return nil, {
+      status_code = status_code,
+      auth_error = true,
+      request_error = data.error_description or "Hardcover rejected the current credential",
+    }
+  elseif status_code < 200 or status_code >= 300 then
+    return nil, {
+      status_code = status_code,
+      request_error = "Hardcover returned HTTP " .. tostring(status_code),
+    }
+  end
+
+  return nil, {
+    status_code = status_code,
+    request_error = "GraphQL response contained neither data nor errors",
+  }
 end
 
--- Warn (once per cooldown) that the stored API token is invalid/expired
-function HardcoverApi:notifyIfAuthError(errors)
-  local is_auth_error = false
-  for _, e in ipairs(errors) do
-    local message = type(e) == "table" and (e.message or e.error) or e
-    if message and (message:find(HARDCOVER.ERROR.JWT, 1, true) or message:find(HARDCOVER.ERROR.TOKEN, 1, true)) then
-      is_auth_error = true
-      break
+function HardcoverApi:query(query, parameters, preserve_graphql_errors)
+  if not self.enabled or not NetworkManager:isConnected() then
+    return
+  end
+
+  local auth_method = self:getAuthMethod()
+  if not auth_method then
+    return nil, { request_error = "No Hardcover OAuth login or API token is configured" }
+  end
+
+  local refresh_attempted = false
+  if auth_method == "oauth" and self.settings:isOAuthTokenExpired() then
+    refresh_attempted = true
+    local refreshed, refresh_error = self:refreshOAuthToken()
+    if not refreshed then
+      if refresh_error == "rejected" then
+        auth_method = self:getAuthMethod()
+        if not auth_method then
+          local auth_error = { auth_error = true, request_error = "Hardcover OAuth login expired" }
+          self:notifyIfAuthError(auth_error)
+          return nil, auth_error
+        end
+      else
+        return nil, { request_error = "Could not refresh Hardcover OAuth login: " .. tostring(refresh_error) }
+      end
     end
   end
 
+  local result, err = queryOnce(self, query, parameters, preserve_graphql_errors)
+
+  -- If an OAuth access token is rejected, refresh it once. A definitive
+  -- rejection clears that session and retries with the configured API token
+  -- when present. Network failures during refresh preserve OAuth precedence.
+  if auth_method == "oauth" and err and err.auth_error then
+    if not refresh_attempted then
+      refresh_attempted = true
+      local refreshed, refresh_error = self:refreshOAuthToken()
+      if refreshed then
+        result, err = queryOnce(self, query, parameters, preserve_graphql_errors)
+      elseif refresh_error ~= "rejected" then
+        return nil, { request_error = "Could not refresh Hardcover OAuth login: " .. tostring(refresh_error) }
+      end
+    end
+
+    if err and err.auth_error then
+      if self.settings:hasOAuthSession() then
+        self.settings:clearOAuthSession()
+      end
+      if get_api_token(self) ~= "" then
+        result, err = queryOnce(self, query, parameters, preserve_graphql_errors)
+      end
+    end
+  end
+
+  if err and err.auth_error then
+    self:notifyIfAuthError(err)
+  end
+  return result, err
+end
+
+-- Notify once per cooldown when neither OAuth nor the API token can
+-- authenticate a request. The engine pauses syncing and shows account help.
+function HardcoverApi:notifyIfAuthError(error_info)
+  local is_auth_error = type(error_info) == "table"
+    and (error_info.auth_error == true or tonumber(error_info.status_code) == 401)
+  local errors = type(error_info) == "table" and (error_info.errors or error_info) or { error_info }
+  if not is_auth_error then
+    is_auth_error = graphQLErrorsAreAuthErrors(errors)
+  end
   if not is_auth_error then
     return
   end
@@ -228,7 +532,7 @@ function HardcoverApi:_query(query, parameters)
     logger.dbg("Hardcover: Request error", code, content)
   end
 
-  return code .. ':' .. content
+  return tostring(code or "unknown") .. ':' .. content
 end
 
 function HardcoverApi:hydrateBooks(ids, user_id)
@@ -347,6 +651,8 @@ function HardcoverApi:findEditions(book_id, user_id)
       if a.users_count ~= b.users_count then
         return a.users_count > b.users_count
       end
+
+      return false
     end)
   end
 
@@ -597,10 +903,11 @@ function HardcoverApi:updateUserBook(book_id, status_id, privacy_setting_id, edi
     edition_id = edition_id
   }
 
-  local result = self:query(query, { object = update_args })
+  local result, request_error = self:query(query, { object = update_args })
   if result and result.insert_user_book then
-    return result.insert_user_book.user_book
+    return result.insert_user_book.user_book, result.insert_user_book.error
   end
+  return nil, request_error
 end
 
 function HardcoverApi:updateRating(user_book_id, rating)
@@ -719,21 +1026,56 @@ function HardcoverApi:removeRead(user_book_id)
   end
 end
 
-function HardcoverApi:createJournalEntry(object)
+function HardcoverApi:createJournalEntry(dialog_data)
+  dialog_data = dialog_data or {}
+  local default_privacy_setting_id = self:me().account_privacy_setting_id
+  local object = mapJournalData(dialog_data, default_privacy_setting_id)
+
   local query = [[
     mutation InsertReadingJournalEntry($object: ReadingJournalCreateType!) {
       insert_reading_journal(object: $object) {
-        reading_journal {
-          id
-        }
+        errors
+        id
       }
     }
   ]]
 
-  local result = self:query(query, { object = object })
-  if result then
-    return result.insert_reading_journal.reading_journal
+  local result, request_error = self:query(query, { object = object }, true)
+  local inserted = result and result.insert_reading_journal
+  -- The mutation's ID confirms the write. Avoid selecting the nested
+  -- reading_journal row here, as that also requires permission to read journal
+  -- entries and is unnecessary for the caller to report success.
+  if inserted and inserted.id then
+    return inserted
   end
+
+  local details
+  if inserted and inserted.errors and #inserted.errors > 0 then
+    details = formatErrors(inserted.errors)
+  elseif request_error then
+    details = formatRequestError(request_error)
+  elseif result and not inserted then
+    details = "API response did not include insert_reading_journal"
+  elseif inserted then
+    details = "mutation returned no journal entry ID or error details"
+  elseif not self.enabled then
+    details = "request skipped because Hardcover sync is disabled"
+  elseif not NetworkManager:isConnected() then
+    details = "request skipped because the network is disconnected"
+  else
+    details = "no response or error details returned"
+  end
+
+  if type(request_error) == "table" and request_error.status_code then
+    details = "HTTP " .. tostring(request_error.status_code) .. ": " .. details
+  end
+
+  logger.warn("Hardcover: Reading-journal mutation failed: " .. details
+    .. " (payload fields=" .. sortedPayloadFields(object)
+    .. ", book_id_type=" .. type(type(object) == "table" and object.book_id)
+    .. ", entry_present=" .. tostring(type(object) == "table" and object.entry ~= nil) .. ")")
+
+  return nil, "Hardcover note sync failed; see the KOReader log for details."
 end
 
 return HardcoverApi

@@ -12,6 +12,38 @@ local Book = require("shelfsync/lib/common/book")
 local BaseProvider = require("shelfsync/lib/common/base_provider")
 local HARDCOVER = require("shelfsync/lib/hardcover/constants")
 
+local function formatApiError(err)
+  if type(err) == "string" then
+    return err
+  end
+  if type(err) ~= "table" then
+    return "no status returned"
+  end
+
+  local errors = err.errors
+  if type(errors) == "table" then
+    local messages = {}
+    for _, item in ipairs(errors) do
+      if type(item) == "table" then
+        table.insert(messages, tostring(item.message or item.error or "GraphQL error"))
+      else
+        table.insert(messages, tostring(item))
+      end
+    end
+    if #messages > 0 then
+      return table.concat(messages, "; ")
+    end
+  end
+
+  if err.message or err.error then
+    return tostring(err.message or err.error)
+  end
+  if err.completed == false then
+    return "request did not complete"
+  end
+  return "no status returned"
+end
+
 -- Unlike StoryGraph, Hardcover can start a brand new read session on demand
 -- (see pushProgress below), so SyncEngine shouldn't bail out of a page update
 -- just because there's no existing user_book_reads entry yet.
@@ -113,7 +145,10 @@ function Hardcover:linkBook(book)
   elseif book.book_id and not self.state.book_status.status_id then
     -- Auto-Add to Library if no status was found (mirrors StoryGraph:linkBook)
     logger.info("Hardcover: Book has no status, adding to Currently Reading automatically")
-    local added = self.api:updateUserBook(new_settings.book_id, HARDCOVER.STATUS.READING, nil, new_settings.edition_id)
+    -- Match the known-good manual status action's insert payload. The
+    -- selected edition remains in local settings and is sent with progress
+    -- updates.
+    local added, status_error = self.api:updateUserBook(new_settings.book_id, HARDCOVER.STATUS.READING)
     if added and added.status_id then
       self.state.book_status = added
     else
@@ -121,7 +156,7 @@ function Hardcover:linkBook(book)
       -- above), but without this the failure was completely silent -- the
       -- book would just sit unsynced until the status-mismatch warning
       -- eventually caught it much later, with no link back to the cause.
-      logger.warn("Hardcover: Failed to automatically mark book as Currently Reading on Hardcover")
+      logger.warn("Hardcover: Failed to automatically mark book as Currently Reading on Hardcover: " .. formatApiError(status_error))
       self.state.book_status = added or {}
       UIManager:show(InfoMessage:new {
         text = _("Linked, but couldn't automatically mark the book as Currently Reading on Hardcover. Use \"Update status\" to set it manually."),

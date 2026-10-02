@@ -87,14 +87,15 @@ function Fable:pushProgress(_current_read, value, update_type, filename)
     return nil, "No linked book found on Fable"
   end
 
-  local result = self.api:updateProgress(book_id, value, update_type)
+  local pages = update_type == "pages"
+    and self.settings:readBookSetting(filename, "pages")
+  local result = self.api:updateProgress(book_id, value, update_type, pages)
   if not result then
     return nil
   end
 
   local finished
   if update_type == "pages" then
-    local pages = self.settings:readBookSetting(filename, "pages")
     finished = pages and pages > 0 and value >= pages
   else
     finished = value >= 100

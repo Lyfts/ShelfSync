@@ -171,6 +171,7 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
     user = user,
     cache = cache,
     dialog_manager = dialog_manager,
+    page_mapper = page_mapper,
     settings = settings,
     state = state,
     ui = self.ui,
@@ -183,6 +184,7 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
     constants = provider.constants,
     highlight_menu_name = provider.highlight_menu_name,
     auth_setting_key = provider.auth_setting_key,
+    auth_setting_keys = provider.auth_setting_keys,
     api = provider.api,
     user = user,
     cache = cache,
@@ -315,7 +317,12 @@ function ShelfSyncApp:checkForUpdates()
     return
   end
 
-  self.engines.storygraph.wifi:withWifi(function()
+  self.engines.storygraph.wifi:withWifi(function(_wifi_enabled, wifi_error)
+    if wifi_error then
+      self.storygraph_settings:debugWarn("Update check skipped: network unavailable: " .. tostring(wifi_error))
+      return
+    end
+
     local Github = require("shelfsync/lib/common/github")
     local info = Github:fetchVersionInfo()
     if not info then return end
@@ -393,14 +400,25 @@ function ShelfSyncApp:onShelfSyncUpdateAllProgress()
   end
 
   local linked_engines = {}
+  local has_linked_provider = false
   for _, provider in ipairs(PROVIDERS) do
     local engine = self.engines[provider.key]
     if engine.settings:bookLinked() then
-      table.insert(linked_engines, engine)
+      has_linked_provider = true
+      if engine:isActive() then
+        table.insert(linked_engines, engine)
+      end
     end
   end
 
   if #linked_engines == 0 then
+    -- A book can remain linked to providers the user has disabled. In that
+    -- case the gesture should quietly do nothing instead of claiming that
+    -- the book has no links or surfacing per-provider failures.
+    if has_linked_provider then
+      return true
+    end
+
     UIManager:show(InfoMessage:new {
       text = _("Unable to update reading progress: Book has not been linked to any provider"),
       icon = "notice-warning",
@@ -408,12 +426,60 @@ function ShelfSyncApp:onShelfSyncUpdateAllProgress()
     return true
   end
 
+  local updated, failed = {}, {}
+  local syncing_providers = {}
+  for _, engine in ipairs(linked_engines) do
+    table.insert(syncing_providers, engine.label)
+  end
+
+  UIManager:show(InfoMessage:new {
+    text = _("Trying to sync progress to " .. table.concat(syncing_providers, ", ") .. "..."),
+    timeout = 3,
+  })
+
+  local function showSummary()
+    local messages = {}
+    if #updated > 0 then
+      table.insert(messages, _("Progress updated on " .. table.concat(updated, ", ")))
+    end
+
+    if #failed > 0 then
+      local failed_providers = {}
+      for _, failure in ipairs(failed) do
+        table.insert(failed_providers, failure.reason
+          and (failure.provider .. ": " .. failure.reason)
+          or failure.provider)
+      end
+      table.insert(messages, _("Unable to update reading progress on " .. table.concat(failed_providers, "; ")))
+    end
+
+    if #messages == 0 then
+      return
+    end
+
+    UIManager:show(InfoMessage:new {
+      text = table.concat(messages, "\n"),
+      icon = #failed > 0 and "notice-warning" or nil,
+      timeout = #failed == 0 and 3 or nil,
+    })
+  end
+
   local function updateNext(index)
     local engine = linked_engines[index]
     if engine then
-      engine:onUpdateProgress(function()
+      engine:onUpdateProgress(function(result, reason)
+        if result then
+          table.insert(updated, engine.label)
+        elseif engine:isActive() then
+          table.insert(failed, {
+            provider = engine.label,
+            reason = reason and tostring(reason),
+          })
+        end
         updateNext(index + 1)
-      end, true)
+      end, true, true)
+    else
+      showSummary()
     end
   end
   updateNext(1)

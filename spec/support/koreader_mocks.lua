@@ -11,8 +11,6 @@
 -- clock/queue/network state between tests.
 
 table.pack = table.pack or function(...) return { n = select("#", ...), ... } end
-table.unpack = table.unpack or unpack
-
 local LOG = {}
 local function log(...)
   local parts = {}
@@ -71,6 +69,23 @@ end
 
 function UIManager._addListener(fn) table.insert(listeners, fn) end
 
+-- Advance the fake clock through events up to an absolute time without
+-- draining later work. This lets specs inspect state while an async task is
+-- still in flight.
+function UIManager:_runUntil(until_time, max_steps)
+  max_steps = max_steps or 100000
+  local steps = 0
+  while #UIManager._task_queue > 0 and steps < max_steps do
+    local next_task = UIManager._task_queue[#UIManager._task_queue]
+    if next_task.time > until_time then break end
+    steps = steps + 1
+    local task = table.remove(UIManager._task_queue) -- last = earliest
+    Clock.now = math.max(Clock.now, task.time)
+    task.action(table.unpack(task.args))
+  end
+  Clock.now = math.max(Clock.now, until_time)
+end
+
 -- Drains the queue, advancing the fake clock to each task's scheduled time
 -- (so delays are respected but the test doesn't actually sleep).
 function UIManager:_runUntilIdle(max_steps)
@@ -121,22 +136,45 @@ _G.G_reader_settings = {
 
 ----------------------------------------------------------------------
 -- Fake Trapper: real one runs the func via a coroutine + xpcall, catching
--- errors. Test functions never yield, so a plain xpcall is faithful enough
--- while still catching runtime errors like the real one does. Set
+-- errors. A numeric coroutine.yield(delay) models an async subprocess wait;
+-- Trapper resumes it through the fake event loop after that delay. Set
 -- TRAPPER_RAISE=1 to let errors propagate raw (with traceback) for debugging
 -- instead of being swallowed and merely logged.
 ----------------------------------------------------------------------
-package.loaded["ui/trapper"] = {
-  wrap = function(_self, func)
-    if os.getenv("TRAPPER_RAISE") then
-      return func()
-    end
+local Trapper = { active_coroutines = {} }
+
+function Trapper:isWrapped()
+  local current = coroutine.running()
+  return current ~= nil and self.active_coroutines[current] == true
+end
+
+function Trapper:wrap(func)
+  local raise_errors = os.getenv("TRAPPER_RAISE")
+  local co = coroutine.create(function()
     local ok, err = xpcall(func, debug.traceback)
     if not ok then
+      if raise_errors then error(err) end
       log("[trapper] error in wrapped function:", err)
     end
-  end,
-}
+  end)
+  self.active_coroutines[co] = true
+
+  local function resume(...)
+    local ok, delay = coroutine.resume(co, ...)
+    if not ok then
+      self.active_coroutines[co] = nil
+      if raise_errors then error(delay) end
+      log("[trapper] error in wrapped coroutine:", delay)
+    elseif coroutine.status(co) == "dead" then
+      self.active_coroutines[co] = nil
+    else
+      UIManager:scheduleIn(type(delay) == "number" and delay or 0.1, resume)
+    end
+  end
+  resume()
+end
+
+package.loaded["ui/trapper"] = Trapper
 
 ----------------------------------------------------------------------
 -- Fake NetworkMgr: models isWifiOn() flipping true the instant the restore
@@ -149,6 +187,9 @@ local CONNECT_DELAY = 2 -- seconds for a simulated real wifi association
 local NetworkMgr = {
   _wifi_on = false,
   _connected = false,
+  _online = false,
+  _online_delay = 0,
+  _never_online = false,
   pending_connection = false,
   wifi_was_on = false,
 }
@@ -156,6 +197,8 @@ local NetworkMgr = {
 function NetworkMgr:isWifiOn() return self._wifi_on end
 
 function NetworkMgr:isConnected() return self._connected end
+
+function NetworkMgr:isOnline() return self._online end
 
 function NetworkMgr:restoreWifiAsync()
   log("[NetworkMgr] restoreWifiAsync() called at t=" .. Clock.now)
@@ -166,6 +209,12 @@ function NetworkMgr:restoreWifiAsync()
   UIManager:scheduleIn(CONNECT_DELAY, function()
     self._connected = true
     log("[NetworkMgr] actually connected at t=" .. Clock.now)
+    if not self._never_online then
+      UIManager:scheduleIn(self._online_delay, function()
+        self._online = true
+        log("[NetworkMgr] internet became available at t=" .. Clock.now)
+      end)
+    end
   end)
 end
 
@@ -182,7 +231,12 @@ function NetworkMgr:scheduleConnectivityCheck(callback)
   UIManager:scheduleIn(0.25, check, 1)
 end
 
-function NetworkMgr:turnOffWifi(cb) if cb then cb() end end
+function NetworkMgr:turnOffWifi(cb)
+  self._wifi_on = false
+  self._connected = false
+  self._online = false
+  if cb then cb() end
+end
 
 package.loaded["ui/network/manager"] = NetworkMgr
 
@@ -240,8 +294,12 @@ package.loaded["luasettings"] = {
 local function reset()
   Clock.now = 0
   UIManager._task_queue = {}
+  Trapper.active_coroutines = {}
   NetworkMgr._wifi_on = false
   NetworkMgr._connected = false
+  NetworkMgr._online = false
+  NetworkMgr._online_delay = 0
+  NetworkMgr._never_online = false
   NetworkMgr.pending_connection = false
   NetworkMgr.wifi_was_on = false
   for k in pairs(doc_settings_stores) do doc_settings_stores[k] = nil end

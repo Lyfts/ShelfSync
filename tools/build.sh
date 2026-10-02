@@ -17,7 +17,7 @@ ZIP_PATH="$BUILD_DIR/$PLUGIN_NAME.zip"
 # which also strips .github/ and .gitignore, not just .git/), plus `build/`
 # itself - already gitignored so `git ls-files` wouldn't pick it up anyway,
 # excluded explicitly here too as a safeguard.
-EXCLUDE_RE='(^|/)[^/]*\.git[^/]*(/|$)|(^|/)(spec|lua_modules|\.luarocks|tools|build)/|(^|/)(lua|luarocks|\.tool-versions|README\.md|CHANGELOG\.md|LICENSE)$|\.rockspec$'
+EXCLUDE_RE='(^|/)[^/]*\.git[^/]*(/|$)|(^|/)(spec|lua_modules|\.luarocks|tools|build)/|(^|/)(lua|luarocks|README\.md|CHANGELOG\.md|LICENSE)$|\.rockspec$'
 
 if ! command -v 7z >/dev/null 2>&1; then
   echo "error: 7z not found (install p7zip)" >&2

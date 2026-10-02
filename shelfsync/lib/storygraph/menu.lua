@@ -5,6 +5,7 @@ local T = require("ffi/util").template
 
 local Event = require("ui/event")
 local UIManager = require("ui/uimanager")
+local Trapper = require("ui/trapper")
 
 local InfoMessage = require("ui/widget/infomessage")
 local SpinWidget = require("ui/widget/spinwidget")
@@ -587,18 +588,77 @@ end
 function StoryGraphMenu:getAuthSubMenuItems()
   return {
     {
+      text = _("Log in"),
+      keep_menu_open = true,
+      callback = function()
+        local MultiInputDialog = require("ui/widget/multiinputdialog")
+        local dialog
+        dialog = MultiInputDialog:new {
+          title = _("StoryGraph Login"),
+          fields = {
+            {
+              text = "",
+              hint = _("Email"),
+            },
+            {
+              text = "",
+              hint = _("Password"),
+              text_type = "password",
+            },
+          },
+          buttons = {
+            {
+              {
+                text = _("Cancel"),
+                callback = function()
+                  UIManager:close(dialog)
+                end,
+              },
+              {
+                text = _("Log in"),
+                callback = function()
+                  local fields = dialog:getFields()
+                  local email, password = fields[1], fields[2]
+                  UIManager:close(dialog)
+
+                  Trapper:wrap(function()
+                    local info = InfoMessage:new { text = _("Logging in to StoryGraph...") }
+                    UIManager:show(info)
+                    local ok, err = self.api:login(email, password)
+                    UIManager:close(info)
+
+                    if ok then
+                      UIManager:show(InfoMessage:new { text = _("Logged in to StoryGraph") })
+                    else
+                      UIManager:show(InfoMessage:new {
+                        text = _("StoryGraph login failed: " .. (err or "unknown error")),
+                        icon = "notice-warning",
+                      })
+                    end
+                  end)
+                end,
+              },
+            },
+          },
+        }
+        UIManager:show(dialog)
+        dialog:onShowKeyboard()
+      end,
+    },
+
+    {
       text = _("How to get your cookies"),
       keep_menu_open = true,
       callback = function()
         UIManager:show(InfoMessage:new {
-          text = _([[StoryGraph has no login API, so this plugin reuses cookies from a real browser session.
+          text = _([[Use "Log in" above to sign in with your email and password. Your password is not stored. If StoryGraph blocks the login request, you can import cookies from a browser session instead.
 
 1. Log in to app.thestorygraph.com in a browser
 2. Open dev tools (F12) > Application/Storage tab > Cookies > app.thestorygraph.com
 3. Copy the value of '_storygraph_session' into "StoryGraph Session Cookie" below
 4. Copy the value of 'remember_user_token' into "StoryGraph Remember Token" below (only present if you ticked "Remember me" at login)
 
-The session cookie expires periodically (StoryGraph, not this plugin, decides when). You'll get a warning here when that happens - just repeat these steps.]]),
+The session cookie expires periodically (StoryGraph, not this plugin, decides when). You'll get a warning here when that happens - log in again or repeat these steps.]]),
         })
       end,
       separator = true,

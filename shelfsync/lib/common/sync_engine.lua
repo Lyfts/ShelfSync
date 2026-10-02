@@ -22,6 +22,7 @@ local InfoMessage = require("ui/widget/infomessage")
 local Notification = require("ui/widget/notification")
 
 local _t = require("shelfsync/lib/common/table_util")
+local Book = require("shelfsync/lib/common/book")
 local Scheduler = require("shelfsync/lib/common/scheduler")
 local throttle = require("shelfsync/lib/common/throttle")
 
@@ -48,9 +49,15 @@ function SyncEngine:_bookSettingChanged(setting, key)
 end
 
 function SyncEngine:isActive()
-  return self.settings:providerEnabled()
+  return not self:isWikipediaDocument()
+    and self.settings:providerEnabled()
     and self.api:hasCredential()
     and (self.enabled or self.plugin_settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true)
+end
+
+function SyncEngine:isWikipediaDocument()
+  return self.ui and self.ui.document
+    and Book:isWikipediaDocument(self.ui.document:getProps()) or false
 end
 
 function SyncEngine:disable()
@@ -102,7 +109,15 @@ function SyncEngine:onPullPosition()
     timeout = 3,
   })
 
-  self.wifi:withWifi(function()
+  self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+    if wifi_error then
+      UIManager:show(InfoMessage:new {
+        text = _("Could not fetch position from " .. self.label .. "."),
+        icon = "notice-warning",
+      })
+      return
+    end
+
     local status = self.api:findUserBook(book_id, self.user:getId())
     local remote_percent = status and self.provider:getRemotePercent(status)
     if not status or not remote_percent then
@@ -137,30 +152,45 @@ function SyncEngine:onPullPosition()
   end)
 end
 
-function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
+function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback, suppress_provider_feedback)
+  -- A provider may still be linked after it is disabled. Skip it silently
+  -- before showing gesture feedback or starting any status/progress request.
+  -- Keep the sequence moving if a caller is syncing multiple providers.
+  if not self:isActive() then
+    if completion_callback then
+      completion_callback(nil)
+    end
+    return
+  end
+
   if self.ui.document and self.settings:bookLinked() then
     local function finish(result, reason)
-      if result then
-        if gesture_feedback then
-          UIManager:show(InfoMessage:new {
-            text = _("Progress updated on " .. self.label),
-            timeout = 2,
-          })
+      if not result then
+        logger.warn("Unsuccessful updating page progress", self.ui.document.file, reason)
+      end
+
+      if not suppress_provider_feedback then
+        if result then
+          if gesture_feedback then
+            UIManager:show(InfoMessage:new {
+              text = _("Progress updated on " .. self.label),
+              timeout = 2,
+            })
+          else
+            UIManager:show(Notification:new {
+              text = _("Progress updated")
+            })
+          end
         else
-          UIManager:show(Notification:new {
-            text = _("Progress updated")
+          UIManager:show(InfoMessage:new {
+            text = gesture_feedback
+              and (reason
+                and _("Unable to update reading progress on " .. self.label .. ": " .. reason)
+                or _("Unable to update reading progress on " .. self.label))
+              or reason or _("Unable to update reading progress"),
+            icon = "notice-warning",
           })
         end
-      else
-        logger.warn("Unsuccessful updating page progress", self.ui.document.file, reason)
-        UIManager:show(InfoMessage:new {
-          text = gesture_feedback
-            and (reason
-              and _("Unable to update reading progress on " .. self.label .. ": " .. reason)
-              or _("Unable to update reading progress on " .. self.label))
-            or reason or _("Unable to update reading progress"),
-          icon = "notice-warning",
-        })
       end
       if completion_callback then
         completion_callback(result, reason)
@@ -171,7 +201,7 @@ function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
       self:updatePageNow(finish)
     end
 
-    if gesture_feedback then
+    if gesture_feedback and not suppress_provider_feedback then
       UIManager:show(InfoMessage:new {
         text = _("Trying to sync progress to " .. self.label .. "..."),
         timeout = 2,
@@ -185,16 +215,18 @@ function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
         and self:isActive()
         and self:syncFileUpdates(self.ui.document.file)
         and not self.state.book_status.status_id then
-      self.wifi:withWifi(function()
-        Trapper:wrap(function()
-          local err = self.cache:cacheUserBook()
-          self:registerHighlight()
-          if err then
-            finish(nil, _("Could not fetch book information from " .. self.label))
-          else
-            update()
-          end
-        end)
+      self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+        if wifi_error then
+          return finish(nil, wifi_error)
+        end
+
+        local err = self.cache:cacheUserBook()
+        self:registerHighlight()
+        if err then
+          finish(nil, _("Could not fetch book information from " .. self.label))
+        else
+          update()
+        end
       end)
     else
       update()
@@ -208,10 +240,12 @@ function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback)
     end
 
     local error_message = error and "Unable to update reading progress: " .. error or "Unable to update reading progress"
-    UIManager:show(InfoMessage:new {
-      text = error_message,
-      icon = "notice-warning",
-    })
+    if not suppress_provider_feedback then
+      UIManager:show(InfoMessage:new {
+        text = error_message,
+        icon = "notice-warning",
+      })
+    end
     if completion_callback then
       completion_callback(nil, error)
     end
@@ -305,14 +339,25 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
       self.state.process_page_turns = false
       self:registerHighlight()
     end
-  elseif field == self.auth_setting_key then
-    if change and change ~= "" and not self.enabled then
-      self.enabled = true
-      self.menu.enabled = true
-      self.api.last_auth_warning = nil
-      UIManager:show(Notification:new {
-        text = _(self.label .. " syncing re-enabled"),
-      })
+  else
+    local auth_setting_changed = field == self.auth_setting_key
+    if not auth_setting_changed then
+      for _, key in ipairs(self.auth_setting_keys or {}) do
+        if field == key then
+          auth_setting_changed = true
+          break
+        end
+      end
+    end
+    if auth_setting_changed then
+      if change and change ~= "" and not self.enabled then
+        self.enabled = true
+        self.menu.enabled = true
+        self.api.last_auth_warning = nil
+        UIManager:show(Notification:new {
+          text = _(self.label .. " syncing re-enabled"),
+        })
+      end
     end
   end
 end
@@ -348,7 +393,15 @@ function SyncEngine:warnStatusMismatch(filename)
     ok_text = _("Mark as Reading"),
     cancel_text = _("Ignore"),
     ok_callback = function()
-      self.wifi:withWifi(function()
+      self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+        if wifi_error then
+          UIManager:show(InfoMessage:new {
+            text = _("Failed to update status on " .. self.label),
+            icon = "notice-warning",
+          })
+          return
+        end
+
         self.cache:updateBookStatus(filename, self.constants.STATUS.READING)
         self:registerHighlight()
         if self.state.book_status.status_id == self.constants.STATUS.READING then
@@ -421,10 +474,13 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
   end
 
   local immediate_update = function()
-    self.wifi:withWifi(function()
-      -- withWifi may invoke this after an asynchronous restore, when any
-      -- Trapper wrapping the original event has already completed.
-      Trapper:wrap(update)
+    self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+      -- AutoWifi supplies the Trapper coroutine and keeps its Wi-Fi lease
+      -- until update (including its subprocess request) returns.
+      if wifi_error then
+        return bail(wifi_error)
+      end
+      update()
     end)
   end
 
@@ -562,6 +618,20 @@ function SyncEngine:onUpdatePos()
 end
 
 function SyncEngine:onReaderReady()
+  if self:isWikipediaDocument() then
+    self:cancelPendingUpdates()
+    Scheduler:clear()
+    self.state.read_cache_started = false
+    self.state.process_page_turns = false
+    self.state.book_status = {}
+    self.state.status_mismatch_warned = false
+    self.state.page = nil
+    self.state.page_map = nil
+    self.state.last_page = nil
+    self:registerHighlight()
+    return
+  end
+
   self.page_mapper:cachePageMap()
   self:registerHighlight()
   self.state.page = self.ui:getCurrentPage()
@@ -674,21 +744,16 @@ function SyncEngine:onEndOfBook()
     return
   end
 
-  local mark_read = false
-  if G_reader_settings:isTrue("end_document_auto_mark") then
-    mark_read = true
-  end
+  local mark_read = G_reader_settings:isTrue("end_document_auto_mark")
+  local mark_read_later = false
 
   if not mark_read then
     local action = G_reader_settings:readSetting("end_document_action") or "pop-up"
     mark_read = action == "mark_read"
-
-    if action == "pop-up" then
-      mark_read = 'later'
-    end
+    mark_read_later = action == "pop-up"
   end
 
-  if not mark_read then
+  if not mark_read and not mark_read_later then
     return
   end
 
@@ -696,7 +761,7 @@ function SyncEngine:onEndOfBook()
     self.cache:updateBookStatus(file_path, self.constants.STATUS.FINISHED)
   end
 
-  if mark_read == 'later' then
+  if mark_read_later then
     UIManager:scheduleIn(30, function()
       local status = "reading"
       if DocSettings:hasSidecarFile(file_path) then
@@ -706,13 +771,21 @@ function SyncEngine:onEndOfBook()
         end
       end
       if status == "complete" then
-        self.wifi:withWifi(function()
+        self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+          if wifi_error then
+            logger.warn(self.label .. ": could not mark book as finished: " .. tostring(wifi_error))
+            return
+          end
           marker()
         end)
       end
     end)
   else
-    self.wifi:withWifi(function()
+    self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+      if wifi_error then
+        logger.warn(self.label .. ": could not mark book as finished: " .. tostring(wifi_error))
+        return
+      end
       marker()
       UIManager:show(InfoMessage:new {
         text = _(self.label .. " status saved"),
@@ -739,7 +812,11 @@ function SyncEngine:onDocSettingsItemsChanged(file, doc_settings)
   end
 
   if status then
-    self.wifi:withWifi(function()
+    self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+      if wifi_error then
+        logger.warn(self.label .. ": could not update book status: " .. tostring(wifi_error))
+        return
+      end
       self.cache:updateBookStatus(file, status)
 
       UIManager:show(InfoMessage:new {
@@ -788,73 +865,78 @@ function SyncEngine:startReadCache()
           -- fail, but cancel retries
           return success()
         end
-        local book_settings = self.settings:readBookSettings(self.ui.document.file) or {}
+        local document = self.ui.document
+        local filename = document.file
+        local book_settings = self.settings:readBookSettings(filename) or {}
         if book_settings.book_id then
           if self.state.book_status.id then
             return success()
           else
-            self.wifi:withWifi(function()
-              if not NetworkManager:isConnected() then
-                return restart()
+            self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+              -- Wi-Fi restoration can take long enough for the reader to
+              -- close this book or open another one. Don't let a stale cache
+              -- request act on the new document (or on no document at all).
+              if self.ui.document ~= document then
+                return
               end
 
-              -- withWifi's callback fires asynchronously (after
-              -- NetworkMgr:scheduleConnectivityCheck completes) whenever a
-              -- wifi restore is needed, well after the outer Trapper:wrap()
-              -- coroutine above has already run to completion -- so
-              -- cacheUserBook()'s network call needs its own fresh wrap
-              -- here too, same reasoning as the dismissableRunInSubprocess()
-              -- call sites in dialog_manager.lua and base_provider.lua's
-              -- tryAutolink.
-              Trapper:wrap(function()
-                local err = self.cache:cacheUserBook()
-                self:registerHighlight()
-                logger.info(self.label .. ": startReadCache - cacheUserBook completed, status=" .. (self.state.book_status.status_id or "nil"))
-                if err then
-                  return fail(err)
+              if wifi_error then
+                return fail(wifi_error)
+              end
+
+              if not NetworkManager:isConnected() then
+                return fail("Network not connected")
+              end
+
+              -- AutoWifi wraps delayed callbacks in Trapper and holds the
+              -- shared Wi-Fi lease until cacheUserBook has returned.
+              local err = self.cache:cacheUserBook()
+              self:registerHighlight()
+              logger.info(self.label .. ": startReadCache - cacheUserBook completed, status=" .. (self.state.book_status.status_id or "nil"))
+              if err then
+                return fail(err)
+              end
+
+              -- A nil status_id here (fetched the book page fine, but found no
+              -- read-status on it) is usually a real, stable outcome -- e.g. the
+              -- book was removed from the user's shelves, or its status was
+              -- changed to something we don't render a badge for -- rather than a
+              -- fetch failure to retry indefinitely. But a single miss can also be
+              -- a one-off render/parse blip on an otherwise normal "Currently
+              -- Reading" book, so give it a couple of retries before accepting it
+              -- as final.
+              if not self.state.book_status.status_id then
+                if nil_status_attempts < max_nil_status_attempts then
+                  nil_status_attempts = nil_status_attempts + 1
+                  self.state.book_status = {}
+                  return fail("No read status found for book, retrying")
                 end
 
-                -- A nil status_id here (fetched the book page fine, but found no
-                -- read-status on it) is usually a real, stable outcome -- e.g. the
-                -- book was removed from the user's shelves, or its status was
-                -- changed to something we don't render a badge for -- rather than a
-                -- fetch failure to retry indefinitely. But a single miss can also be
-                -- a one-off render/parse blip on an otherwise normal "Currently
-                -- Reading" book, so give it a couple of retries before accepting it
-                -- as final.
-                if not self.state.book_status.status_id then
-                  if nil_status_attempts < max_nil_status_attempts then
-                    nil_status_attempts = nil_status_attempts + 1
-                    self.state.book_status = {}
-                    return fail("No read status found for book, retrying")
-                  end
-
-                  -- Still genuinely no status after retrying: mirror linkBook()'s
-                  -- behavior for a freshly-linked book with no status, and add it
-                  -- as Currently Reading automatically here too, rather than only
-                  -- ever asking the user to fix it via warnStatusMismatch.
-                  logger.info(self.label .. ": Already-linked book has no status, adding to Currently Reading automatically")
-                  local added = self.api:updateUserBook(book_settings.book_id, self.constants.STATUS.READING)
-                  if added and added.status_id then
-                    self.state.book_status = added
-                  elseif auto_add_attempts < max_auto_add_attempts then
-                    -- The write itself can fail transiently (e.g. a momentary
-                    -- network hiccup) just as easily as the read above did --
-                    -- give it the same kind of retry instead of giving up after
-                    -- a single attempt.
-                    auto_add_attempts = auto_add_attempts + 1
-                    self.state.book_status = {}
-                    return fail("Failed to auto-mark book as Currently Reading, retrying")
-                  end
-                  -- Still no status after retrying the write too: fall through
-                  -- to success() with an empty book_status. warnStatusMismatch
-                  -- (from _handlePageUpdate) remains the safety net to let the
-                  -- user fix it manually.
+                -- Still genuinely no status after retrying: mirror linkBook()'s
+                -- behavior for a freshly-linked book with no status, and add it
+                -- as Currently Reading automatically here too, rather than only
+                -- ever asking the user to fix it via warnStatusMismatch.
+                logger.info(self.label .. ": Already-linked book has no status, adding to Currently Reading automatically")
+                local added = self.api:updateUserBook(book_settings.book_id, self.constants.STATUS.READING)
+                if added and added.status_id then
+                  self.state.book_status = added
+                elseif auto_add_attempts < max_auto_add_attempts then
+                  -- The write itself can fail transiently (e.g. a momentary
+                  -- network hiccup) just as easily as the read above did --
+                  -- give it the same kind of retry instead of giving up after
+                  -- a single attempt.
+                  auto_add_attempts = auto_add_attempts + 1
+                  self.state.book_status = {}
+                  return fail("Failed to auto-mark book as Currently Reading, retrying")
                 end
+                -- Still no status after retrying the write too: fall through
+                -- to success() with an empty book_status. warnStatusMismatch
+                -- (from _handlePageUpdate) remains the safety net to let the
+                -- user fix it manually.
+              end
 
-                success()
-                self:registerHighlight() -- redundant but safe
-              end)
+              success()
+              self:registerHighlight() -- redundant but safe
             end)
           end
         else
@@ -894,6 +976,7 @@ function SyncEngine:startReadCache()
     end,
 
     function()
+      self.state.read_cache_started = false
       if NetworkManager:isConnected() then
         UIManager:show(Notification:new {
           text = _("Failed to fetch book information from " .. self.label),
@@ -903,9 +986,16 @@ function SyncEngine:startReadCache()
 end
 
 function SyncEngine:registerHighlight()
+  -- Provider settings can be changed from KOReader's file browser, where the
+  -- reader-only highlight module has not been loaded yet. Reader lifecycle
+  -- callbacks will register the action once the book is opened.
+  if not self.ui or not self.ui.highlight then
+    return
+  end
+
   self.ui.highlight:removeFromHighlightDialog(self.highlight_menu_name)
 
-  if self.settings:bookLinked() then
+  if self.settings:bookLinked() and not self:isWikipediaDocument() then
     self.ui.highlight:addToHighlightDialog(self.highlight_menu_name, function(this)
       return {
         text_func = function()

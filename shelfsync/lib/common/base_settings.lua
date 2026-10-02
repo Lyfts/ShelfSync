@@ -246,14 +246,15 @@ end
 
 -- Preferred order for picking a page count when a book is linked on more
 -- than one provider: Hardcover exposes a real edition-level page count (the
--- most precise), Fable's is also edition-level but resolved via a heuristic
--- match rather than an explicit user pick (see fable/provider.lua's
--- linkBook), StoryGraph's is book-level but still first-party, and
+-- most precise), StoryGraph's is book-level but still first-party, Fable's is
+-- also edition-level but resolved via a heuristic match rather than an
+-- explicit user pick (see fable/provider.lua's linkBook), Pagebound's is
+-- book-level, and
 -- Goodreads' is scraped off a page it doesn't always successfully fetch (see
 -- the 0-vs-nil handling in pages() below) -- so it's used only as a last
 -- resort. Matches each settings class's sidecar_key (see storygraph/
--- hardcover/goodreads/fable settings.lua).
-local PAGE_COUNT_PROVIDERS = { "hardcover", "fable", "storygraph", "goodreads" }
+-- hardcover/goodreads/fable/pagebound settings.lua).
+local PAGE_COUNT_PROVIDERS = { "hardcover", "storygraph", "fable", "pagebound", "goodreads" }
 
 -- Reads a *different* provider's "pages" book setting directly off the
 -- sidecar, bypassing this instance's own sidecar_key. Doesn't fall back to

@@ -25,6 +25,8 @@ local JournalDialog = InputDialog:extend {
   remote_percent = nil, -- initial remote percentage
   progress_type = "percentage",
   book_id = nil,
+  edition_id = nil,
+  event_type = "note",
   date = nil, -- table with day, month, year
 }
   
@@ -59,18 +61,49 @@ function JournalDialog:init()
   self.save_callback = function() 
     local remote_val = journal_self.remote_percent or 0
     local current_pct
+    local total_local_pages = journal_self.page_mapper.ui.document:getPageCount()
+    local local_page
+    local remote_page
     if journal_self.progress_type == "percentage" then
       current_pct = journal_self.page
+      if total_local_pages and total_local_pages > 0 then
+        local_page = math.floor((journal_self.page / 100) * total_local_pages + 0.5)
+      end
     else
-      local total_remote = journal_self.remote_page or 1
-      current_pct = math.floor((journal_self.page / total_remote) * 100 + 0.5)
+      local total_remote = tonumber(journal_self.remote_page)
+      if total_remote and total_remote > 0 then
+        current_pct = math.floor((journal_self.page / total_remote) * 100 + 0.5)
+        if total_local_pages and total_local_pages > 0 then
+          local_page = journal_self.page_mapper:getUnmappedPage(
+            journal_self.page, total_local_pages, total_remote
+          )
+        end
+      else
+        local_page = journal_self.page_mapper.ui:getCurrentPage()
+        current_pct = total_local_pages and total_local_pages > 0
+          and math.floor((local_page / total_local_pages) * 100 + 0.5) or 0
+      end
+    end
+    if journal_self.progress_type == "pages" then
+      remote_page = tonumber(journal_self.page)
+    elseif local_page and total_local_pages and total_local_pages > 0 then
+      remote_page = journal_self.page_mapper:getMappedPage(
+        local_page, total_local_pages, tonumber(journal_self.remote_page)
+      )
     end
 
     local save_data = {
       book_id = journal_self.book_id,
+      edition_id = journal_self.edition_id,
+      event_type = journal_self.event_type or "note",
       text = journal_self.note_input:getText(),
       progress = journal_self.page,
       progress_type = journal_self.progress_type,
+      progress_percent = current_pct,
+      remote_page = remote_page,
+      local_page = local_page,
+      local_total_pages = total_local_pages,
+      remote_total_pages = tonumber(journal_self.remote_page),
       date = journal_self.date
     }
 
@@ -207,11 +240,9 @@ function JournalDialog:init()
         title_text = _("Set date"),
         info_text = _("The date format is year, month, day."),
         callback = function(picker)
-          self.date = {
-            year = picker.year,
-            month = picker.month,
-            day = picker.day
-          }
+          self.date.year = picker.year
+          self.date.month = picker.month
+          self.date.day = picker.day
           self.date_button:setText(self.date_button.text_func(self), self.date_button.width)
         end
       }
