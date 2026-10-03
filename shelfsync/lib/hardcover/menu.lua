@@ -482,6 +482,8 @@ function HardcoverMenu:getAuthSubMenuItems()
           text = _([[Sign in with Hardcover using the device code shown by ShelfSync.
 OAuth is used whenever you are signed in. The API token below is used as a fallback when OAuth is signed out.
 
+After adding an OAuth permission, sign in again here so this device receives an updated grant.
+
 To use an API token instead, create one at hardcover.app/account/api and paste it below. The token remains on this device and can be regenerated from the same page.]]),
         })
       end,

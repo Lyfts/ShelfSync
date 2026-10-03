@@ -1,6 +1,7 @@
 local BaseSettings = require("shelfsync/lib/common/base_settings")
 local os = require("os")
 local SETTING = require("shelfsync/lib/common/constants/settings")
+local OAUTH = require("shelfsync/lib/hardcover/oauth_constants")
 
 local HardcoverSettings = setmetatable({}, { __index = BaseSettings })
 HardcoverSettings.__index = HardcoverSettings
@@ -64,6 +65,8 @@ function HardcoverSettings:saveOAuthTokens(tokens, identity_changed)
       os.time() + (tonumber(tokens.expires_in) or 0)
     )
   end
+  self:updateSetting(SETTING.HARDCOVER.OAUTH_SCOPE_REVISION, OAUTH.SCOPE_REVISION)
+  self:updateSetting(SETTING.HARDCOVER.OAUTH_SCOPE_NOTICE_PENDING, nil)
 end
 
 function HardcoverSettings:clearOAuthSession()
@@ -71,6 +74,14 @@ function HardcoverSettings:clearOAuthSession()
   self:updateSetting(SETTING.HARDCOVER.REFRESH_TOKEN, nil)
   self:updateSetting(SETTING.HARDCOVER.TOKEN_EXPIRES_AT, nil)
   self:updateSetting(SETTING.USER_ID, nil)
+end
+
+function HardcoverSettings:hasPendingOAuthScopeNotice()
+  return self:readSetting(SETTING.HARDCOVER.OAUTH_SCOPE_NOTICE_PENDING) == true
+end
+
+function HardcoverSettings:clearPendingOAuthScopeNotice()
+  self:updateSetting(SETTING.HARDCOVER.OAUTH_SCOPE_NOTICE_PENDING, nil)
 end
 
 return HardcoverSettings

@@ -5,6 +5,7 @@
 ## 1.5.0
 - Guard StoryGraph page parsing against invalid or out-of-range numeric values.
 - Add Hardcover OAuth device-code sign-in, based on [hardcoverapp.koplugin PR #70](https://github.com/Billiam/hardcoverapp.koplugin/pull/70). OAuth is used when signed in; the configured API token remains available as a fallback.
+- Prompt Hardcover OAuth users to sign in again after a requested-scope revision.
 - Confirm Hardcover journal writes using the mutation ID, without requiring journal-read access.
 - Redact credentials, search terms, and personal content from logs while retaining safe request and error diagnostics.
 - Prevent Goodreads session cookies from being sent if a request redirects to another host or an unencrypted URL.

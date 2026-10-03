@@ -17,6 +17,7 @@ local VERSION = require("shelfsync_version")
 local SETTING = require("shelfsync/lib/common/constants/settings")
 local HARDCOVER = require("shelfsync/lib/hardcover/constants")
 local OAuthClient = require("shelfsync/lib/hardcover/oauth_client")
+local OAUTH = require("shelfsync/lib/hardcover/oauth_constants")
 
 local api_url = "https://api.hardcover.app/v1/graphql"
 
@@ -203,6 +204,28 @@ function HardcoverApi:saveOAuthTokens(tokens)
   end
   self.settings:saveOAuthTokens(tokens, true)
   return true
+end
+
+-- Persist which OAuth scope set the saved grant covers. Increment
+-- OAUTH.SCOPE_REVISION when the requested scopes change; existing sessions
+-- are logged out once so the next sign-in grants the new permissions.
+function HardcoverApi:checkOAuthScopeRevision()
+  if not self.settings then
+    return false
+  end
+
+  local saved_revision = tonumber(self.settings:readSetting(SETTING.HARDCOVER.OAUTH_SCOPE_REVISION))
+  if saved_revision == OAUTH.SCOPE_REVISION then
+    return false
+  end
+
+  local had_oauth_session = self.settings:hasOAuthSession()
+  if had_oauth_session then
+    self:logoutOAuth()
+    self.settings:updateSetting(SETTING.HARDCOVER.OAUTH_SCOPE_NOTICE_PENDING, true)
+  end
+  self.settings:updateSetting(SETTING.HARDCOVER.OAUTH_SCOPE_REVISION, OAUTH.SCOPE_REVISION)
+  return had_oauth_session
 end
 
 function HardcoverApi:refreshOAuthToken()
@@ -943,6 +966,86 @@ function HardcoverApi:updateRating(user_book_id, rating)
   if result and result.update_user_book then
     return result.update_user_book.user_book
   end
+end
+
+-- Hardcover stores reviews as a Slate.js rich-text document (`review_slate`,
+-- jsonb); `review_raw`/`review` are read-only plain-text/HTML mirrors
+-- derived from it server-side, not writable input fields (confirmed against
+-- github.com/Billiam/hardcoverapp.koplugin PR #55). Splits on blank lines
+-- into one paragraph block per line, matching that reference implementation.
+local function paragraph_block(text)
+  return {
+    data = {},
+    type = "paragraph",
+    object = "block",
+    children = { { text = text, object = "text" } },
+  }
+end
+
+local function build_slate_document(plain_text)
+  if not plain_text or plain_text:match("^%s*$") then
+    return nil
+  end
+
+  local children = {}
+  local last_end = 1
+  while true do
+    local start_idx, end_idx = plain_text:find("\n\n", last_end, true)
+    if not start_idx then
+      local segment = plain_text:sub(last_end)
+      if not segment:match("^%s*$") then
+        table.insert(children, paragraph_block(segment))
+      end
+      break
+    end
+    local segment = plain_text:sub(last_end, start_idx - 1)
+    if not segment:match("^%s*$") then
+      table.insert(children, paragraph_block(segment))
+    end
+    last_end = end_idx + 1
+  end
+
+  return { document = { object = "document", children = children } }
+end
+
+-- Rating + review text in one mutation, for the unified Review menu.
+function HardcoverApi:updateReview(user_book_id, rating, review_text)
+  local declarations, fields = {}, {}
+  local variables = { id = user_book_id }
+  if rating ~= nil then
+    declarations[#declarations + 1] = "$rating: numeric"
+    fields[#fields + 1] = "rating: $rating"
+    variables.rating = rating == 0 and json.util.null or rating
+  end
+  if review_text ~= nil then
+    declarations[#declarations + 1] = "$review: jsonb"
+    fields[#fields + 1] = "review_slate: $review"
+    variables.review = build_slate_document(review_text) or json.util.null
+  end
+  if #fields == 0 then return nil, "No rating or review text supplied" end
+  local query = [[
+    mutation ($id: Int!, %s) {
+      update_user_book(id: $id, object: { %s }) {
+        error
+        user_book { ...UserBookParts }
+      }
+    }
+  ]]
+  query = query:format(table.concat(declarations, ", "), table.concat(fields, ", ")) .. user_book_fragment
+
+  local result, err = self:query(query, variables)
+  local updated = result and result.update_user_book
+  if updated and updated ~= json.util.null then
+    if updated.error and updated.error ~= json.util.null and updated.error ~= "" then
+      err = updated.error
+    elseif updated.user_book and updated.user_book ~= json.util.null and updated.user_book.id then
+      return updated.user_book
+    end
+  end
+  local reason = type(err) == "string" and err or (err and json.encode(err))
+    or "Hardcover returned no saved review"
+  logger.warn("Hardcover: updateReview failed - " .. reason)
+  return nil, reason
 end
 
 function HardcoverApi:removeRead(user_book_id)
