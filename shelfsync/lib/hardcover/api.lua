@@ -1,6 +1,6 @@
 local config_ok, shelfsync_config = pcall(require, "shelfsync_config")
 local config = (config_ok and shelfsync_config.hardcover) or {}
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
 local json = require("json")
@@ -50,6 +50,17 @@ local function formatErrors(errors)
     return "unspecified GraphQL error"
   end
   return table.concat(messages, "; ")
+end
+
+local function safeGraphQLErrorCodes(errors)
+  local codes = {}
+  for _, item in ipairs(type(errors) == "table" and errors or {}) do
+    local code = type(item) == "table" and item.extensions and item.extensions.code
+    if type(code) == "string" and #code <= 64 and code:match("^[%w_%-]+$") then
+      codes[#codes + 1] = code
+    end
+  end
+  return #codes > 0 and table.concat(codes, ",") or "none"
 end
 
 local function formatRequestError(err)
@@ -535,7 +546,7 @@ function HardcoverApi:_query(query, parameters)
     sink = socketutil.table_sink(sink),
   }
 
-  local _, code = http.request(request)
+  local _, code, response_headers = http.request(request)
   socketutil:reset_timeout()
 
   local content = table.concat(sink) -- empty or content accumulated till now
@@ -548,11 +559,13 @@ function HardcoverApi:_query(query, parameters)
   end
 
   if type(code) == "string" then
-    logger.dbg("Hardcover: Request error", code)
+    logger.dbg("Hardcover: Request failed; transport error length=" .. #code)
   end
 
   if type(code) == "number" and (code < 200 or code > 299) then
-    logger.dbg("Hardcover: Request error", code, content)
+    logger.dbg("Hardcover: Request error", code,
+      "content_type=" .. tostring(response_headers and response_headers["content-type"] or "unknown"),
+      "response_length=" .. #content)
   end
 
   return tostring(code or "unknown") .. ':' .. content
@@ -1093,12 +1106,18 @@ function HardcoverApi:createJournalEntry(dialog_data)
     details = "HTTP " .. tostring(request_error.status_code) .. ": " .. details
   end
 
-  logger.warn("Hardcover: Reading-journal mutation failed: " .. details
-    .. " (payload fields=" .. sortedPayloadFields(object)
+  local graph_errors = (inserted and inserted.errors)
+    or (type(request_error) == "table" and request_error.errors)
+  logger.warn("Hardcover: Reading-journal mutation failed (status_code="
+    .. tostring(type(request_error) == "table" and request_error.status_code or "unknown")
+    .. ", error_count=" .. tostring(type(graph_errors) == "table" and #graph_errors or 0)
+    .. ", error_codes=" .. safeGraphQLErrorCodes(graph_errors)
+    .. ", details_length=" .. #details
+    .. ", payload fields=" .. sortedPayloadFields(object)
     .. ", book_id_type=" .. type(type(object) == "table" and object.book_id)
     .. ", entry_present=" .. tostring(type(object) == "table" and object.entry ~= nil) .. ")")
 
-  return nil, "Hardcover note sync failed; see the KOReader log for details."
+  return nil, "Hardcover note sync failed; see the KOReader log for status and error codes."
 end
 
 return HardcoverApi

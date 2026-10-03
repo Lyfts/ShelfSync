@@ -25,7 +25,7 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local filemanagerutil = require("apps/filemanager/filemanagerutil")
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 local util = require("util")
 local _ = require("gettext")
 local N_ = _.ngettext
@@ -642,7 +642,7 @@ function ListMenuItem:update()
         -- If we don't fit, decrease both font sizes
         fontsize_title = fontsize_title - fontsize_dec_step
         fontsize_authors = fontsize_authors - fontsize_dec_step
-        logger.dbg(title, "recalculate title/author with", fontsize_title)
+        logger.dbg("recalculate title/author with", fontsize_title)
       end
 
       local wmain = LeftContainer:new{

@@ -65,7 +65,7 @@ local function get_libcrypto()
     libcrypto = result
   else
     libcrypto = false
-    local logger_ok, logger = pcall(require, "logger")
+    local logger_ok, logger = pcall(require, "shelfsync/lib/common/safe_logger")
     if logger_ok then
       logger.warn("crypto_util: libcrypto unavailable, secrets will be stored in plaintext: " .. tostring(result))
     end

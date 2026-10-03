@@ -20,7 +20,7 @@
 -- its own `shared` (i.e. it owns those keys itself).
 local LuaSettings = require("luasettings")
 local DocSettings = require("docsettings")
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 
 local _t = require("shelfsync/lib/common/table_util")
 local SETTING = require("shelfsync/lib/common/constants/settings")
@@ -350,18 +350,32 @@ function BaseSettings:verboseLogging()
   return self:readSetting(SETTING.SHARED.VERBOSE_LOGGING) == true
 end
 
--- Easy way to add logging that only shows up with "Verbose logging" enabled
--- in settings, without every call site checking the setting itself:
+local function koreaderVerboseLogging()
+  local reader_settings = rawget(_G, "G_reader_settings")
+  if not reader_settings or type(reader_settings.isTrue) ~= "function" then
+    return false
+  end
+
+  -- KOReader only enables verbose debug output when both flags are true.
+  return reader_settings:isTrue("debug") and reader_settings:isTrue("debug_verbose")
+end
+
+function BaseSettings:shouldLogVerbose()
+  return self:verboseLogging() or koreaderVerboseLogging()
+end
+
+-- Easy way to add detail logging when either ShelfSync or KOReader verbose
+-- logging is enabled, without every call site checking the settings:
 --   self.settings:debugLog("StoryGraph: some detail =", value)
 --   self.settings:debugWarn("StoryGraph: unexpected thing happened")
 function BaseSettings:debugLog(...)
-  if self:verboseLogging() then
+  if self:shouldLogVerbose() then
     logger.info(...)
   end
 end
 
 function BaseSettings:debugWarn(...)
-  if self:verboseLogging() then
+  if self:shouldLogVerbose() then
     logger.warn(...)
   end
 end

@@ -1,6 +1,6 @@
 local config_ok, shelfsync_config = pcall(require, "shelfsync_config")
 local config = (config_ok and shelfsync_config.storygraph) or {}
-local logger = require("logger")
+local logger = require("shelfsync/lib/common/safe_logger")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
 local T = require("ffi/util").template
@@ -17,6 +17,18 @@ local StoryGraphApi = {
   enabled = true,
   settings = nil, -- Injected by main.lua
 }
+
+local function request_field_names(data)
+  if type(data) ~= "table" then
+    return "unknown"
+  end
+  local names = {}
+  for key in pairs(data) do
+    names[#names + 1] = tostring(key)
+  end
+  table.sort(names)
+  return table.concat(names, ",")
+end
 
 -- Private helper to build headers with cookies
 local function get_headers(self, custom_headers)
@@ -91,7 +103,9 @@ local function decode_entities(str)
   }
   return str:gsub("(&%w+;)", entities):gsub("(&#%d+;)", function(n)
     local code = n:match("%d+")
-    return string.char(tonumber(code))
+    local codepoint = tonumber(code)
+    if not codepoint or codepoint > 255 then return n end
+    return string.char(codepoint)
   end)
 end
 
@@ -354,6 +368,8 @@ function StoryGraphApi:request(url, method, data, custom_headers)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
       end
       headers["Content-Length"] = tostring(#body)
+      logger.info("StoryGraph: POST request fields=" .. request_field_names(data)
+        .. " body_length=" .. #body)
     end
 
     local request = {
@@ -381,6 +397,12 @@ function StoryGraphApi:request(url, method, data, custom_headers)
     end
 
     local response_body = table.concat(sink)
+    if method == "POST" then
+      logger.info("StoryGraph: POST response code=" .. tostring(code)
+        .. " content_type=" .. tostring(_headers and _headers["content-type"] or "unknown")
+        .. " response_length=" .. #response_body
+        .. " location=" .. tostring(_headers and _headers["location"] or "none"))
+    end
     -- Encode headers as a string to pass back through the Trapper
     local header_str = ""
     if _headers then
@@ -458,10 +480,13 @@ end
 
 function StoryGraphApi:findBooks(title, author, userId)
   local search_url = base_url .. "/browse?search_term=" .. urlencode(title .. " " .. (author or ""))
-  local code, html = self:request(search_url, "GET")
+  local code, html, headers = self:request(search_url, "GET")
   
   if code ~= 200 then
-    logger.warn("StoryGraph search failed. Code:", code, "Response start:", html:sub(1, 200))
+    logger.warn("StoryGraph search failed. code=", code,
+      "content_type=", headers and headers["content-type"] or "unknown",
+      "response_length=", html and #html or 0,
+      "location=", headers and headers["location"] or "none")
     return {}, "Search failed with code " .. (code or "unknown")
   end
 
@@ -488,9 +513,8 @@ function StoryGraphApi:findBooks(title, author, userId)
           local raw_author = get_node_text(author_el)
           author_text = decode_entities(raw_author):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
         end
-        
-        logger.warn("StoryGraph found book:", book_id, "| Title:", title_text, "| Author:", author_text)
-      
+
+        logger.warn("StoryGraph found book:", book_id)
         -- Cover image
         local cover_el = el.parent and el.parent.parent and el.parent.parent:select("img")[1]
         local cover_url = cover_el and cover_el.attributes.src
@@ -502,7 +526,7 @@ function StoryGraphApi:findBooks(title, author, userId)
           local info_text = get_node_text(info_el)
           local pages = info_text:match("(%d+) pages")
           if pages then
-            page_count = tonumber(pages)
+            page_count = tonumber(pages) or 0
           end
         end
         
@@ -647,7 +671,7 @@ function StoryGraphApi:findUserBook(book_id, user_id, is_recursion)
 
   local bar_pct = html:match("edit%-progress[^>]*>%s*<div[^>]*style=\"width:%s*(%d+)%%\"")
   if bar_pct then
-    last_reached_percent = tonumber(bar_pct)
+    last_reached_percent = tonumber(bar_pct) or 0
     logger.info("StoryGraph: progress from bar = " .. last_reached_percent .. "%")
   else
     local percent_str = html:match('name="read_status%[last_reached_percent%]"%s+[^>]*value="([^"]+)"')
@@ -956,7 +980,10 @@ function StoryGraphApi:updatePage(user_read_id, value, started_at, update_type)
   if code and (code >= 200 and code < 300 or code == 302) then
     return self:findUserBook(book_id)
   end
-  self.settings:debugWarn("StoryGraph: updatePage failed - code=" .. tostring(code) .. " resp=" .. tostring(resp))
+  self.settings:debugWarn("StoryGraph: updatePage failed - code=" .. tostring(code)
+    .. " content_type=" .. tostring(resp_headers and resp_headers["content-type"] or "unknown")
+    .. " response_length=" .. tostring(type(resp) == "string" and #resp or 0)
+    .. " location=" .. tostring(resp_headers and resp_headers["location"] or "none"))
   return nil
 end
 
@@ -1244,9 +1271,14 @@ function StoryGraphApi:switchEdition(from_book_id, to_book_id)
   local url = base_url .. "/books/" .. from_book_id .. "/editions"
   local code, html, get_headers = self:request(url, "GET")
   if code ~= 200 or not html then
+    logger.warn("StoryGraph switchEdition page request failed: code=", code,
+      "content_type=", get_headers and get_headers["content-type"] or "unknown",
+      "response_length=", html and #html or 0,
+      "location=", get_headers and get_headers["location"] or "none")
     return false
   end
-  logger.warn("StoryGraph HTML start: ", html:sub(1, 100))
+  self.settings:debugLog("StoryGraph switchEdition page received: content_type=",
+    get_headers and get_headers["content-type"] or "unknown", " response_length=", #html)
 
   -- Update session cookie if server sent a new one
   local new_cookie = get_headers and get_headers["set-cookie"]
@@ -1265,7 +1297,10 @@ function StoryGraphApi:switchEdition(from_book_id, to_book_id)
   
   local csrf = self:extract_csrf(html)
   if not csrf then
-    logger.warn("StoryGraph: Failed to extract CSRF token!")
+    logger.warn("StoryGraph switchEdition CSRF missing: sign_in_page=",
+      tostring(html:find("/users/sign_in", 1, true) ~= nil),
+      " switch_form_present=", tostring(html:find("/switch-editions", 1, true) ~= nil),
+      " response_length=", #html)
     return false
   end
 
@@ -1288,7 +1323,8 @@ function StoryGraphApi:switchEdition(from_book_id, to_book_id)
     end
   end
 
-  logger.warn("StoryGraph switchEdition IDs: from=", true_from_id, " to=", to_book_id, " csrf=", csrf)
+  self.settings:debugLog("StoryGraph switchEdition IDs: from=", true_from_id, " to=", to_book_id,
+    " csrf_length=", #csrf)
 
   local switch_url = base_url .. "/switch-editions"
   local data = {
