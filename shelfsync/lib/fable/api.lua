@@ -319,7 +319,11 @@ function FableApi:request(path, method, body)
     if ok then data = decoded end
   end
 
-  if self.settings and code_num and (code_num < 200 or code_num >= 300) then
+  local missing_review_lookup = code_num == 404 and method == "GET"
+    and path:match("^/api/users/[^/]+/reviews/[^/]+$") ~= nil
+  if self.settings and missing_review_lookup then
+    self.settings:debugLog("Fable: no existing review found; review submission will create one")
+  elseif self.settings and code_num and (code_num < 200 or code_num >= 300) then
     self.settings:debugWarn("Fable: " .. (method or "GET") .. " " .. path .. " returned "
       .. tostring(code_num) .. " body=" .. tostring(response_body))
   end
@@ -761,7 +765,11 @@ function FableApi:setReview(book_id, rating, review_text)
   }
 
   local code = self:request("/api/books/" .. book_id .. "/reviews", "POST", body)
-  if code and code >= 200 and code < 300 then return true end
+  if code and code >= 200 and code < 300 then
+    if self.settings then self.settings:debugLog("Fable: review POST accepted (HTTP " .. tostring(code) .. ")") end
+    return true
+  end
+  if self.settings then self.settings:debugWarn("Fable: review POST failed (HTTP " .. tostring(code) .. ")") end
   return false, "Fable review submission failed (HTTP " .. tostring(code) .. ")"
 end
 

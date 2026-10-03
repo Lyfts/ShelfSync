@@ -162,7 +162,7 @@ function StoryGraph:submitReview(_filename, rating, text)
     review.thoughts = text
   end
 
-  return self.api:saveReview(book_id, review, review_url) ~= nil
+  return self.api:saveReview(book_id, review, review_url) == true
 end
 
 return StoryGraph
