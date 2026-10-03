@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Retry Goodreads automatic Currently Reading updates when a status read or CSRF bootstrap temporarily fails, instead of stopping after the book page is found.
 - Fix Hardcover automatic linking rejecting matching books when extra contributor credits (such as narrators or translators) lower the author match score.
 - Reconcile Fable status writes against system-list membership when book-detail status is missing or a write returns HTTP 409.
 - Skip redundant Fable status writes when the selected status is already active, and run status-menu requests through KOReader's Trapper coroutine.

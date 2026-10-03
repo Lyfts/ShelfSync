@@ -25,11 +25,14 @@ function Scheduler:withRetries(limit, time_exponent, callback, success_callback,
     end
   end
 
-  local fail = function()
+  -- A caller may supply a short delay for a known transient result; failures
+  -- without a numeric delay keep the usual exponential backoff.
+  local fail = function(retry_delay)
     tries = tries + 1
 
     if tries < limit then
-      UIManager:scheduleIn(2 ^ (time_exponent + tries), scheduled_job)
+      local delay = type(retry_delay) == "number" and retry_delay or 2 ^ (time_exponent + tries)
+      UIManager:scheduleIn(delay, scheduled_job)
     else
       if fail_callback then
         fail_callback()
