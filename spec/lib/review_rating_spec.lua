@@ -31,7 +31,7 @@ describe("Review rating precision", function()
             end
             return true
           end,
-          saveReview = function(_, _, review) sent.storygraph = review.stars; return {} end,
+          saveReview = function(_, _, review) sent.storygraph = review.stars; return true end,
         },
       }
       assert.is_true(Goodreads.submitReview(context, "book.epub", case[1], "Review"))
