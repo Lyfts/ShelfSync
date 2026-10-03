@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Fix Hardcover automatic linking rejecting matching books when extra contributor credits (such as narrators or translators) lower the author match score.
 
 ## 1.5.0
 - Guard StoryGraph page parsing against invalid or out-of-range numeric values.

@@ -120,11 +120,28 @@ local function appendAuthorNames(value, names)
   end
 end
 
+local function appendHardcoverAuthorNames(contributions, names)
+  for _, contribution in ipairs(contributions or {}) do
+    local role = type(contribution.contribution) == "string"
+      and contribution.contribution:lower():match("^%s*(.-)%s*$")
+    -- Hardcover's cached contributor list can include narrators, translators,
+    -- and other non-author credits. Only use actual author credits for match
+    -- confidence, while the full cached list remains available to the picker.
+    if not role or role == "" or role == "author" then
+      appendAuthorNames(contribution.author or contribution, names)
+    end
+  end
+end
+
 local function getCandidateAuthors(book)
   local names = {}
   appendAuthorNames(book.author, names)
   appendAuthorNames(book.authors, names)
-  appendAuthorNames(book.contributions, names)
+  if type(book.author_contributions) == "table" and #book.author_contributions > 0 then
+    appendHardcoverAuthorNames(book.author_contributions, names)
+  else
+    appendAuthorNames(book.contributions, names)
+  end
 
   local combined = table.concat(names, " ")
   local tokens = matchTokens(combined)
