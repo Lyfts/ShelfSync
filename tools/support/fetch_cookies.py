@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.8"
-# dependencies = ["browser_cookie3"]
+# dependencies = ["browser_cookie3==0.20.1"]
 # ///
 """Fetches StoryGraph and/or Goodreads session cookies from a browser already
 logged in on this PC, and writes them into shelfsync_config.lua -- an
@@ -12,7 +12,7 @@ behalf), and never uploads anything anywhere; it just moves values from your
 browser's cookie storage into a local file. Requires the third-party
 `browser_cookie3` package -- if you have uv (https://docs.astral.sh/uv/)
 installed, `uv run` picks it up automatically from the metadata above with
-no separate install step; otherwise: pip install browser_cookie3
+no separate install step; otherwise: pip install browser_cookie3==0.20.1
 """
 import argparse
 import http.cookiejar
@@ -84,7 +84,7 @@ def load_cookiejar(browser, domain):
         import browser_cookie3
     except ImportError:
         print("error: this tool needs the 'browser_cookie3' package.\n"
-              "Install it with: pip install browser_cookie3\n"
+              "Install it with: pip install browser_cookie3==0.20.1\n"
               "(or run this script with `uv run` instead of `python3` -- "
               "uv installs it automatically, see https://docs.astral.sh/uv/)", file=sys.stderr)
         sys.exit(1)
