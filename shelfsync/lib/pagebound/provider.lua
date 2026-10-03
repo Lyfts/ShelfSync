@@ -16,7 +16,8 @@ Pagebound.__index = Pagebound
 function Pagebound:linkBook(book)
   local filename = self.ui.document.file
   local book_uuid = book.book_uuid or book.uuid
-  local status = self.api:findUserBook(book.book_id, nil, book_uuid) or {}
+  local status, lookup_error = self.api:findUserBook(book.book_id, nil, book_uuid)
+  status = status or {}
   local pages = tonumber(book.pages) or tonumber(status.page_count)
   book.pages = pages
 
@@ -32,7 +33,15 @@ function Pagebound:linkBook(book)
   self.settings:updateBookSetting(filename, new_settings)
   self.state.book_status = status
 
-  if not status.status_id then
+  -- A failed lookup isn't proof the book is missing from the library, and
+  -- adding it could replace a status it already has (e.g. Finished).
+  if lookup_error then
+    logger.warn("Pagebound: Couldn't check the book's status, not adding it to Currently Reading: " .. tostring(lookup_error))
+    UIManager:show(InfoMessage:new {
+      text = _("Linked, but couldn't check the book's status on Pagebound, so it wasn't added to Currently Reading automatically. Use \"Update status\" to set it manually."),
+      icon = "notice-warning",
+    })
+  elseif not status.status_id then
     logger.info("Pagebound: Book is not in the library, adding it to Currently Reading")
     local added = self.api:updateUserBook(book.book_id, PAGEBOUND.STATUS.READING, pages, book_uuid)
     if added and added.status_id then
