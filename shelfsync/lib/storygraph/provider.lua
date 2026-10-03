@@ -41,7 +41,8 @@ function StoryGraph:linkBook(book)
   local filename = self.ui.document.file
 
   -- 1. Fetch remote status (API handles redirection and audio filtering internally)
-  local status = self.api:findUserBook(book.book_id) or {}
+  local status, lookup_error = self.api:findUserBook(book.book_id)
+  status = status or {}
 
   -- 2. If the final resolved edition is Audio, fail the linking process
   if status.is_audio then
@@ -73,8 +74,16 @@ function StoryGraph:linkBook(book)
   self.settings:updateBookSetting(filename, new_settings)
   self.state.book_status = status
 
-  -- 4. Auto-Add to Library if no status was found on ANY edition
-  if not self.state.book_status.status_id then
+  -- 4. Auto-Add to Library if no status was found on ANY edition. A failed
+  -- lookup isn't proof of that, and adding the book could replace a status
+  -- it already has (e.g. Read).
+  if lookup_error then
+    logger.warn("StoryGraph: Couldn't check the book's status, not adding it to Currently Reading: " .. tostring(lookup_error))
+    UIManager:show(InfoMessage:new {
+      text = _("Linked, but couldn't check the book's status on StoryGraph, so it wasn't marked as Currently Reading automatically. Use \"Update status\" to set it manually."),
+      icon = "notice-warning",
+    })
+  elseif not self.state.book_status.status_id then
     logger.info("StoryGraph: Book has no status on any edition, adding to Currently Reading automatically")
     local added = self.api:updateUserBook(book.book_id, STORYGRAPH.STATUS.READING)
     if added and added.status_id then

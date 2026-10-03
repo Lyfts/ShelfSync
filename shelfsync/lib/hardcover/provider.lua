@@ -130,7 +130,7 @@ function Hardcover:linkBook(book)
   }
 
   self.settings:updateBookSetting(filename, new_settings)
-  self.cache:cacheUserBook()
+  local lookup_error = self.cache:cacheUserBook()
 
   if book.book_id and self.state.book_status.id then
     if new_settings.edition_id and new_settings.edition_id ~= self.state.book_status.edition_id then
@@ -142,6 +142,14 @@ function Hardcover:linkBook(book)
         new_settings.edition_id
       ) or {}
     end
+  elseif book.book_id and lookup_error then
+    -- A failed lookup isn't proof the book has no status, and adding it
+    -- could replace one it already has (e.g. Read).
+    logger.warn("Hardcover: Couldn't check the book's status, not adding it to Currently Reading: " .. formatApiError(lookup_error))
+    UIManager:show(InfoMessage:new {
+      text = _("Linked, but couldn't check the book's status on Hardcover, so it wasn't marked as Currently Reading automatically. Use \"Update status\" to set it manually."),
+      icon = "notice-warning",
+    })
   elseif book.book_id and not self.state.book_status.status_id then
     -- Auto-Add to Library if no status was found (mirrors StoryGraph:linkBook)
     logger.info("Hardcover: Book has no status, adding to Currently Reading automatically")

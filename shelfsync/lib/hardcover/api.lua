@@ -823,7 +823,9 @@ function HardcoverApi:findUserBook(book_id, user_id)
 
   local results, err = self:query(read_query, { id = book_id, userId = user_id })
   if not results or not results.user_books then
-    return {}, err
+    -- query() returns no error when it doesn't send at all (e.g. offline);
+    -- callers need one to tell this apart from "no user book" (nil below).
+    return {}, err or "Failed to fetch book"
   end
 
   return results.user_books[1]
