@@ -96,7 +96,7 @@ describe("Review composer", function()
     for name, value in pairs(saved) do package.loaded[name] = value[1] end
   end)
 
-  it("changes ratings in place without repeating cache refreshes", function()
+  it("changes ratings in place without fetching provider status", function()
     composer:show()
     local menu = composer.menu
     control("star_4").callback()
@@ -109,7 +109,7 @@ describe("Review composer", function()
     assert.equals(0, composer.review.rating)
     assert.is_false(control("less").enabled_func())
     assert.equals(menu, composer.menu)
-    assert.equals(5, cached)
+    assert.equals(0, cached)
   end)
 
   it("preserves drafts on close and clears them for another book", function()
@@ -119,12 +119,12 @@ describe("Review composer", function()
     assert.is_nil(composer.menu)
     composer:show()
     assert.equals("A draft", composer.review.text)
-    assert.equals(5, cached)
+    assert.equals(0, cached)
     composer.menu:onClose()
     composer.app.ui.document.file = "two.epub"
     composer:show()
     assert.equals("", composer.review.text)
-    assert.equals(10, cached)
+    assert.equals(0, cached)
   end)
 
   it("saves multiline text and cancels edits without altering the draft", function()

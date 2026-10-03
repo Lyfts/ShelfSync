@@ -83,19 +83,11 @@ function ReviewMenu:_state()
     local eligible = self:_eligibleEngines()
     local selected = {}
 
-    -- Refresh each provider's cached book status once per book-open --
-    -- Hardcover and StoryGraph need a live user_book id, and Pagebound needs
-    -- its user_book_id for review writes. Refresh cached status as their
-    -- menus do before showing anything status-dependent. This is the only
-    -- network activity the review menu does before Submit is pressed.
-    if #eligible > 0 then
-      local loading = InfoMessage:new { text = _("Loading book status...") }
-      UIManager:show(loading)
-      for _, entry in ipairs(eligible) do
-        entry.engine.cache:cacheUserBook()
-        selected[entry.key] = true
-      end
-      UIManager:close(loading)
+    -- Eligibility is entirely local (provider enabled, credentials present,
+    -- book linked). Keep opening the composer network-free; providers refresh
+    -- any status they need when their review is submitted.
+    for _, entry in ipairs(eligible) do
+      selected[entry.key] = true
     end
 
     self.review = {

@@ -144,7 +144,13 @@ end
 -- whatever review already exists (same pattern as onMarkedFinished above)
 -- and only overwrites the fields the user actually set. Accepts the full
 -- quarter-star value unrounded.
+---@diagnostic disable-next-line: duplicate-set-field
 function StoryGraph:submitReview(_filename, rating, text)
+  local cache_error = self.cache and self.cache:cacheUserBook()
+  if cache_error then
+    return false, cache_error
+  end
+
   local book_id = self.state.book_status and self.state.book_status.id
   if not book_id then
     return false, "No linked book found on StoryGraph"
