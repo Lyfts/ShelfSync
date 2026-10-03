@@ -182,30 +182,30 @@ function CommonMenu:getAutoLinkSubMenuItems()
     {
       text = _("Automatically link by provider identifier"),
       checked_func = function()
-        return self.settings:readSetting(SETTING.SHARED.LINK_BY_IDENTIFIER) ~= false
+        return self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_IDENTIFIER)
       end,
       callback = function()
-        local setting = self.settings:readSetting(SETTING.SHARED.LINK_BY_IDENTIFIER) ~= false
+        local setting = self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_IDENTIFIER)
         self.settings:updateSetting(SETTING.SHARED.LINK_BY_IDENTIFIER, not setting)
       end
     },
     {
       text = _("Automatically link by ISBN"),
       checked_func = function()
-        return self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false
+        return self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_ISBN)
       end,
       callback = function()
-        local setting = self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false
+        local setting = self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_ISBN)
         self.settings:updateSetting(SETTING.SHARED.LINK_BY_ISBN, not setting)
       end
     },
     {
       text = _("Automatically link by title and author"),
       checked_func = function()
-        return self.settings:readSetting(SETTING.SHARED.LINK_BY_TITLE) ~= false
+        return self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_TITLE)
       end,
       callback = function()
-        local setting = self.settings:readSetting(SETTING.SHARED.LINK_BY_TITLE) ~= false
+        local setting = self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_TITLE)
         self.settings:updateSetting(SETTING.SHARED.LINK_BY_TITLE, not setting)
       end
     },

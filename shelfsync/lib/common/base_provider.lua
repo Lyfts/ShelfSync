@@ -351,9 +351,9 @@ function BaseProvider:tryAutolink(done)
   end
 
   local identifiers = Book:parseIdentifiers(props.identifiers)
-  local should_attempt = ((identifiers.book_slug or identifiers.edition_id or identifiers.goodreads_id or identifiers.storygraph_slug) and self.settings:readSetting(SETTING.SHARED.LINK_BY_IDENTIFIER) ~= false)
-    or ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false)
-    or (props.title and self.settings:readSetting(SETTING.SHARED.LINK_BY_TITLE) ~= false)
+  local should_attempt = ((identifiers.book_slug or identifiers.edition_id or identifiers.goodreads_id or identifiers.storygraph_slug) and self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_IDENTIFIER))
+    or ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_ISBN))
+    or (props.title and self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_TITLE))
   self.settings:debugLog(self.label .. ": tryAutolink - should_attempt=" .. tostring(should_attempt)
     .. " book_slug=" .. tostring(identifiers.book_slug) .. " goodreads_id=" .. tostring(identifiers.goodreads_id)
     .. " storygraph_slug=" .. tostring(identifiers.storygraph_slug)
@@ -379,17 +379,17 @@ end
 
 function BaseProvider:_runAutolink(identifiers)
   local linked = false
-  if self.settings:readSetting(SETTING.SHARED.LINK_BY_IDENTIFIER) ~= false then
+  if self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_IDENTIFIER) then
     linked = self:linkBookByIdentifier(identifiers)
     self.settings:debugLog(self.label .. ": _runAutolink - linkBookByIdentifier linked=" .. tostring(linked))
   end
 
-  if not linked and self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false then
+  if not linked and self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_ISBN) then
     linked = self:linkBookByIsbn(identifiers)
     self.settings:debugLog(self.label .. ": _runAutolink - linkBookByIsbn linked=" .. tostring(linked))
   end
 
-  if not linked and self.settings:readSetting(SETTING.SHARED.LINK_BY_TITLE) ~= false then
+  if not linked and self.settings:autolinkMethodEnabled(SETTING.SHARED.LINK_BY_TITLE) then
     linked = self:linkBookByTitle() == true
     self.settings:debugLog(self.label .. ": _runAutolink - linkBookByTitle linked=" .. tostring(linked))
   end
