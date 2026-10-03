@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟
 - Retry Goodreads automatic Currently Reading updates when a status read or CSRF bootstrap temporarily fails, instead of stopping after the book page is found.
 - Fix Hardcover automatic linking rejecting matching books when extra contributor credits (such as narrators or translators) lower the author match score.
 - Reconcile Fable status writes against system-list membership when book-detail status is missing or a write returns HTTP 409.
