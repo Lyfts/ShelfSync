@@ -2,6 +2,8 @@
 
 ## Unreleased
 - Fix Hardcover automatic linking rejecting matching books when extra contributor credits (such as narrators or translators) lower the author match score.
+- Reconcile Fable status writes against system-list membership when book-detail status is missing or a write returns HTTP 409.
+- Skip redundant Fable status writes when the selected status is already active, and run status-menu requests through KOReader's Trapper coroutine.
 
 ## 1.5.0
 - Guard StoryGraph page parsing against invalid or out-of-range numeric values.
