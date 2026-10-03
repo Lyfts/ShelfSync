@@ -1,5 +1,7 @@
 # ShelfSync for KOReader
 
+[![Latest release](https://img.shields.io/github/v/release/Lyfts/ShelfSync?style=for-the-badge&color=orange)](https://github.com/Lyfts/ShelfSync/releases/latest) [![Total downloads](https://img.shields.io/github/downloads/Lyfts/ShelfSync/total?style=for-the-badge&color=blue)](https://github.com/Lyfts/ShelfSync/releases) [![Platform](https://img.shields.io/badge/Platform-KOReader-success?style=for-the-badge&logo=koreader)](https://github.com/koreader/koreader) [![License](https://img.shields.io/github/license/Lyfts/ShelfSync?style=for-the-badge)](LICENSE)
+
 A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com), [Hardcover](https://hardcover.app), [Goodreads](https://goodreads.com), [Fable](https://fable.co), and/or [Pagebound](https://pagebound.co). All services can be linked and tracked independently, side by side, from the same install.
 
 > [!CAUTION]
@@ -13,8 +15,7 @@ A KOReader plugin to synchronize your reading progress, notes, and status to [Th
 1. Download the latest release and extract it to your KOReader `plugins/` folder.
 2. Set up authentication for whichever service(s) you want to use — all are optional and independent.
 
-StoryGraph, Hardcover, and Goodreads share a single config file: rename `shelfsync_config.example.lua` to `shelfsync_config.lua`, then fill in whichever section(s) below you want — the `storygraph`, `hardcover`, and `goodreads` sections are all optional and independent, and leaving one blank (or the whole file missing) doesn't affect the others. Fable and Pagebound have no config file section — set them up entirely from within KOReader (see below).
-- *Note: If you are upgrading from an older version, the plugin will automatically merge an existing `storygraph_config.lua` and/or `hardcover_config.lua` into `shelfsync_config.lua`.*
+Rename `shelfsync_config.example.lua` to `shelfsync_config.lua`. Its `storygraph`, `hardcover`, and `goodreads` sections are optional; leave unused sections blank or omit the file. Set up Fable and Pagebound in KOReader. On upgrade, existing `storygraph_config.lua` and `hardcover_config.lua` files are merged automatically.
 
 > [!TIP]
 > The StoryGraph and Goodreads cookies below can be grabbed automatically instead of copying them out of devtools by hand:
@@ -24,6 +25,16 @@ StoryGraph, Hardcover, and Goodreads share a single config file: rename `shelfsy
 > 3. It writes the cookies straight into `shelfsync_config.lua` — nothing is sent anywhere else. Use `--help` for options like `--browser firefox`.
 >
 > Hardcover supports OAuth device-code sign-in from the KOReader menu. Its API token can still be configured as a fallback (see below).
+
+### Authentication overview
+
+| Provider | Authentication |
+| --- | --- |
+| [StoryGraph](#storygraph-authentication) | Email and password in KOReader; browser cookies can be imported if login is blocked |
+| [Hardcover](#hardcover-authentication) | OAuth device sign-in, with an API token as a fallback |
+| [Goodreads](#goodreads-authentication) | Browser session cookie, or the optional self-hosted cookie refresher |
+| [Fable](#fable-authentication) | Email and password in KOReader |
+| [Pagebound](#pagebound-authentication) | Email and password in KOReader |
 
 ### StoryGraph authentication
 Open **ShelfSync > Providers > StoryGraph > Account (Cookies & Tokens) > Log in** and enter your StoryGraph email and password. The plugin saves the session and remember-me cookies returned by StoryGraph; it does not store your password. Log in again if your session expires.
@@ -71,8 +82,6 @@ Open **ShelfSync > Providers > Pagebound > Account > Log in** and enter your Pag
 > [!TIP]
 > If you usually sign in to Pagebound with **Google or Apple**, reset the password for the email address on your account through Pagebound. You can then log in with that email and password; ShelfSync uses this regular email/password account.
 
-Notes entered in Pagebound's progress dialog are published as posts in that book's forum. The post body is your note, and its title includes the selected progress percentage and page position; other Pagebound users may be able to see it.
-
 ## Usage
 
 Everything lives under a single **ShelfSync** menu in **Tools > More tools** when a document is active, with a **Providers** sub-menu containing **StoryGraph**, **Hardcover**, **Goodreads**, **Fable**, and **Pagebound**. They work independently and can be used together.
@@ -80,7 +89,7 @@ Everything lives under a single **ShelfSync** menu in **Tools > More tools** whe
 ### Updating Progress & Notes
 Each menu provides a unified **"Update progress: [XX]%"** item. This opens a powerful dialog where you can:
 - **Set Progress**: Tap the progress button to open a native picker showing both your **KOReader** and remote synced percentages.
-- **Add a Note**: Write your thoughts directly in the note field. Pagebound publishes the note as a post in the book's forum; other Pagebound users may be able to see it.
+- **Add a Note**: Write your thoughts in the note field. Pagebound posts it to the book's forum, where other users may see it; the post title includes the selected percentage and page position.
 - **Location Context**: By default, notes sent via the highlight menu automatically include your current **Chapter, Page, and Percentage**. You can enable this for regular notes in the settings.
 
 ### Linking a Book
@@ -90,6 +99,11 @@ Before updates can be sent, a document needs to be linked to a book on each serv
 - Audio editions are filtered out of the search results (StoryGraph, Hardcover).
 - If a book is not currently tracked, the plugin will set its status to Currently Reading.
 - On StoryGraph, if another edition of the book is set as 'Currently Reading' or 'Want to Read' then the plugin will automatically link to that edition, but not change the status. You can use "Change edition" to link to a different edition if needed.
+
+### Reviews
+With a book open, choose **ShelfSync > Review** to open the review composer. Add a rating, review text, or both, then choose which providers should receive it. Enabled providers where you are signed in and the book is linked are selected by default; unavailable providers show why they cannot receive the review. If submission fails for a provider, the draft stays available so you can retry it.
+
+Ratings range from 0 to 5 in quarter-star steps. Goodreads rounds down to whole stars; Hardcover and Pagebound round down to half stars; StoryGraph and Fable preserve quarter-star ratings. When ShelfSync detects that you finished a book, it offers to open the composer if at least one provider is eligible.
 
 ### Automatically Track Progress
 When enabled (per service), the plugin will periodically sync your progress:
