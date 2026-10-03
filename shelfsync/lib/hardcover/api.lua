@@ -280,6 +280,12 @@ fragment BookParts on books {
     }
   }
   contributions: cached_contributors
+  author_contributions: contributions {
+    contribution
+    author {
+      name
+    }
+  }
   cached_image
   user_books(where: { user_id: { _eq: $userId }}) {
     id
