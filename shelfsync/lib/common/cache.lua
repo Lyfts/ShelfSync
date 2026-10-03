@@ -1,3 +1,5 @@
+local STATUS = require("shelfsync/lib/common/constants/status").STATUS
+
 local Cache = {}
 Cache.__index = Cache
 
@@ -6,7 +8,12 @@ function Cache:new(o) return setmetatable(o, self) end
 function Cache:updateBookStatus(filename, status, ...)
   local settings = self.settings:readBookSettings(filename)
   local book_id = settings.book_id
-  self.state.book_status = self.api:updateUserBook(book_id, status, ...) or {}
+  local result = self.api:updateUserBook(book_id, status, ...)
+  self.state.book_status = result or {}
+
+  if result and status == STATUS.FINISHED and self.provider then
+    self.provider:onMarkedFinished(book_id, filename)
+  end
 end
 
 function Cache:cacheUserBook()

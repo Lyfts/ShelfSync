@@ -6,5 +6,8 @@ return {
   TOKEN_ENDPOINT = "/oauth2/token",
   REVOKE_ENDPOINT = "/oauth2/revoke",
   CLIENT_ID = "5ec829c1-5ad8-4788-9e5c-989283966a6b",
-  SCOPES = "read:me:content read:catalog read:library write:library",
+  SCOPES = "read:me:content read:catalog read:library write:library write:reviews",
+  -- Increment this whenever SCOPES changes so existing OAuth grants are
+  -- cleared and users are prompted to sign in again.
+  SCOPE_REVISION = 1,
 }

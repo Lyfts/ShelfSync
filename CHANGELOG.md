@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟
 - Retry Goodreads automatic Currently Reading updates when a status read or CSRF bootstrap temporarily fails, instead of stopping after the book page is found.
 - Fix Hardcover automatic linking rejecting matching books when extra contributor credits (such as narrators or translators) lower the author match score.
 - Reconcile Fable status writes against system-list membership when book-detail status is missing or a write returns HTTP 409.
@@ -9,6 +10,7 @@
 ## 1.5.0
 - Guard StoryGraph page parsing against invalid or out-of-range numeric values.
 - Add Hardcover OAuth device-code sign-in, based on [hardcoverapp.koplugin PR #70](https://github.com/Billiam/hardcoverapp.koplugin/pull/70). OAuth is used when signed in; the configured API token remains available as a fallback.
+- Prompt Hardcover OAuth users to sign in again after a requested-scope revision.
 - Confirm Hardcover journal writes using the mutation ID, without requiring journal-read access.
 - Redact credentials, search terms, and personal content from logs while retaining safe request and error diagnostics.
 - Prevent Goodreads session cookies from being sent if a request redirects to another host or an unencrypted URL.
