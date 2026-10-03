@@ -78,11 +78,7 @@ function HardcoverMenu:getSubMenuItems(book_view)
     book_view and {
       text_func = function()
         if self.settings:bookLinked() then
-          local title = self.settings:getLinkedTitle()
-          if not title then
-            title = self.settings:getLinkedBookId()
-          end
-          return _("Linked book: " .. title)
+          return self.hardcover:getLinkedBookLabel()
         else
           return _("Link book")
         end
@@ -96,7 +92,7 @@ function HardcoverMenu:getSubMenuItems(book_view)
           self.settings:updateBookSetting(
             self.ui.document.file,
             {
-              _delete = { 'book_id', 'edition_id', 'edition_format', 'pages', 'title' }
+              _delete = { 'book_id', 'edition_id', 'edition_format', 'pages', 'title', 'link_method' }
             }
           )
 
@@ -142,7 +138,7 @@ function HardcoverMenu:getSubMenuItems(book_view)
             edition_id = self.settings:getLinkedEditionId()
           },
           function(book)
-            self.hardcover:linkBook(book)
+            self.hardcover:linkBookManually(book)
             menu_instance:updateItems()
           end
         )

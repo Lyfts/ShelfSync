@@ -1,11 +1,15 @@
 # Changelog
 
+<!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
+
 ## Unreleased
-- 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟
-- Retry Goodreads automatic Currently Reading updates when a status read or CSRF bootstrap temporarily fails, instead of stopping after the book page is found.
-- Fix Hardcover automatic linking rejecting matching books when extra contributor credits (such as narrators or translators) lower the author match score.
-- Reconcile Fable status writes against system-list membership when book-detail status is missing or a write returns HTTP 409.
-- Skip redundant Fable status writes when the selected status is already active, and run status-menu requests through KOReader's Trapper coroutine.
+- (feat) 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟
+- (feat) Show the link method at the start of linked-book labels in provider menus.
+- (fix) Retry Goodreads automatic Currently Reading updates when a status read or CSRF bootstrap temporarily fails, instead of stopping after the book page is found.
+- (fix) Allow Hardcover automatic linking to accept matching books even when extra contributor credits (such as narrators or translators) lower the author match score.
+- (fix) Reconcile Fable status writes against system-list membership when book-detail status is missing or a write returns HTTP 409.
+- (fix) Skip redundant Fable status writes when the selected status is already active, and run status-menu requests through KOReader's Trapper coroutine.
+- (fix) Save the selected version check frequency correctly and allow intervals of 1–30 days.
 
 ## 1.5.0
 - Guard StoryGraph page parsing against invalid or out-of-range numeric values.

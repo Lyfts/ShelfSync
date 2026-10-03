@@ -19,7 +19,7 @@ local Fable = setmetatable({
 }, { __index = BaseProvider })
 Fable.__index = Fable
 
-function Fable:linkBook(book)
+function Fable:linkBook(book, link_method)
   local filename = self.ui.document.file
 
   local status = self.api:findUserBook(book.book_id) or {}
@@ -35,7 +35,7 @@ function Fable:linkBook(book)
     pages = self.api:findEditionPageCount(book.book_id, isbn)
   end
 
-  local new_settings = { book_id = book.book_id, title = book.title }
+  local new_settings = { book_id = book.book_id, title = book.title, link_method = link_method }
   local delete = {}
   if pages and pages > 0 then
     new_settings.pages = pages

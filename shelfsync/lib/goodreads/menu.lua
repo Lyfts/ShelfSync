@@ -65,11 +65,7 @@ function GoodreadsMenu:getSubMenuItems(book_view)
     book_view and {
       text_func = function()
         if self.settings:bookLinked() then
-          local title = self.settings:getLinkedTitle()
-          if not title then
-            title = self.settings:getLinkedBookId()
-          end
-          return _("Linked book: " .. title)
+          return self.goodreads:getLinkedBookLabel()
         else
           return _("Link book")
         end
@@ -82,7 +78,7 @@ function GoodreadsMenu:getSubMenuItems(book_view)
           self.settings:updateBookSetting(
             self.ui.document.file,
             {
-              _delete = { 'book_id', 'edition_id', 'pages', 'title' }
+              _delete = { 'book_id', 'edition_id', 'pages', 'title', 'link_method' }
             }
           )
 

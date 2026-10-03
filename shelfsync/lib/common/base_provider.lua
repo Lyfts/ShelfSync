@@ -11,6 +11,7 @@
 -- (e.g. "StoryGraph") must be set on the instance -- it's used to prefix the
 -- debug log lines below, same as menu.lua/auto_wifi.lua's `label`.
 local _ = require("gettext")
+local T = require("ffi/util").template
 local logger = require("shelfsync/lib/common/safe_logger")
 local util = require("util")
 
@@ -24,6 +25,20 @@ local SETTING = require("shelfsync/lib/common/constants/settings")
 
 local BaseProvider = {}
 BaseProvider.__index = BaseProvider
+
+local LINK_METHOD = {
+  IDENTIFIER = "identifier",
+  ISBN = "isbn",
+  TITLE_AUTHOR = "title_author",
+  MANUAL = "manual",
+}
+
+local LINK_METHOD_LABELS = {
+  [LINK_METHOD.IDENTIFIER] = _("ID"),
+  [LINK_METHOD.ISBN] = _("ISBN"),
+  [LINK_METHOD.TITLE_AUTHOR] = _("Title"),
+  [LINK_METHOD.MANUAL] = _("Manual"),
+}
 
 -- Fuzzy titles need author agreement; without usable authors, require an almost exact title.
 local MIN_TITLE_SIMILARITY = 0.8
@@ -183,6 +198,26 @@ function BaseProvider:new(o)
   return setmetatable(o, self)
 end
 
+function BaseProvider:linkBookWithMethod(book, method)
+  return self:linkBook(book, method or LINK_METHOD.MANUAL)
+end
+
+function BaseProvider:linkBookManually(book)
+  return self:linkBookWithMethod(book, LINK_METHOD.MANUAL)
+end
+
+function BaseProvider:getLinkedBookLabel()
+  local filename = self.ui and self.ui.document and self.ui.document.file
+  local title = filename and self.settings:getLinkedTitle()
+  if not title and filename then
+    title = self.settings:getLinkedBookId()
+  end
+
+  local method = filename and self.settings:readBookSetting(filename, "link_method")
+  local method_label = LINK_METHOD_LABELS[method] or _("Unknown")
+  return T(_("Linked book (%1): %2"), method_label, tostring(title or ""))
+end
+
 -- Keys of `book` that should be deleted (rather than written as nil) from
 -- the sidecar when linking, e.g. a search result that carries no page count.
 function BaseProvider:_deletedKeys(book, keys)
@@ -211,7 +246,7 @@ function BaseProvider:showLinkBookDialog(force_search, link_callback)
         book_id = self.settings:getLinkedBookId()
       },
       function(book)
-        self:linkBook(book)
+        self:linkBookManually(book)
         if link_callback then
           link_callback()
         end
@@ -249,12 +284,12 @@ function BaseProvider:findBookOptions(force_search)
   return title, result, err
 end
 
-function BaseProvider:autolinkBook(book)
+function BaseProvider:autolinkBook(book, method)
   if not book then
     return
   end
 
-  local linked = self:linkBook(book)
+  local linked = self:linkBookWithMethod(book, method)
   if linked then
     UIManager:show(Notification:new {
       text = _("Linked to: " .. book.title),
@@ -282,7 +317,7 @@ function BaseProvider:linkBookByIdentifier(identifiers)
       user_id
     )
     if book_lookup then
-      self:autolinkBook(book_lookup)
+      self:autolinkBook(book_lookup, LINK_METHOD.IDENTIFIER)
       return true
     end
   end
@@ -298,7 +333,7 @@ function BaseProvider:linkBookByIsbn(identifiers)
       user_id
     )
     if book_lookup then
-      self:autolinkBook(book_lookup)
+      self:autolinkBook(book_lookup, LINK_METHOD.ISBN)
       return true
     end
   end
@@ -320,7 +355,7 @@ function BaseProvider:linkBookByTitle()
   end
 
   if best_match then
-    self:autolinkBook(best_match)
+    self:autolinkBook(best_match, LINK_METHOD.TITLE_AUTHOR)
     return true
   end
 end

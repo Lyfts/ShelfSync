@@ -17,7 +17,7 @@ local Goodreads = setmetatable({
 }, { __index = BaseProvider })
 Goodreads.__index = Goodreads
 
-function Goodreads:linkBook(book)
+function Goodreads:linkBook(book, link_method)
   local filename = self.ui.document.file
 
   local status = self.api:findUserBook(book.book_id) or {}
@@ -28,6 +28,7 @@ function Goodreads:linkBook(book)
     book_id = book.book_id,
     pages = book.pages or status.book_num_of_pages,
     title = book.title,
+    link_method = link_method,
     _delete = delete
   }
 

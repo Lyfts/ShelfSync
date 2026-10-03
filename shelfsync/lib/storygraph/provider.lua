@@ -29,7 +29,7 @@ function StoryGraph:showChangeEditionDialog(callback)
           return
         end
       end
-      self:linkBook(book)
+      self:linkBookManually(book)
       if callback then
         callback(book)
       end
@@ -37,7 +37,7 @@ function StoryGraph:showChangeEditionDialog(callback)
   )
 end
 
-function StoryGraph:linkBook(book)
+function StoryGraph:linkBook(book, link_method)
   local filename = self.ui.document.file
 
   -- 1. Fetch remote status (API handles redirection and audio filtering internally)
@@ -66,6 +66,7 @@ function StoryGraph:linkBook(book)
     edition_format = status.edition_format or Book:editionFormatName(book.edition_format, book.reading_format_id),
     pages = book.pages,
     title = book.title,
+    link_method = link_method,
     _delete = delete
   }
 

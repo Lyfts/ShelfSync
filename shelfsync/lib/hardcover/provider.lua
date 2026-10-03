@@ -115,7 +115,7 @@ function Hardcover:changeBookVisibility(visibility)
   end
 end
 
-function Hardcover:linkBook(book)
+function Hardcover:linkBook(book, link_method)
   local filename = self.ui.document.file
 
   local delete = self:_deletedKeys(book, { "book_id", "edition_id", "edition_format", "pages", "title" })
@@ -126,6 +126,7 @@ function Hardcover:linkBook(book)
     edition_format = Book:editionFormatName(book.edition_format, book.reading_format_id),
     pages = book.pages,
     title = book.title,
+    link_method = link_method,
     _delete = delete
   }
 

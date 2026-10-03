@@ -13,7 +13,7 @@ local Pagebound = setmetatable({
 }, { __index = BaseProvider })
 Pagebound.__index = Pagebound
 
-function Pagebound:linkBook(book)
+function Pagebound:linkBook(book, link_method)
   local filename = self.ui.document.file
   local book_uuid = book.book_uuid or book.uuid
   local status = self.api:findUserBook(book.book_id, nil, book_uuid) or {}
@@ -26,6 +26,7 @@ function Pagebound:linkBook(book)
     book_uuid = book_uuid,
     pages = pages,
     title = book.title,
+    link_method = link_method,
     _delete = delete,
   }
 
