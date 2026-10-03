@@ -503,6 +503,78 @@ function FableApi:_systemListIds(user_id)
   return by_type
 end
 
+-- The book-detail endpoint normally carries the user's shelf as
+-- response.status, but a successful multiselect write can race that read
+-- (and a repeated add can return HTTP 409). The per-list books endpoints
+-- are the authoritative source for resolving that ambiguous state. This is
+-- intentionally used only after a status write, so ordinary status reads
+-- stay as cheap as the single book-detail request.
+function FableApi:_findUserBookInSystemLists(book_id, user_id)
+  local by_type = self:_systemListIds(user_id)
+  if not by_type then
+    return nil, "Could not load Fable system lists"
+  end
+
+  for status_id, system_type in pairs(FABLE.SYSTEM_TYPE) do
+    local list_id = by_type[system_type]
+    if not list_id then
+      return nil, "Fable system list missing: " .. system_type
+    end
+
+    local offset = 0
+    local limit = 100
+    while true do
+      local code, data = self:request(
+        "/api/v2/users/" .. user_id .. "/book_lists/" .. list_id
+          .. "/books?limit=" .. limit .. "&offset=" .. offset,
+        "GET"
+      )
+      if code ~= 200 or type(data) ~= "table" then
+        return nil, "Could not read Fable system list: " .. system_type
+      end
+
+      local books = data.results
+      if not books then
+        if #data > 0 or next(data) == nil then
+          books = data
+        else
+          return nil, "Unexpected Fable system-list response"
+        end
+      end
+      if type(books) ~= "table" then
+        return nil, "Unexpected Fable system-list response"
+      end
+
+      for _, entry in ipairs(books) do
+        if type(entry) == "table" then
+          local listed_book = type(entry.book) == "table" and entry.book or entry
+          local listed_id = listed_book.id or listed_book.book_id or entry.book_id
+          if listed_id ~= nil and tostring(listed_id) == tostring(book_id) then
+            if self.settings then
+              self.settings:debugLog("Fable: status reconciled from system-list membership")
+            end
+            return {
+              id = book_id,
+              book_id = book_id,
+              status_id = status_id,
+            }
+          end
+        end
+      end
+
+      if #books < limit then
+        break
+      end
+      offset = offset + limit
+    end
+  end
+
+  if self.settings then
+    self.settings:debugLog("Fable: no system-list membership found while reconciling status")
+  end
+  return nil
+end
+
 -- Shelves a book on exactly one of Fable's 4 system lists (see
 -- fable/constants.lua's SYSTEM_TYPE -- there is no "paused" list to worry
 -- about), excluding it from the other 3 in the same call. Confirmed via
@@ -517,6 +589,14 @@ function FableApi:updateUserBook(book_id, status_id)
         .. tostring(user_id) .. " target_type=" .. tostring(target_type))
     end
     return nil
+  end
+
+  -- Fable rejects an add to a system list the book is already on with HTTP
+  -- 409. Read the current shelf before writing so selecting the same status
+  -- again is an idempotent success instead of a redundant add request.
+  local current_status = self:findUserBook(book_id, user_id)
+  if current_status and current_status.status_id == status_id then
+    return current_status
   end
 
   local by_type = self:_systemListIds(user_id)
@@ -547,8 +627,30 @@ function FableApi:updateUserBook(book_id, status_id)
     }
   )
 
-  if code and code >= 200 and code < 300 then
-    return self:findUserBook(book_id, user_id)
+  if code and ((code >= 200 and code < 300) or code == 409) then
+    local status = self:findUserBook(book_id, user_id)
+    if status and status.status_id then
+      return status
+    end
+
+    -- Fable can accept the write before its book-detail status catches up;
+    -- it can also return 409 when that list membership already exists. In
+    -- both cases, read the system lists before reporting an empty status to
+    -- SyncEngine and triggering the mismatch dialog again.
+    local listed_status, reconcile_error = self:_findUserBookInSystemLists(book_id, user_id)
+    if listed_status then
+      return listed_status
+    end
+
+    if code == 409 then
+      if self.settings then
+        self.settings:debugWarn("Fable: status write returned HTTP 409 and no system-list membership was confirmed"
+          .. (reconcile_error and (" (" .. reconcile_error .. ")") or ""))
+      end
+      return nil
+    end
+
+    return status
   end
   return nil
 end
