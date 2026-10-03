@@ -103,14 +103,14 @@ KOReader's gesture manager includes a **ShelfSync: Update progress for all linke
 
 ## Settings
 
-Each service has its own **Settings** submenu for linking and account options:
-- **Automatically link by provider identifier/ISBN/Title**: Attempt to find matching books automatically when opening a new document, in that priority order — a provider identifier embedded in the book's metadata first, then ISBN, then title+author. Each method can be toggled independently, and all are enabled by default; disable any of them here if you'd rather link books manually. Identifier-based linking is supported for Goodreads (`goodreads:` tag), Hardcover (`hardcover:`/`hardcover-slug:`/`hardcover-edition:` tags), and StoryGraph (`storygraph:`/`storygraph-edition:` tags). Fable and Pagebound currently don't expose matching identifier schemes.
+Each service has its own **Settings** submenu for account options:
 - **Account**: Cookies/tokens/login for that service.
 
-Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Settings**, since it applies to the whole plugin rather than one service:
+Everything else — progress tracking settings, "Auto Book Link", "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Settings**, since it applies to the whole plugin rather than one service:
+- **Auto Book Link**: Attempt to find matching books automatically when opening a new document, by provider identifier, ISBN, or title+author, in that priority order — a provider identifier embedded in the book's metadata first, then ISBN, then title+author. Each method can be toggled independently. Identifier and ISBN linking are enabled by default; title+author linking is off by default, since title matching is fuzzy and can link the wrong book (e.g. a sample or a different edition). Turn it on here if you want it, or disable the others if you'd rather link books manually. Identifier-based linking is supported for Goodreads (`goodreads:` tag), Hardcover (`hardcover:`/`hardcover-slug:`/`hardcover-edition:` tags), and StoryGraph (`storygraph:`/`storygraph-edition:` tags). Fable and Pagebound currently don't expose matching identifier schemes.
 - **Include location info in regular notes**: Automatically append Chapter, Page, and % info to your regular notes.
 - **Enable wifi on demand**: Briefly enable wifi for background syncs to preserve battery life.
-- **Confirm changes to book read status**: Prompt for confirmation before changing a book's status (e.g., Want to Read -> Read).
+- **Confirm changes to book read status**: Prompt for confirmation before changing or removing a book's status (e.g., Want to Read -> Read). Enabled by default; turn it off to apply status changes with a single tap.
 
 ## Versioning & Mandatory Updates
 

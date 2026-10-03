@@ -213,14 +213,26 @@ function BaseSettings:setProviderEnabled(value)
   self:updateSetting(SETTING.PROVIDER_ENABLED, value == true)
 end
 
+-- Whether one AUTOLINK_OPTIONS method is turned on. Title+author matching is
+-- fuzzy and can link the wrong book (e.g. a sample or another edition), so
+-- it's off unless explicitly enabled. Identifier and ISBN matching stay on
+-- unless explicitly disabled.
+function BaseSettings:autolinkMethodEnabled(setting)
+  -- Must go through self:readSetting (not self.settings:readSetting)
+  -- since LINK_BY_ISBN/LINK_BY_TITLE are SHARED_KEYS: StoryGraph's
+  -- settings file is where they're actually stored, so reading straight
+  -- off this instance's own settings would always miss them for every
+  -- non-StoryGraph provider, silently disabling autolink for those.
+  local value = self:readSetting(setting)
+  if setting == SETTING.SHARED.LINK_BY_TITLE then
+    return value == true
+  end
+  return value ~= false
+end
+
 function BaseSettings:autolinkEnabled()
   for _, setting in ipairs(SETTING.AUTOLINK_OPTIONS) do
-    -- Must go through self:readSetting (not self.settings:readSetting)
-    -- since LINK_BY_ISBN/LINK_BY_TITLE are SHARED_KEYS: StoryGraph's
-    -- settings file is where they're actually stored, so reading straight
-    -- off this instance's own settings would always miss them for every
-    -- non-StoryGraph provider, silently disabling autolink for those.
-    if self:readSetting(setting) ~= false then
+    if self:autolinkMethodEnabled(setting) then
       return true
     end
   end
@@ -318,8 +330,10 @@ function BaseSettings:setMenuConfirm(status)
   self:updateSetting(SETTING.SHARED.MENU_CONFIRMATION, status)
 end
 
+-- On unless explicitly turned off, so a single tap can't change or remove a
+-- book's status by accident.
 function BaseSettings:menuConfirm()
-  return self:readSetting(SETTING.SHARED.MENU_CONFIRMATION) == true
+  return self:readSetting(SETTING.SHARED.MENU_CONFIRMATION) ~= false
 end
 
 function BaseSettings:syncByRemotePages()
