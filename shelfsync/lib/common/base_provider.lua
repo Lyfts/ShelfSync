@@ -218,6 +218,24 @@ function BaseProvider:getLinkedBookLabel()
   return T(_("Linked book (%1): %2"), method_label, tostring(title or ""))
 end
 
+-- The remote status of, and updateUserBook for, `book`: the settings of the
+-- book linked to a file, which needn't be the open one (SyncEngine's queued
+-- updates), or just its link if the file's gone. Pagebound overrides these,
+-- as its API also needs the book's UUID.
+function BaseProvider:findUserBookFor(book)
+  return self.api:findUserBook(book.book_id, self.user:getId())
+end
+
+function BaseProvider:updateUserBookFor(book, status_id, ...)
+  return self.api:updateUserBook(book.book_id, status_id, ...)
+end
+
+-- Whether pushProgress can send `update_type` progress for filename's book
+-- at all, so queued progress that never can isn't kept and retried.
+function BaseProvider:canPushProgress(_update_type, _filename)
+  return true
+end
+
 -- Keys of `book` that should be deleted (rather than written as nil) from
 -- the sidecar when linking, e.g. a search result that carries no page count.
 function BaseProvider:_deletedKeys(book, keys)
@@ -418,9 +436,19 @@ end
 -- from any of the ways that can happen (auto-track completion, EndOfBook,
 -- KOReader's own Book Status dialog, or the "Update status" menu). Default
 -- behavior is just the notifyBookFinished broadcast below; only Goodreads
--- overrides this, to also stamp its date-finished field.
-function BaseProvider:onMarkedFinished(_book_id, filename)
+-- overrides this, to also stamp its date-finished field. A queued "finished"
+-- (see SyncEngine:_sendPendingUpdate) also passes when it was finished, and
+-- is kept until this returns true.
+function BaseProvider:onMarkedFinished(_book_id, filename, _finished_at)
   self:notifyBookFinished(filename)
+  return true
+end
+
+-- Only Goodreads keeps the date a book was read apart from its status. Sets
+-- it for a queued "finished" whose status was already set, and returns
+-- whether it was.
+function BaseProvider:setDateFinished(_book_id, _finished_at)
+  return true
 end
 
 -- Broadcasts a plugin-wide "book finished" signal, picked up by

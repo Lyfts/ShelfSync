@@ -1399,7 +1399,7 @@ end
 --   3. POST /review/update/{id}        -- submit the review form with the
 --                                          new session's start/end date set
 --                                          to today
-function GoodreadsApi:setDateFinished(book_id)
+function GoodreadsApi:setDateFinished(book_id, finished_at)
   local csrf = self:refreshSession()
   if not csrf then
     logger.warn("Goodreads: Could not extract CSRF token for date-finished")
@@ -1445,7 +1445,8 @@ function GoodreadsApi:setDateFinished(book_id)
     return nil
   end
 
-  local today = os.date("*t")
+  -- A "finished" queued while offline keeps the day it was finished.
+  local today = os.date("*t", finished_at)
   local field_prefix = "review[user_reading_sessions_attributes][" .. rowid .. "]"
 
   local custom_headers = {

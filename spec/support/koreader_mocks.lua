@@ -256,8 +256,9 @@ package.loaded["socketutil"] = package.loaded["socketutil"] or {}
 ----------------------------------------------------------------------
 -- Fake docsettings/luasettings: simple in-memory per-path key/value stores,
 -- faithful enough to base_settings.lua's usage (readSetting/saveSetting/
--- flush). Keyed by path so `open()` for the same path returns the same
--- store, mirroring real KOReader's caching.
+-- flush). Keyed by path so docsettings' `open()` for the same path returns
+-- the same store. luasettings' `open()` reads a copy of the "file" instead,
+-- which only changes on flush(), like the real one.
 ----------------------------------------------------------------------
 local function makeStore()
   local data = {}
@@ -277,13 +278,49 @@ package.loaded["docsettings"] = {
   end,
 }
 
-local plugin_settings_stores = {}
+local function deepCopy(value)
+  if type(value) ~= "table" then return value end
+  local copy = {}
+  for k, v in pairs(value) do copy[k] = deepCopy(v) end
+  return copy
+end
+
+local plugin_settings_files = {}
 package.loaded["luasettings"] = {
   open = function(_, path)
-    plugin_settings_stores[path] = plugin_settings_stores[path] or makeStore()
-    return plugin_settings_stores[path]
+    local store = makeStore()
+    for k, v in pairs(deepCopy(plugin_settings_files[path] or {})) do
+      store._data[k] = v
+    end
+    store.flush = function() plugin_settings_files[path] = deepCopy(store._data) end
+    return store
   end,
 }
+
+-- Only `instance` (the open reader, if any) is used.
+local ReaderUI = {}
+package.loaded["apps/reader/readerui"] = ReaderUI
+
+-- Every book exists until deleteBook() or moveBook(), which take its
+-- settings with it, as KOReader's file manager does.
+local missing_files = {}
+package.loaded["libs/libkoreader-lfs"] = {
+  attributes = function(path, name)
+    if missing_files[path] then return nil end
+    return name == "mode" and "file" or { mode = "file" }
+  end,
+}
+
+local function deleteBook(path)
+  missing_files[path] = true
+  doc_settings_stores[path] = nil
+end
+
+local function moveBook(from, to)
+  doc_settings_stores[to] = doc_settings_stores[from]
+  deleteBook(from)
+  missing_files[to] = nil
+end
 
 ----------------------------------------------------------------------
 -- Reset helper for use in before_each: clears the clock, task queue,
@@ -303,7 +340,9 @@ local function reset()
   NetworkMgr.pending_connection = false
   NetworkMgr.wifi_was_on = false
   for k in pairs(doc_settings_stores) do doc_settings_stores[k] = nil end
-  for k in pairs(plugin_settings_stores) do plugin_settings_stores[k] = nil end
+  for k in pairs(plugin_settings_files) do plugin_settings_files[k] = nil end
+  for k in pairs(missing_files) do missing_files[k] = nil end
+  ReaderUI.instance = nil
   for i = #LOG, 1, -1 do LOG[i] = nil end
 end
 
@@ -313,7 +352,10 @@ return {
   Clock = Clock,
   UIManager = UIManager,
   NetworkMgr = NetworkMgr,
+  ReaderUI = ReaderUI,
   CONNECT_DELAY = CONNECT_DELAY,
   makeStore = makeStore,
+  deleteBook = deleteBook,
+  moveBook = moveBook,
   reset = reset,
 }

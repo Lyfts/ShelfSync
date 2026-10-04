@@ -109,6 +109,7 @@ Ratings range from 0 to 5 in quarter-star steps. Goodreads rounds down to whole 
 When enabled (per service), the plugin will periodically sync your progress:
 - Updates are sent when paging, no more than once per minute (configurable).
 - When reaching the end of the document, the book is automatically marked as "Read"/"Finished".
+- If progress can't be sent for lack of a network (e.g. Wi-Fi is off), the book's latest progress is kept for up to 4 weeks and sent once the network is back, even after the book is closed. A finished status set by KOReader (e.g. by its end-of-book action) that can't be sent, for lack of a network or because the service rejects it, is also kept and retried the same way. A status chosen in ShelfSync's menus isn't kept for later. Progress isn't sent if the service has the book further along, or not as Currently Reading. Goodreads and Fable don't expose your progress to check against, so there it's only sent within a day, to avoid overwriting newer progress from another device.
 - Progress can be synced automatically based on time duration, percentage read or pages read (based on edition page count).
 - Hardcover only stores progress as a page number; if a tracking mode produces a percentage instead (e.g. no page count is known for the linked edition), it's converted to a page number automatically before syncing.
 

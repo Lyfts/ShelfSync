@@ -49,6 +49,9 @@ end
 -- just because there's no existing user_book_reads entry yet.
 local Hardcover = setmetatable({
   allows_new_read = true,
+  -- A book findUserBook finds no status for isn't on the user's shelves,
+  -- rather than possibly on a page that loaded without them (Goodreads).
+  has_reliable_status = true,
 }, { __index = BaseProvider })
 Hardcover.__index = Hardcover
 
@@ -101,8 +104,7 @@ function Hardcover:showRandomBookDialog()
 end
 
 function Hardcover:updateCurrentBookStatus(status, privacy_setting_id)
-  self.cache:updateBookStatus(self.ui.document.file, status, privacy_setting_id)
-  if not self.state.book_status.id then
+  if not self.cache:updateBookStatus(self.ui.document.file, status, privacy_setting_id) then
     self.dialog_manager:showError("Book status could not be updated")
   end
 end
@@ -190,8 +192,9 @@ end
 
 -- Remote progress in `update_type`'s unit, read from a cached book_status
 -- table (e.g. self.state.book_status), used by SyncEngine to skip a
--- background write that would move progress backward.
-function Hardcover:getRemoteProgress(status, update_type)
+-- background write that would move progress backward. `filename` defaults
+-- to the open document.
+function Hardcover:getRemoteProgress(status, update_type, filename)
   local reads = status and status.user_book_reads
   local current_read = reads and reads[#reads]
   local remote_page = (current_read and tonumber(current_read.progress_pages)) or 0
@@ -200,7 +203,7 @@ function Hardcover:getRemoteProgress(status, update_type)
     return remote_page
   end
 
-  return pageToPercent(remote_page, tonumber(self.settings:pages())) or 0
+  return pageToPercent(remote_page, tonumber(self.settings:pages(filename))) or 0
 end
 
 -- Overall remote completion percent (0-100), or nil if unknown (no active
@@ -213,18 +216,24 @@ function Hardcover:getRemotePercent(status)
   return pageToPercent(page, tonumber(self.settings:pages()))
 end
 
+-- A percentage needs a page count to be converted to a page number.
+function Hardcover:canPushProgress(update_type, filename)
+  return update_type == "pages" or tonumber(self.settings:pages(filename)) ~= nil
+end
+
 -- Writes a page-progress update to Hardcover and returns the refreshed
 -- status, or nil plus an error reason on failure. `value` may be a page
 -- number or a percentage depending on `update_type`; it's always converted
 -- to a page number before writing, since that's all Hardcover accepts.
 -- Creates a new read session if the book doesn't have one yet, rather than
--- requiring one to exist.
-function Hardcover:pushProgress(current_read, value, update_type, _filename)
-  local edition_id = self.settings:getLinkedEditionId()
+-- requiring one to exist. `status` defaults to the open book's cached one;
+-- queued updates for other books pass their own.
+function Hardcover:pushProgress(current_read, value, update_type, filename, status)
+  local edition_id = self.settings:readBookSetting(filename, "edition_id")
 
   local page = value
   if update_type ~= "pages" then
-    page = percentToPage(value, tonumber(self.settings:pages()))
+    page = percentToPage(value, tonumber(self.settings:pages(filename)))
     if not page then
       return nil, "Hardcover: linked edition has no known page count"
     end
@@ -236,11 +245,12 @@ function Hardcover:pushProgress(current_read, value, update_type, _filename)
     return self.api:updatePage(current_read.id, edition_id, page, current_read.started_at)
   end
 
-  if not self.state.book_status.id then
+  status = status or self.state.book_status
+  if not status.id then
     return nil, "No linked book found on Hardcover"
   end
 
-  return self.api:createRead(self.state.book_status.id, edition_id, page, os.date("%Y-%m-%d"))
+  return self.api:createRead(status.id, edition_id, page, os.date("%Y-%m-%d"))
 end
 
 -- ReviewMenu entry point. Hardcover only accepts half-star increments, so a

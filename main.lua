@@ -152,9 +152,9 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
   }
 
   local user = User:new { api = provider.api, settings = settings }
-  local cache = Cache:new { api = provider.api, user = user, settings = settings, state = state, ui = self.ui }
-  local page_mapper = PageMapper:new { state = state, ui = self.ui }
   local wifi = AutoWifi:new { settings = settings, label = provider.label }
+  local cache = Cache:new { api = provider.api, user = user, settings = settings, state = state, ui = self.ui, wifi = wifi }
+  local page_mapper = PageMapper:new { state = state, ui = self.ui }
   local dialog_manager = DialogManager:new {
     api = provider.api,
     user = user,
@@ -549,7 +549,9 @@ end
 -- reach Finished for the same book and would otherwise each trigger their
 -- own popup.
 function ShelfSyncApp:onShelfSyncBookFinished(filename)
-  if self.state.review_prompted[filename] then
+  -- The Review menu is for the open book; a queued "finished" can be sent
+  -- for another one (or from the file browser).
+  if self.state.review_prompted[filename] or not (self.ui.document and self.ui.document.file == filename) then
     return
   end
   self.state.review_prompted[filename] = true

@@ -24,6 +24,7 @@ local logger = require("shelfsync/lib/common/safe_logger")
 
 local _t = require("shelfsync/lib/common/table_util")
 local SETTING = require("shelfsync/lib/common/constants/settings")
+local PendingUpdates = require("shelfsync/lib/common/pending_updates")
 
 local BaseSettings = {}
 BaseSettings.__index = BaseSettings
@@ -39,7 +40,9 @@ function BaseSettings:new(path, ui, sidecar_key, shared)
   local o = {}
   setmetatable(o, self)
 
+  o.path = path
   o.settings = LuaSettings:open(path)
+  o.pending_updates = PendingUpdates:new(path:gsub("%.lua$", "") .. "_pending.lua")
   o.ui = ui
   o.sidecar_key = sidecar_key
   o.subscribers = {}
@@ -117,6 +120,7 @@ function BaseSettings:updateBookSetting(filename, config)
   local sidecar = self:getDocSettings(filename)
   sidecar:saveSetting(self.sidecar_key, book_setting)
   sidecar:flush()
+  self.pending_updates:get(filename, self:fileSyncEnabled(filename) and book_setting)
 
   -- 4. Clean up global table (Migration)
   local books = self.settings:readSetting("books")
@@ -209,6 +213,13 @@ function BaseSettings:providerEnabled()
   return self:readSetting(SETTING.PROVIDER_ENABLED) ~= false
 end
 
+-- As providerEnabled, but as last saved. Each plugin instance reads its
+-- settings once, so a closed reader's, which can still be sending queued
+-- updates, doesn't see the provider turned off in the file browser's.
+function BaseSettings:providerEnabledOnDisk()
+  return LuaSettings:open(self.path):readSetting(SETTING.PROVIDER_ENABLED) ~= false
+end
+
 function BaseSettings:setProviderEnabled(value)
   self:updateSetting(SETTING.PROVIDER_ENABLED, value == true)
 end
@@ -279,8 +290,9 @@ end
 -- Checks every linked provider's own page count, not just this instance's,
 -- in PAGE_COUNT_PROVIDERS order, so eg. a Hardcover edition's page count is
 -- used for mapping even while running the StoryGraph or Goodreads engine.
-function BaseSettings:pages()
-  local filename = self:getFilePath()
+-- Defaults to the open document's page count.
+function BaseSettings:pages(filename)
+  filename = filename or self:getFilePath()
   if not filename then
     return nil
   end

@@ -16,6 +16,8 @@ local FABLE = require("shelfsync/lib/fable/constants")
 -- findUserBook came back with no user_book_reads to key off of.
 local Fable = setmetatable({
   allows_new_read = true,
+  -- See getRemoteProgress.
+  has_remote_progress = false,
 }, { __index = BaseProvider })
 Fable.__index = Fable
 

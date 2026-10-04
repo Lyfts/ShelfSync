@@ -14,6 +14,8 @@ local GOODREADS = require("shelfsync/lib/goodreads/constants")
 -- see the note on getRemoteProgress below for why there's nothing to read.
 local Goodreads = setmetatable({
   allows_new_read = true,
+  -- See getRemoteProgress.
+  has_remote_progress = false,
 }, { __index = BaseProvider })
 Goodreads.__index = Goodreads
 
@@ -109,9 +111,14 @@ end
 -- for Finished transitions that go through the shared status menu/SyncEngine,
 -- and directly above for the auto-track-to-100% finished path (which
 -- bypasses Cache since it needs updateUserBook's return value inline).
-function Goodreads:onMarkedFinished(book_id, filename)
+-- A queued "finished" is dated `finished_at`, when the book was finished.
+function Goodreads:onMarkedFinished(book_id, filename, finished_at)
   self:notifyBookFinished(filename)
-  self.api:setDateFinished(book_id)
+  return self:setDateFinished(book_id, finished_at)
+end
+
+function Goodreads:setDateFinished(book_id, finished_at)
+  return self.api:setDateFinished(book_id, finished_at)
 end
 
 -- ReviewMenu entry point: submits a star rating and/or free-text review from
