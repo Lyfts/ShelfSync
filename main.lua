@@ -500,7 +500,8 @@ function ShelfSyncApp:onShelfSyncUpdateAllProgress()
   return true
 end
 
-function ShelfSyncApp:onDocumentClose()
+-- ReaderUI sends "CloseDocument" while the document is still open.
+function ShelfSyncApp:onCloseDocument()
   for _, engine in pairs(self.engines) do
     engine:onDocumentClose()
   end
