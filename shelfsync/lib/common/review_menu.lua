@@ -217,14 +217,15 @@ function ReviewMenu:_submit(review, eligible)
     return false
   end
 
-  -- Not tied to any one provider's own wifi state -- reuse StoryGraph's, same
-  -- as main.lua's checkForUpdates does for other plugin-wide (not
-  -- per-provider) network actions.
+  -- Each provider's review is sent in turn with its other updates (see
+  -- Cache:serializeUpdate), e.g. after Goodreads has stamped the date read
+  -- for a book just finished, which rewrites the same review form.
   local filename = self.review_filename
   local rating, text = review.rating, review.text
-  self.app.engines.storygraph.wifi:withWifi(function()
-    local failed = {}
-    for _, entry in ipairs(selected) do
+  local failed = {}
+  local remaining = #selected
+  for _idx, entry in ipairs(selected) do
+    entry.engine.cache:serializeUpdate(function()
       local called, ok, reason = pcall(entry.engine.provider.submitReview,
         entry.engine.provider, filename, rating, text)
       if not called or not ok then
@@ -234,19 +235,25 @@ function ReviewMenu:_submit(review, eligible)
       else
         review.selected[entry.key] = false
       end
-    end
 
-    if #failed == 0 then
-      if self.review == review then self.review = nil end
-      UIManager:show(InfoMessage:new { text = _("Review submitted!") })
-    else
-      UIManager:show(InfoMessage:new {
-        text = _("Review failed for:") .. "\n" .. table.concat(failed, "\n")
-          .. "\n\n" .. _("Your draft is saved. Reopen Review to retry the failed providers."),
-        icon = "notice-warning",
-      })
-    end
-  end)
+      remaining = remaining - 1
+      if remaining > 0 then return end
+      if #failed == 0 then
+        if self.review == review then self.review = nil end
+        UIManager:show(InfoMessage:new { text = _("Review submitted!") })
+      else
+        local message = _("Review failed for:") .. "\n" .. table.concat(failed, "\n")
+        -- The draft goes with the reader once the book's closed.
+        if self.app.ui.document then
+          message = message .. "\n\n" .. _("Your draft is saved. Reopen Review to retry the failed providers.")
+        end
+        UIManager:show(InfoMessage:new {
+          text = message,
+          icon = "notice-warning",
+        })
+      end
+    end)
+  end
   return true
 end
 

@@ -103,18 +103,21 @@ function Hardcover:showRandomBookDialog()
   end)
 end
 
-function Hardcover:updateCurrentBookStatus(status, privacy_setting_id)
-  if not self.cache:updateBookStatus(self.ui.document.file, status, privacy_setting_id) then
-    self.dialog_manager:showError("Book status could not be updated")
-  end
-end
-
 function Hardcover:changeBookVisibility(visibility)
-  self.cache:cacheUserBook()
-
-  if self.state.book_status.id then
-    self:updateCurrentBookStatus(self.state.book_status.status_id, visibility)
+  local filename = self.settings:getFilePath()
+  local book_id = self.settings:readBookSetting(filename, "book_id")
+  -- Still sent if the book's closed before its turn, as long as its link hasn't changed.
+  local function linked()
+    return book_id and tostring(self.settings:readBookSetting(filename, "book_id")) == tostring(book_id)
   end
+  self.cache:serializeUpdate(function(wifi_error)
+    if wifi_error or not linked() then return end
+    self.cache:cacheUserBook(filename)
+    if linked() and self.state.book_status.id
+        and not self.cache:updateBookStatus(filename, self.state.book_status.status_id, visibility) then
+      self.dialog_manager:showError("Book status could not be updated")
+    end
+  end)
 end
 
 function Hardcover:linkBook(book, link_method)
@@ -256,7 +259,7 @@ end
 -- ReviewMenu entry point. Hardcover only accepts half-star increments, so a
 -- quarter-star value is rounded down to a half star here.
 function Hardcover:submitReview(filename, rating, text)
-  if self.cache then self.cache:cacheUserBook() end
+  if self.cache then self.cache:cacheUserBook(filename) end
   local user_book_id = self.state.book_status and self.state.book_status.id
   if not user_book_id then
     return false, "No linked book found on Hardcover"

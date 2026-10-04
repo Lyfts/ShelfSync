@@ -21,6 +21,11 @@ local SyncEngine = require("shelfsync/lib/common/sync_engine")
 local HardcoverProvider = require("shelfsync/lib/hardcover/provider")
 local HardcoverSettings = require("shelfsync/lib/hardcover/settings")
 local HardcoverApi = require("shelfsync/lib/hardcover/api")
+-- The status-menu tests don't open either progress widget.
+package.loaded["ui/widget/spinwidget"] = package.loaded["ui/widget/spinwidget"] or {}
+package.loaded["shelfsync/lib/common/ui/update_double_spin_widget"] =
+  package.loaded["shelfsync/lib/common/ui/update_double_spin_widget"] or {}
+local HardcoverMenu = require("shelfsync/lib/hardcover/menu")
 local HARDCOVER_CONST = require("shelfsync/lib/hardcover/constants")
 local GoodreadsProvider = require("shelfsync/lib/goodreads/provider")
 local GoodreadsSettings = require("shelfsync/lib/goodreads/settings")
@@ -174,6 +179,28 @@ describe("SyncEngine pending updates", function()
       UIManager:_runUntilIdle()
     end
 
+    -- Chooses the status menu item named `name` (after its icon), and confirms it.
+    local function chooseFromMenu(name, menu_instance)
+      local menu = HardcoverMenu:new {
+        api = api, cache = engine.cache, state = engine.state, ui = ui, settings = engine.settings,
+        dialog_manager = {
+          maybeConfirm = function(_, options) options.ok_callback() end,
+          showError = function(_, text) table.insert(shown, text) end,
+        },
+      }
+      for _, item in ipairs(menu:getStatusSubMenuItems()) do
+        if item.text and item.text:match("^%S+ (.*)$") == name then
+          item.callback(menu_instance or { updateItems = function() end })
+          return
+        end
+      end
+      error(name .. " menu item not found")
+    end
+
+    local function removeBook()
+      chooseFromMenu("Remove")
+    end
+
     local function pagesSent()
       local pages = {}
       for _, call in ipairs(calls.updatePage) do table.insert(pages, call.page) end
@@ -199,7 +226,7 @@ describe("SyncEngine pending updates", function()
       -- Fake Hardcover account. Like the real API, requests are skipped
       -- without an error while disconnected.
       remote = { id = 99, status_id = STATUS.READING, progress_pages = 20 }
-      calls = { findUserBook = {}, updateUserBook = {}, updatePage = {} }
+      calls = { findUserBook = {}, updateUserBook = {}, updatePage = {}, removeRead = {} }
       hooks = {}
       local function userBook(book_id)
         if not remote.id then return {} end
@@ -230,6 +257,13 @@ describe("SyncEngine pending updates", function()
           if runHook("updatePage") or not NetworkMgr._connected then return nil end
           remote.progress_pages = page
           return userBook(42)
+        end,
+        removeRead = function(_, read_id)
+          table.insert(calls.removeRead, read_id)
+          if runHook("removeRead") or not NetworkMgr._connected or read_id ~= remote.id then return nil end
+          remote.id = nil
+          remote.status_id = nil
+          return { id = read_id }
         end,
       }, { __index = HardcoverApi })
 
@@ -412,6 +446,109 @@ describe("SyncEngine pending updates", function()
 
       assert.are.equal(43, pending(settings).book_id)
       assert.are.equal(33, pending(settings).progress.value)
+    end)
+
+    it("sends a newly opened reader's live position after an older queued request finishes", function()
+      queue(settings, FILE, 10)
+      local tracking_during_request
+      hooks.updatePage = function()
+        openBook()
+        tracking_during_request = engine.state.process_page_turns
+      end
+
+      goOnline()
+      flushFromFileBrowser()
+      -- The new reader's status lookup waited for the queued request.
+      assert.is_falsy(tracking_during_request)
+      assert.is_true(engine.state.process_page_turns)
+
+      current_page = 150
+      engine:onPageUpdate(current_page)
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ 30, 150 }, pagesSent())
+      assert.are.equal(150, remote.progress_pages)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("looks up the open book's status on reconnect after its queued finished status is sent", function()
+      remote.id, remote.status_id = nil, nil
+      openBook()
+      UIManager:_runUntilIdle()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, nil, true)
+
+      -- Gives the read cache's lookup, started by the same reconnect, time
+      -- to run while the finished status is being sent.
+      hooks.updateUserBook = function() UIManager:_runUntil(mocks.Clock.now + 30) end
+      goOnline()
+      engine:onNetworkConnected()
+      UIManager:_runUntilIdle()
+
+      -- Not added back as Currently Reading by the lookup's automatic status.
+      assert.are.same({ STATUS.FINISHED }, calls.updateUserBook)
+      assert.are.equal(STATUS.FINISHED, remote.status_id)
+      assert.are.equal(STATUS.FINISHED, engine.state.book_status.status_id)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("doesn't add the open book back as Currently Reading when its status reads back empty after its queued finished status is sent", function()
+      remote.id, remote.status_id = nil, nil
+      openBook()
+      UIManager:_runUntilIdle()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, nil, true)
+
+      -- Reads lag the write, as Fable's can.
+      local lagging = 0
+      local findUserBook = api.findUserBook
+      api.findUserBook = function(...)
+        local result = findUserBook(...)
+        if lagging > 0 then
+          lagging = lagging - 1
+          return {}
+        end
+        return result
+      end
+      hooks.updateUserBook = function()
+        lagging = 3
+        UIManager:_runUntil(mocks.Clock.now + 30)
+      end
+      goOnline()
+      engine:onNetworkConnected()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ STATUS.FINISHED }, calls.updateUserBook)
+      assert.are.equal(STATUS.FINISHED, remote.status_id)
+      assert.are.equal(STATUS.FINISHED, engine.state.book_status.status_id)
+    end)
+
+    it("doesn't add a finished book as Currently Reading when it's opened while the file browser sends its queued finished status", function()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, nil, true)
+
+      -- Reads lag the write, as Fable's can.
+      local lagging = 0
+      local findUserBook = api.findUserBook
+      api.findUserBook = function(...)
+        local result = findUserBook(...)
+        if lagging > 0 then
+          lagging = lagging - 1
+          return {}
+        end
+        return result
+      end
+      hooks.updateUserBook = function()
+        lagging = 3
+        openBook()
+      end
+
+      goOnline()
+      flushFromFileBrowser()
+
+      assert.are.same({ STATUS.FINISHED }, calls.updateUserBook)
+      assert.are.equal(STATUS.FINISHED, remote.status_id)
+      assert.is_nil(pending(settings))
     end)
 
     it("completes a manual update cancelled while Wi-Fi is being restored", function()
@@ -661,6 +798,20 @@ describe("SyncEngine pending updates", function()
       assert.is_nil(pending(settings))
     end)
 
+    it("doesn't queue the closing position of a book removed through the menu", function()
+      goOnline()
+      openBook()
+      removeBook()
+      UIManager:_runUntilIdle()
+      assert.are.same({ 99 }, calls.removeRead)
+
+      goOffline()
+      current_page = 150
+      closeBook()
+
+      assert.is_nil(pending(settings))
+    end)
+
     it("keeps a finished status that couldn't be sent, along with the closing position", function()
       openBook()
       current_page = 300
@@ -759,14 +910,420 @@ describe("SyncEngine pending updates", function()
       assert.are.same({}, shown)
     end)
 
+    it("doesn't send an automatic finished update after sync is disabled while it awaits another write", function()
+      goOnline()
+      openBook()
+      queue(settings, OTHER_FILE, 50)
+      local saved
+      hooks.updatePage = function()
+        engine:_saveBookStatus(FILE, STATUS.FINISHED, function(result) saved = result end)
+        settings:updateBookSetting(FILE, { sync = false })
+      end
+
+      engine:flushPendingUpdates()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({}, calls.updateUserBook)
+      assert.are.equal(STATUS.READING, remote.status_id)
+      assert.is_false(saved)
+      assert.is_nil(pending(settings))
+    end)
+
     it("replaces a queued finished status with one set since", function()
       queue(settings, FILE, 50, true)
       goOnline()
 
-      engine.cache:updateBookStatus(FILE, STATUS.READING)
+      local saved
+      engine.cache:queueBookStatus(FILE, STATUS.READING, function(result) saved = result end)
+      UIManager:_runUntilIdle()
 
+      assert.is_true(saved)
       assert.is_nil(pending(settings).finished_at)
       assert.are.equal(50, pending(settings).progress.value)
+    end)
+
+    it("drops a queued finished status when another status is chosen from the menu, even if that can't be sent", function()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, 50, true)
+
+      local saved
+      engine.cache:queueBookStatus(FILE, STATUS.READING, function(result) saved = result end)
+      UIManager:_runUntilIdle()
+
+      assert.is_false(saved)
+      assert.is_nil(pending(settings).finished_at)
+      assert.are.equal(50, pending(settings).progress.value)
+
+      goOnline()
+      flushFromFileBrowser()
+
+      assert.are.same({ STATUS.READING }, calls.updateUserBook)
+      assert.are.same({ 150 }, pagesSent())
+      assert.are.equal(STATUS.READING, remote.status_id)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("drops a moved book's queued finished status when another status is chosen from the menu", function()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, nil, true)
+      mocks.moveBook(FILE, MOVED_FILE)
+      document.file = MOVED_FILE
+      openBook()
+      engine.settings:updateSetting(SETTING.SHARED.ENABLE_WIFI, true)
+
+      chooseFromMenu(HARDCOVER_CONST.STATUS_NAME[STATUS.READING])
+      UIManager:_runUntilIdle()
+      goOnline()
+      flushFromFileBrowser()
+
+      assert.are.same({ STATUS.READING }, calls.updateUserBook)
+      assert.are.equal(STATUS.READING, remote.status_id)
+      assert.is_nil(pending(settings, FILE))
+    end)
+
+    it("finishes a queued status write before a newer manual status and its continuation", function()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, nil, true)
+      local completed, cached_at_refresh = {}, nil
+      local updateUserBook = api.updateUserBook
+      api.updateUserBook = function(self, ...)
+        local result = updateUserBook(self, ...)
+        if result then table.insert(completed, result.status_id) end
+        return result
+      end
+      hooks.updateUserBook = function()
+        engine.cache:queueBookStatus(FILE, STATUS.READING, function(saved)
+          if saved then cached_at_refresh = engine.state.book_status.status_id end
+          table.insert(completed, "refreshed")
+        end)
+      end
+
+      goOnline()
+      flushFromFileBrowser()
+
+      assert.are.same({ STATUS.FINISHED, STATUS.READING, "refreshed" }, completed)
+      assert.are.equal(STATUS.READING, cached_at_refresh)
+      assert.are.equal(STATUS.READING, remote.status_id)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("keeps a queued finished status when the book's visibility is changed", function()
+      goOnline()
+      openBook()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, nil, true)
+
+      -- Sends the status the book has there as Private.
+      engine.provider:changeBookVisibility(HARDCOVER_CONST.PRIVACY.PRIVATE)
+      UIManager:_runUntilIdle()
+      assert.is_table(pending(settings))
+      assert.is_number(pending(settings).finished_at)
+
+      engine:flushPendingUpdates()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ STATUS.READING, STATUS.FINISHED }, calls.updateUserBook)
+      assert.are.equal(STATUS.FINISHED, remote.status_id)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("keeps a queued finished status when a visibility change is requested during its write", function()
+      goOnline()
+      openBook()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, nil, true)
+      local privacy
+      local updateUserBook = api.updateUserBook
+      api.updateUserBook = function(self, book_id, status_id, privacy_setting_id)
+        local result = updateUserBook(self, book_id, status_id)
+        if privacy_setting_id then privacy = privacy_setting_id end
+        return result
+      end
+      hooks.updateUserBook = function()
+        engine.provider:changeBookVisibility(HARDCOVER_CONST.PRIVACY.PRIVATE)
+      end
+
+      engine:flushPendingUpdates()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ STATUS.FINISHED, STATUS.FINISHED }, calls.updateUserBook)
+      assert.are.equal(HARDCOVER_CONST.PRIVACY.PRIVATE, privacy)
+      assert.are.equal(STATUS.FINISHED, remote.status_id)
+      assert.are.equal(STATUS.FINISHED, engine.state.book_status.status_id)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("still changes the book's visibility if it's closed while another update is being sent", function()
+      goOnline()
+      openBook()
+      local privacy
+      local updateUserBook = api.updateUserBook
+      api.updateUserBook = function(self, book_id, status_id, privacy_setting_id)
+        privacy = privacy_setting_id
+        return updateUserBook(self, book_id, status_id)
+      end
+      queue(settings, OTHER_FILE, 50)
+      hooks.findUserBook = function()
+        engine.provider:changeBookVisibility(HARDCOVER_CONST.PRIVACY.PRIVATE)
+        engine:onDocumentClose()
+        ui.document = nil
+        ReaderUI.instance = nil
+      end
+
+      engine:flushPendingUpdates()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ 150 }, pagesSent())
+      assert.are.same({ STATUS.READING }, calls.updateUserBook)
+      assert.are.equal(HARDCOVER_CONST.PRIVACY.PRIVATE, privacy)
+      assert.are.same({}, shown)
+    end)
+
+    it("removes pending progress and finished status when the book is removed through the menu", function()
+      goOnline()
+      openBook()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, 50, true)
+
+      removeBook()
+      engine:flushPendingUpdates()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ 99 }, calls.removeRead)
+      assert.are.same({}, calls.updateUserBook)
+      assert.is_nil(remote.status_id)
+      assert.are.same({}, engine.state.book_status)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("removes the book after a queued finished write that was already in flight", function()
+      goOnline()
+      openBook()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, nil, true)
+      hooks.updateUserBook = removeBook
+
+      engine:flushPendingUpdates()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ STATUS.FINISHED }, calls.updateUserBook)
+      assert.are.same({ 99 }, calls.removeRead)
+      assert.is_nil(remote.status_id)
+      assert.are.same({}, engine.state.book_status)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("removes the recreated library entry when Reading is queued between removals across reader instances", function()
+      goOnline()
+      openBook()
+      hooks.removeRead = function()
+        engine.cache:queueBookStatus(FILE, STATUS.READING)
+        closeBook()
+        openBook()
+        removeBook()
+      end
+
+      removeBook()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ 99, 100 }, calls.removeRead)
+      assert.is_nil(remote.id)
+      assert.is_nil(remote.status_id)
+      assert.are.same({}, engine.state.book_status)
+    end)
+
+    it("drops pending updates when the book is removed through the menu, even if that fails", function()
+      goOnline()
+      openBook()
+      goOffline()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, 50, true)
+
+      removeBook()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({}, calls.removeRead)
+      assert.are.equal(STATUS.READING, engine.state.book_status.status_id)
+      assert.are.same({ "Book status could not be removed" }, shown)
+      assert.is_nil(pending(settings))
+
+      goOnline()
+      engine:flushPendingUpdates()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({}, calls.updateUserBook)
+      assert.are.equal(STATUS.READING, remote.status_id)
+    end)
+
+    it("drops a moved book's queued finished status when it's removed through the menu", function()
+      ui.doc_settings:saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, nil, true)
+      mocks.moveBook(FILE, MOVED_FILE)
+      document.file = MOVED_FILE
+      openBook()
+      goOnline()
+
+      removeBook()
+      UIManager:_runUntilIdle()
+      flushFromFileBrowser()
+
+      assert.are.same({ 99 }, calls.removeRead)
+      assert.are.same({}, calls.updateUserBook)
+      assert.is_nil(remote.status_id)
+      assert.is_nil(pending(settings, FILE))
+    end)
+
+    it("says when a status chosen from the menu couldn't be set", function()
+      goOnline()
+      openBook()
+      goOffline()
+
+      chooseFromMenu(HARDCOVER_CONST.STATUS_NAME[STATUS.FINISHED])
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ STATUS.FINISHED }, calls.updateUserBook)
+      assert.are.same({ "Book status could not be updated" }, shown)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("refreshes the status menu once a status is set, unless another menu was opened in the meantime", function()
+      goOnline()
+      openBook()
+      engine.settings:updateSetting(SETTING.SHARED.ENABLE_WIFI, true)
+      goOffline()
+      local status_items = {}
+      local menu_instance = { item_table = status_items, updateItems = function() end }
+
+      chooseFromMenu(HARDCOVER_CONST.STATUS_NAME[STATUS.FINISHED], menu_instance)
+      UIManager:_runUntilIdle()
+      assert.are.equal(STATUS.FINISHED, remote.status_id)
+      assert.are_not.equal(status_items, menu_instance.item_table)
+
+      -- e.g. back up to the parent menu while Wi-Fi is being restored
+      goOffline()
+      local other_items = {}
+      chooseFromMenu(HARDCOVER_CONST.STATUS_NAME[STATUS.READING], menu_instance)
+      menu_instance.item_table = other_items
+      UIManager:_runUntilIdle()
+      assert.are.equal(STATUS.READING, remote.status_id)
+      assert.are.equal(other_items, menu_instance.item_table)
+
+      goOffline()
+      menu_instance.item_table = status_items
+      chooseFromMenu("Remove", menu_instance)
+      menu_instance.item_table = other_items
+      UIManager:_runUntilIdle()
+      assert.is_nil(remote.status_id)
+      assert.are.equal(other_items, menu_instance.item_table)
+    end)
+
+    it("doesn't send live progress allowed before a removal that took its turn first", function()
+      goOnline()
+      openBook()
+      queue(settings, OTHER_FILE, 50)
+      hooks.updatePage = function()
+        -- While that's being sent, the book's removed through the menu, and
+        -- then its page is sent while it still has its old status.
+        removeBook()
+        current_page = 60
+        engine.state.page = current_page
+        engine:updatePageNow()
+      end
+
+      engine:flushPendingUpdates()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ 99 }, calls.removeRead)
+      assert.are.same({ 150 }, pagesSent())
+      assert.is_nil(remote.status_id)
+      assert.are.same({}, engine.state.book_status)
+    end)
+
+    it("doesn't send a background position behind a manual update that took its turn first", function()
+      goOnline()
+      openBook()
+
+      -- Sent a second from now.
+      current_page = 90
+      engine:onPageUpdate(current_page)
+      current_page = 240
+      engine.state.page = current_page
+      engine:updatePageNow(function() end)
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ 240 }, pagesSent())
+      assert.are.equal(240, remote.progress_pages)
+    end)
+
+    it("doesn't send a background position behind a manual update that took its turn first, "
+        .. "even without remote progress to compare against", function()
+      goOnline()
+      openBook()
+      -- As on Goodreads and Fable.
+      engine.provider.getRemoteProgress = function() return 0 end
+
+      current_page = 90
+      engine:onPageUpdate(current_page)
+      current_page = 240
+      engine.state.page = current_page
+      engine:updatePageNow(function() end)
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ 240 }, pagesSent())
+    end)
+
+    it("sends a review for its book even if that's closed while Wi-Fi is being restored to send it", function()
+      goOnline()
+      openBook()
+      engine.settings:updateSetting(SETTING.SHARED.ENABLE_WIFI, true)
+      goOffline()
+      local reviewed
+      api.updateReview = function(_, user_book_id, rating, text)
+        reviewed = { user_book_id, rating, text }
+        return {}
+      end
+
+      -- As ReviewMenu:_submit sends it.
+      engine.cache:serializeUpdate(function()
+        engine.provider:submitReview(FILE, 4, "Worth reading")
+      end)
+      UIManager:_runUntil(mocks.Clock.now + 0.5)
+      closeBook()
+
+      assert.are.same({ 99, 4, "Worth reading" }, reviewed)
+    end)
+
+    it("holds Wi-Fi until a flush queued behind a manual status has finished", function()
+      queue(settings, FILE, 50)
+      goOnline()
+
+      -- Another provider restored Wi-Fi and still owns one lease. The fake
+      -- request releases it while the manual status is awaiting its response.
+      local leases = 1
+      local function release()
+        leases = leases - 1
+        if leases == 0 then goOffline() end
+      end
+      engine.wifi.withWifi = function(_, callback)
+        leases = leases + 1
+        callback(true)
+        release()
+      end
+      hooks.updateUserBook = function()
+        engine:flushPendingUpdates()
+        release()
+      end
+
+      local saved
+      engine.cache:queueBookStatus(FILE, STATUS.READING, function(result) saved = result end)
+      UIManager:_runUntilIdle()
+
+      assert.is_true(saved)
+      assert.are.same({ 150 }, pagesSent())
+      assert.are.equal(150, remote.progress_pages)
+      assert.is_nil(pending(settings))
+      assert.are.equal(0, leases)
+      assert.is_false(NetworkMgr:isConnected())
     end)
 
     it("doesn't send a queued finished status once the book is marked as reading again", function()
@@ -1044,6 +1601,28 @@ describe("SyncEngine pending updates", function()
       UIManager:_runUntilIdle()
 
       assert.are.same({}, calls.updatePage)
+      assert.are.same({ STATUS.FINISHED }, calls.updateUserBook)
+      assert.are.equal(STATUS.FINISHED, remote.status_id)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("still sends the finished status of a book deleted while an earlier update is being sent", function()
+      goOnline()
+      openBook()
+      hooks.updatePage = function()
+        current_page = 300
+        ui.doc_settings:saveSetting("summary", { status = "complete" })
+        engine:onEndOfBook()
+        engine:onDocumentClose()
+        ui.document = nil
+        ReaderUI.instance = nil
+        mocks.deleteBook(FILE)
+      end
+      current_page = 30
+      engine:onPageUpdate(current_page)
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ 30 }, pagesSent())
       assert.are.same({ STATUS.FINISHED }, calls.updateUserBook)
       assert.are.equal(STATUS.FINISHED, remote.status_id)
       assert.is_nil(pending(settings))
@@ -1529,6 +2108,64 @@ describe("SyncEngine pending updates", function()
 
   describe("with Pagebound", function()
     local SETTINGS_PATH = "/settings/pagebound.lua"
+
+    it("keeps the book UUID for a manual status delayed until after the book closes", function()
+      local ui = newUi(document)
+      ReaderUI.instance = ui
+      local settings = PageboundSettings:new(SETTINGS_PATH, ui, nil)
+      settings:updateBookSetting(FILE, { book_id = "42", book_uuid = "uuid-42", pages = 300 })
+      settings:updateBookSetting(OTHER_FILE, { book_id = "43", book_uuid = "uuid-43", pages = 300 })
+
+      local json = require("json")
+      json.util = json.util or { null = {} }
+      json.util.InitArray = json.util.InitArray or function(values) return values end
+      local reader, saved
+      local status_id = PAGEBOUND_CONST.STATUS.READING
+      local requests = {}
+      local api = setmetatable({
+        settings = settings,
+        hasCredential = function() return true end,
+        findUserBook = function(_, book_id, _user_id, book_uuid)
+          if not book_uuid then return {}, "Missing Pagebound book UUID" end
+          return {
+            id = "user-" .. book_id, book_id = book_id, book_uuid = book_uuid,
+            status_id = book_id == "42" and status_id or PAGEBOUND_CONST.STATUS.READING,
+            total_page_count = 300, user_book_reads = { { id = 9 } },
+          }
+        end,
+        updateProgress = function()
+          reader.cache:queueBookStatus(FILE, PAGEBOUND_CONST.STATUS.READING, function(result) saved = result end)
+          reader:onDocumentClose()
+          ui.document = nil
+          ReaderUI.instance = nil
+          return { status_id = PAGEBOUND_CONST.STATUS.READING, total_page_count = 300 }
+        end,
+        request = function(_, path, method, payload)
+          table.insert(requests, { path = path, method = method, status = payload.status })
+          status_id = PAGEBOUND_CONST.STATUS_BY_SYSTEM_STATUS[payload.status]
+          return 200, {}
+        end,
+      }, { __index = PageboundApi })
+      reader = newEngine {
+        label = "Pagebound", constants = PAGEBOUND_CONST, Provider = PageboundProvider,
+        settings = settings, api = api, ui = ui,
+      }
+
+      goOnline()
+      reader.cache:queueBookStatus(FILE, PAGEBOUND_CONST.STATUS.FINISHED, function(result) saved = result end)
+      assert.is_true(saved)
+      saved = nil
+      queue(settings, OTHER_FILE, 50)
+      reader:flushPendingUpdates()
+      UIManager:_runUntilIdle()
+
+      assert.is_true(saved)
+      assert.are.same({
+        { path = "/api/v1/user_books/user-42", method = "PUT", status = "finished" },
+        { path = "/api/v1/user_books/user-42", method = "PUT", status = "current" },
+      }, requests)
+      assert.is_nil(pending(settings, OTHER_FILE))
+    end)
 
     for _, has_read in ipairs({ true, false }) do
       it("uses a closed book's page count when the remote count is missing and the session "

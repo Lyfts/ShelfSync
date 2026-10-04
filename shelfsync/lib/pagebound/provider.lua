@@ -170,7 +170,7 @@ function Pagebound:submitReview(filename, rating, text)
     return false, "No linked book found on Pagebound"
   end
 
-  local cache_error = self.cache and self.cache:cacheUserBook()
+  local cache_error = self.cache and self.cache:cacheUserBook(filename)
   if cache_error then
     return false, cache_error
   end

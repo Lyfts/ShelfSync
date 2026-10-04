@@ -78,8 +78,10 @@ describe("Review composer", function()
           bookLinked = function() return true end,
         },
         api = { hasCredential = function() return true end },
-        cache = { cacheUserBook = function() cached = cached + 1 end },
-        wifi = { withWifi = function(_, callback) callback() end },
+        cache = {
+          cacheUserBook = function() cached = cached + 1 end,
+          serializeUpdate = function(_, callback) callback() end,
+        },
         provider = { submitReview = function(_, filename, rating, text)
           submitted[provider.key] = { filename, rating, text }
           return true
@@ -203,6 +205,46 @@ describe("Review composer", function()
     assert.matches("Goodreads: HTTP 404", shown[#shown].text)
     assert.matches("Hardcover:", shown[#shown].text)
     assert.matches("Fable: HTTP 500", shown[#shown].text)
+    assert.matches("Your draft is saved.", shown[#shown].text, 1, true)
+  end)
+
+  it("reports a provider that fails without giving a reason", function()
+    composer:show()
+    composer.app.engines.storygraph.provider.submitReview = function() return false end
+    control("submit").callback()
+    assert.matches("StoryGraph: The provider did not confirm the review was saved.", shown[#shown].text, 1, true)
+  end)
+
+  it("sends each provider's review after that provider's earlier updates", function()
+    local waiting = {}
+    composer.app.engines.goodreads.cache.serializeUpdate = function(_, callback)
+      table.insert(waiting, callback)
+    end
+    composer:show()
+    composer.review.text = "Worth reading"
+    control("submit").callback()
+    assert.is_nil(submitted.goodreads)
+    assert.same({ "one.epub", 3, "Worth reading" }, submitted.storygraph)
+    assert.is_nil(shown[#shown].text)
+
+    waiting[1]()
+    assert.same({ "one.epub", 3, "Worth reading" }, submitted.goodreads)
+    assert.equals("Review submitted!", shown[#shown].text)
+  end)
+
+  it("doesn't say the draft is saved when a review fails after the book's closed", function()
+    local waiting = {}
+    composer.app.engines.goodreads.cache.serializeUpdate = function(_, callback)
+      table.insert(waiting, callback)
+    end
+    composer.app.engines.goodreads.provider.submitReview = function() return false, "HTTP 500" end
+    composer:show()
+    control("submit").callback()
+
+    composer.app.ui.document = nil
+    waiting[1]()
+    assert.matches("Goodreads: HTTP 500", shown[#shown].text)
+    assert.is_nil(shown[#shown].text:find("draft", 1, true))
   end)
 
 end)

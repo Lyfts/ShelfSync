@@ -414,18 +414,9 @@ function SyncEngine:warnStatusMismatch(filename)
     ok_text = _("Mark as Reading"),
     cancel_text = _("Ignore"),
     ok_callback = function()
-      self.wifi:withWifi(function(_wifi_enabled, wifi_error)
-        if wifi_error then
-          UIManager:show(InfoMessage:new {
-            text = _("Failed to update status on " .. self.label),
-            icon = "notice-warning",
-          })
-          return
-        end
-
-        self.cache:updateBookStatus(filename, self.constants.STATUS.READING)
+      self.cache:queueBookStatus(filename, self.constants.STATUS.READING, function(saved)
         self:registerHighlight()
-        if self.state.book_status.status_id == self.constants.STATUS.READING then
+        if saved then
           UIManager:show(Notification:new {
             text = _("Marked as Currently Reading")
           })
@@ -510,12 +501,29 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
   -- longer needs to be.
   local unsent = { value = value, update_type = update_type, book_id = book_id, edition_id = edition_id }
   local earlier_unsent = self.state.unsent_progress
+  local earlier_synced = self.state.synced_progress
   if not (immediate and callback) then
     self.state.unsent_progress = unsent
   end
 
   local update = function(wifi_error)
     if not currentBook() then return bail(_("Progress update cancelled")) end
+    -- A status change or removal that took its turn first can't be undone by
+    -- progress allowed by the status before it.
+    reads = self.state.book_status.user_book_reads
+    current_read = reads and reads[#reads]
+    if self.state.book_status.status_id ~= self.constants.STATUS.READING
+        or not (current_read or self.provider.allows_new_read) then
+      return bail(_("Book is not currently marked as reading on " .. self.label))
+    end
+    -- Nor can a background update undo progress sent while it waited, e.g.
+    -- by a manual update.
+    local synced = self.state.synced_progress
+    if not immediate and (value < self.provider:getRemoteProgress(self.state.book_status, update_type)
+        or synced ~= earlier_synced and synced.update_type == update_type and value < synced.value) then
+      logger.info(self.label .. ": Local progress (" .. value .. " " .. update_type .. ") is behind progress sent since. Skipping auto-update.")
+      return
+    end
     -- Not sent at all, even if Wi-Fi connected without getting online.
     if wifi_error then
       queue()
@@ -558,11 +566,7 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
 
   local immediate_update = function()
     if not currentBook() then return bail(_("Progress update cancelled")) end
-    self.wifi:withWifi(function(_wifi_enabled, wifi_error)
-      -- AutoWifi supplies the Trapper coroutine and keeps its Wi-Fi lease
-      -- until update (including its subprocess request) returns.
-      update(wifi_error)
-    end)
+    self.cache:serializeUpdate(update)
   end
 
   if immediate then
@@ -798,9 +802,11 @@ function SyncEngine:_queueClosingProgress()
   local filename = self.settings:getFilePath()
   local book = self:_syncedBook(filename)
   local status_id = self.state.book_status.status_id
-  -- Not if the book's known not to be being read there. A status that
-  -- couldn't be read or set (e.g. offline) is checked when it's sent.
-  if not (book and self:isActive()) or (status_id and status_id ~= self.constants.STATUS.READING) then
+  -- Not if the book's known not to be being read there, or to have no status
+  -- there since it was removed from the menu. A status that couldn't be read
+  -- or set (e.g. offline) is checked when it's sent.
+  if not (book and self:isActive()) or (status_id and status_id ~= self.constants.STATUS.READING)
+      or self.state.book_status == self.state.removed_status then
     return
   end
 
@@ -1078,7 +1084,7 @@ function SyncEngine:_saveBookStatus(filename, status, callback, finished_at)
       return book
     end
   end
-  self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+  self.cache:serializeUpdate(function(wifi_error)
     local saved = not wifi_error and currentBook() and self.cache:updateBookStatus(filename, status)
     local book = currentBook()
     if not book then
@@ -1194,12 +1200,21 @@ function SyncEngine:startReadCache()
           if self.state.book_status.id and self.state.book_status.status_id then
             return success()
           else
-            self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+            -- In turn with this provider's other updates, so the lookup and
+            -- the automatic Currently Reading below can't cross a queued or
+            -- manual status change for the book.
+            self.cache:serializeUpdate(function(wifi_error)
               -- Wi-Fi restoration can take long enough for the reader to
               -- close this book or open another one. Don't let a stale cache
               -- request act on the new document (or on no document at all).
               if self.ui.document ~= document then
                 return
+              end
+
+              -- Set while this waited, e.g. by sending a queued finished
+              -- status, which a lagging read could otherwise undo below.
+              if self.state.book_status.id and self.state.book_status.status_id then
+                return success()
               end
 
               if wifi_error then
@@ -1236,6 +1251,15 @@ function SyncEngine:startReadCache()
                   -- stable no-status result. Network errors keep the normal
                   -- exponential backoff below.
                   return fail(2)
+                end
+
+                -- Not for a book KOReader has marked as finished, which may
+                -- just have had its queued finished status sent, by the file
+                -- browser or a closed reader, and read back empty.
+                local summary = self.settings:getDocSettings(filename):readSetting("summary")
+                if summary and summary.status == "complete" then
+                  logger.info(self.label .. ": Already-linked book has no status, but is finished, not adding it to Currently Reading")
+                  return success()
                 end
 
                 -- Still genuinely no status after retrying: mirror linkBook()'s
