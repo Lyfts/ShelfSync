@@ -992,12 +992,24 @@ function GoodreadsApi:findBooks(title, author, _userId)
   local query = title
   if author and author ~= "" then query = query .. " " .. author end
   local search_url = base_url .. "/search?q=" .. urlencode(query)
-  local code, html, resp_headers = self:request(search_url, "GET")
+  local code, html, resp_headers, request_err = self:request(search_url, "GET")
+
+  if request_err then
+    return {}, request_err
+  end
+
+  local final_url = resp_headers and resp_headers["x-final-url"]
+  if final_url and (final_url:find("/user/sign_in", 1, true) or final_url:find("/ap/signin", 1, true)) then
+    self:notifyAuthFailure()
+    return {}, "Unauthorized"
+  end
+
+  if resp_headers and resp_headers["x-amzn-waf-action"] then
+    return {}, "Search blocked by Goodreads bot-challenge (WAF) -- try a fresh session cookie"
+  end
 
   if code ~= 200 or not html then
-    if resp_headers and resp_headers["x-amzn-waf-action"] then
-      return {}, "Search blocked by Goodreads bot-challenge (WAF) -- try a fresh session cookie"
-    end
+    if not code and html then return {}, html end
     logger.warn("Goodreads search failed. Code:", code)
     return {}, "Search failed with code " .. (code or "unknown")
   end
@@ -1008,7 +1020,6 @@ function GoodreadsApi:findBooks(title, author, _userId)
   -- /book/show/{id} here and build a single result from that page's JSON-LD
   -- data instead of running the search-results card parser below against
   -- HTML that was never a results list to begin with.
-  local final_url = resp_headers and resp_headers["x-final-url"]
   local redirected_book_id = final_url and final_url:match("/book/show/(%d+)")
   if redirected_book_id then
     local book_data = parse_ldjson_book(html)
@@ -1078,6 +1089,51 @@ function GoodreadsApi:findBooks(title, author, _userId)
         book_series = {},
         description = "",
       })
+    end
+  end
+
+  -- Goodreads periodically changes the nesting and attributes around its
+  -- search-result titles. If the known data-testid structure is absent, fall
+  -- back to book-page links so a harmless markup change doesn't turn every
+  -- query into an empty result list.
+  if #results == 0 then
+    local link_pos = 1
+    local link_index = 0
+    while true do
+      local s, e, book_id, title_html = html:find(
+        '<a[^>]-href="[^"]*/book/show/(%d+)[^"]*"[^>]*>(.-)</a>',
+        link_pos
+      )
+      if not s or not e then break end
+      link_pos = e + 1
+      link_index = link_index + 1
+
+      if book_id and not seen[book_id] then
+        local title_text = decode_entities(title_html:gsub("<[^>]+>", " "))
+        title_text = title_text:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+        if title_text ~= "" then
+          seen[book_id] = true
+          local after = html:sub(e, e + 600)
+          local author_text = after:match('data%-testid="name">([^<]+)</span>') or "Unknown Author"
+          author_text = decode_entities(author_text)
+
+          local cover_url
+          local kca_pos = kca_positions[link_index]
+          if kca_pos then
+            local cover_window = html:sub(kca_pos, kca_pos + 1500)
+            cover_url = cover_window:match('data%-testid="responsive%-image"[^>]-src="([^"]+)"')
+          end
+
+          table.insert(results, {
+            book_id = book_id,
+            title = title_text,
+            contributions = { { author = { name = author_text } } },
+            cached_image = { url = cover_url },
+            book_series = {},
+            description = "",
+          })
+        end
+      end
     end
   end
 

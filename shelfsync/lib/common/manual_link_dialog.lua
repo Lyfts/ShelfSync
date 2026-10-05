@@ -62,6 +62,17 @@ function ManualLinkDialog:_unavailableReason(engine)
   return T(_("%1 is unavailable for book linking."), _(engine.label))
 end
 
+function ManualLinkDialog:_showSearchError(provider, err)
+  if err == "Unauthorized" then
+    -- The provider's auth callback already opened its reauthentication help.
+    return
+  end
+  UIManager:show(InfoMessage:new {
+    text = T(_("%1 book search failed:\n%2"), _(provider.label), tostring(err)),
+    icon = "notice-warning",
+  })
+end
+
 function ManualLinkDialog:_setItems(provider, engine, title, books, search_value)
   if not self.dialog then
     return
@@ -110,7 +121,10 @@ function ManualLinkDialog:selectProvider(key)
     end
     if err then
       logger.err(err)
-      books = {}
+      self.provider_data[provider.key] = nil
+      self:_showSearchError(provider, err)
+      self:_setItems(provider, engine, self:_title(provider), {}, nil)
+      return
     end
     self.provider_data[provider.key] = {
       title = self:_title(provider),
@@ -144,7 +158,10 @@ function ManualLinkDialog:search(search_value)
     end
     if err then
       logger.err(err)
-      books = {}
+      self.provider_data[key] = nil
+      self:_showSearchError(provider, err)
+      self:_setItems(provider, engine, self:_title(provider), {}, search_value)
+      return
     end
     self.provider_data[key] = {
       title = self:_title(provider),
