@@ -334,8 +334,10 @@ function BaseSettings:setMenuConfirm(status)
   self:updateSetting(SETTING.SHARED.MENU_CONFIRMATION, status)
 end
 
+-- On unless explicitly turned off, so a single tap can't change or remove a
+-- book's status by accident.
 function BaseSettings:menuConfirm()
-  return self:readSetting(SETTING.SHARED.MENU_CONFIRMATION) == true
+  return self:readSetting(SETTING.SHARED.MENU_CONFIRMATION) ~= false
 end
 
 function BaseSettings:syncByRemotePages()

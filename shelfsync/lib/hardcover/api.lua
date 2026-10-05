@@ -94,7 +94,9 @@ end
 
 -- The journal dialog's shared data is intentionally provider-neutral. Hardcover
 -- stores notes, progress and dates in a different shape from StoryGraph's
--- progress-with-note endpoint.
+-- progress-with-note endpoint. A journal entry is always a new record, so
+-- without the account's default privacy it falls back to Private rather than
+-- Public.
 local function mapJournalData(data, default_privacy_setting_id)
   local object = {
     book_id = tonumber(data.book_id),
@@ -103,7 +105,7 @@ local function mapJournalData(data, default_privacy_setting_id)
     edition_id = tonumber(data.edition_id),
     privacy_setting_id = tonumber(data.privacy_setting_id)
       or tonumber(default_privacy_setting_id)
-      or 1,
+      or HARDCOVER.PRIVACY.PRIVATE,
     -- The API requires tags even when the reader has not supplied any.
     tags = json.util.InitArray({}),
   }
@@ -340,7 +342,7 @@ function HardcoverApi:me()
   }]])
 
   if result and result.me then
-    return result.me[1]
+    return result.me[1] or {}
   end
   return {}
 end
@@ -923,8 +925,24 @@ end
 
 function HardcoverApi:updateUserBook(book_id, status_id, privacy_setting_id, edition_id)
   if not privacy_setting_id then
+    -- insert_user_book also updates existing records. Preserve their privacy;
+    -- use the account default (or Private) only after confirming the book is new.
     local me = self:me()
-    privacy_setting_id = me.account_privacy_setting_id or 1
+    if not me.id then
+      return nil, { request_error = "Could not determine Hardcover user" }
+    end
+
+    local existing, lookup_error = self:findUserBook(book_id, me.id)
+    if lookup_error then
+      return nil, lookup_error
+    end
+
+    privacy_setting_id = tonumber(existing and existing.privacy_setting_id)
+    if existing and not privacy_setting_id then
+      return nil, { request_error = "Could not determine existing book privacy" }
+    end
+    privacy_setting_id = privacy_setting_id or tonumber(me.account_privacy_setting_id)
+      or HARDCOVER.PRIVACY.PRIVATE
   end
 
   local query = [[
