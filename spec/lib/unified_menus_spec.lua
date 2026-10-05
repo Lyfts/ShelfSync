@@ -13,13 +13,18 @@ package.loaded["shelfsync/lib/common/ui/update_double_spin_widget"] = original_d
 
 local ProviderSettingsMenu = require("shelfsync/lib/common/provider_settings_menu")
 local AccountsMenu = require("shelfsync/lib/common/accounts_menu")
+local STORYGRAPH = require("shelfsync/lib/storygraph/constants")
+local HARDCOVER = require("shelfsync/lib/hardcover/constants")
+local GOODREADS = require("shelfsync/lib/goodreads/constants")
+local FABLE = require("shelfsync/lib/fable/constants")
+local PAGEBOUND = require("shelfsync/lib/pagebound/constants")
 
 local providers = {
-  { key = "storygraph", label = "StoryGraph", prefix = "StoryGraph" },
-  { key = "hardcover", label = "Hardcover", prefix = "Hardcover" },
-  { key = "goodreads", label = "Goodreads", prefix = "Goodreads" },
-  { key = "fable", label = "Fable", prefix = "Fable" },
-  { key = "pagebound", label = "Pagebound", prefix = "Pagebound" },
+  { key = "storygraph", label = "StoryGraph", prefix = "StoryGraph", constants = STORYGRAPH },
+  { key = "hardcover", label = "Hardcover", prefix = "Hardcover", constants = HARDCOVER },
+  { key = "goodreads", label = "Goodreads", prefix = "Goodreads", constants = GOODREADS },
+  { key = "fable", label = "Fable", prefix = "Fable", constants = FABLE },
+  { key = "pagebound", label = "Pagebound", prefix = "Pagebound", constants = PAGEBOUND },
 }
 
 local function findItem(items, text)
@@ -185,8 +190,14 @@ describe("unified provider menus", function()
     local menu = UpdateStatusMenu:new { providers = providers, engines = engines, ui = ui }
     local root_item = menu:menuItem()
 
+    for provider_key, state in pairs(states) do
+      if provider_key ~= "storygraph" then
+        state.active = false
+      end
+    end
+
     assert.is_true(root_item.enabled_func())
-    assert.equals(5, #menu:getSubMenuItems())
+    assert.equals(11, #menu:getSubMenuItems())
     assert.is_true(menu:getSubMenuItems()[1].enabled_func())
 
     states.storygraph.active = false
@@ -196,9 +207,9 @@ describe("unified provider menus", function()
     assert.is_false(menu:getSubMenuItems()[1].enabled_func())
     states.storygraph.linked = true
 
-    local storygraph_submenu = menu:getSubMenuItems()[1].sub_item_table_func()
-    assert.equals(1, states.storygraph.cache_updates)
-    assert.is_true(#storygraph_submenu >= 5)
+    local link_status_item = findItem(menu:getSubMenuItems(), "Link Status")
+    assert.equals(5, #link_status_item.sub_item_table_func())
+    assert.equals(0, states.storygraph.cache_updates)
 
     ui.document = nil
     assert.is_false(root_item.enabled_func())

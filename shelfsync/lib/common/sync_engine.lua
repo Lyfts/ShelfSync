@@ -755,7 +755,11 @@ end
 
 function SyncEngine:updatePageNow(callback, value, update_type)
   if value == nil then
-    return self:updateProgressAtLocalPage(callback, self.state.page)
+    local local_page = self.state.page
+    if local_page == nil and self.ui and self.ui.getCurrentPage then
+      local_page = self.ui:getCurrentPage()
+    end
+    return self:updateProgressAtLocalPage(callback, local_page)
   end
   self:_handlePageUpdate(self.ui.document.file, value, true, callback, update_type)
 end

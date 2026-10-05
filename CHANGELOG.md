@@ -6,7 +6,6 @@
 - (feat) Replace separate provider menus with unified **Provider settings** and **Accounts** menus, and apply shared reading-status and progress actions across active linked providers. **Update status** shows each provider's status and link method under **Link Status**, offers a shared checklist to remove the book from selected providers, and groups provider journal/forum actions under **Add note**.
 - (feat) Open one tabbed book search from **Provider settings > Link or relink book** to link, relink, or unlink the open document across all providers.
 - (feat) Show a checkmark beside providers with saved credentials in **Accounts**.
-- (fix) Prevent shared status updates from crashing while formatting provider labels.
 
 ## 1.6.0
 - (feat) 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟
