@@ -5,6 +5,8 @@
 ## Unreleased
 - (feat) 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟
 - (feat) Show the link method at the start of linked-book labels in provider menus.
+- (feat) Turn on "Confirm changes to book read status" by default, so choosing a status or Remove from a provider's Update status menu asks first, and so do Hardcover OAuth sign-out and Fable and Pagebound log out. If you never changed this setting, turn it off under ShelfSync > Settings to keep single-tap changes.  
+- (fix) Keep a Hardcover book's own privacy when its status changes, instead of resetting it to the account default. If ShelfSync can't read your Hardcover account or the book's current privacy, the status change is skipped instead of being sent as Public. Journal entries fall back to Private when the account default can't be read.
 - (fix) Retry Goodreads automatic Currently Reading updates when a status read or CSRF bootstrap temporarily fails, instead of stopping after the book page is found.
 - (fix) Allow Hardcover automatic linking to accept matching books even when extra contributor credits (such as narrators or translators) lower the author match score.
 - (fix) Reconcile Fable status writes against system-list membership when book-detail status is missing or a write returns HTTP 409.
