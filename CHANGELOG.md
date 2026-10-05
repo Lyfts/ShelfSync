@@ -3,6 +3,8 @@
 <!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
 
 ## Unreleased
+
+## 1.6.0
 - (feat) 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟
 - (feat) Show the link method at the start of linked-book labels in provider menus.
 - (feat) Turn on "Confirm changes to book read status" by default, so choosing a status or Remove from a provider's Update status menu asks first, and so do Hardcover OAuth sign-out and Fable and Pagebound log out. If you never changed this setting, turn it off under ShelfSync > Settings to keep single-tap changes.  
