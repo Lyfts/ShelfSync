@@ -3,6 +3,9 @@
 <!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
 
 ## Unreleased
+- (feat) Replace separate provider menus with unified **Provider settings** and **Accounts** menus, and group provider-specific status and progress actions under **Update status**.
+- (feat) Open one tabbed book search from **Provider settings > Book linking** to link, relink, or unlink the open document across all providers.
+- (feat) Show a checkmark beside providers with saved credentials in **Accounts**.
 
 ## 1.6.0
 - (feat) 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟

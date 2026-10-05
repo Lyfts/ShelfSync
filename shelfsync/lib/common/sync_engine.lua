@@ -2,7 +2,7 @@
 -- (StoryGraph or Hardcover) from KOReader's reader lifecycle events. All
 -- provider-specific behavior is injected: `label` (display name), `constants`
 -- (STATUS/STATUS_NAME table), `api`/`user`/`cache`/`page_mapper`/`wifi`/
--- `dialog_manager`/`settings`/`menu` instances, and a `provider` object
+-- `dialog_manager`/`settings` instances, and a `provider` object
 -- (StoryGraph or Hardcover) implementing tryAutolink/getRemoteProgress/
 -- getRemotePercent/pushProgress. `plugin_settings` is always the single
 -- shared (StoryGraph) settings instance, since plugin-update bookkeeping is
@@ -62,14 +62,23 @@ end
 
 function SyncEngine:disable()
   self.enabled = false
-  if self.menu then
-    self.menu.enabled = false
-  end
   self:registerHighlight()
 end
 
 function SyncEngine:onLink()
   if not self:isActive() then return end
+
+  if self.manual_link_dialog then
+    self.manual_link_dialog:show(self.provider_key, function(provider, book)
+      if not book then
+        return
+      end
+      UIManager:show(Notification:new {
+        text = _("Linked to: " .. book.title .. " on " .. provider.label),
+      })
+    end)
+    return
+  end
 
   self.provider:showLinkBookDialog(false, function(book)
     UIManager:show(Notification:new {
@@ -356,7 +365,6 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
     if auth_setting_changed then
       if change and change ~= "" and not self.enabled then
         self.enabled = true
-        self.menu.enabled = true
         self.api.last_auth_warning = nil
         UIManager:show(Notification:new {
           text = _(self.label .. " syncing re-enabled"),

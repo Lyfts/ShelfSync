@@ -12,7 +12,7 @@ local Fable = {
   -- "paused" system list on Fable (confirmed via the same capture's
   -- GET .../book_lists catalog: only want_to_read/current_reading/finished/
   -- did_not_finish exist), so STATUS.PAUSED is intentionally left unmapped
-  -- here and never offered by fable/menu.lua's status submenu.
+  -- here and never offered by the shared Update status menu.
   SYSTEM_TYPE = {
     [Status.STATUS.TO_READ] = "want_to_read",
     [Status.STATUS.READING] = "current_reading",

@@ -4,8 +4,10 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
+local ButtonTable = require("ui/widget/buttontable")
 local SearchMenu = require("shelfsync/lib/common/ui/search_menu")
 local Size = require("ui/size")
+local VerticalGroup = require("ui/widget/verticalgroup")
 local UIManager = require("ui/uimanager")
 local _ = require("gettext")
 local _t = require("shelfsync/lib/common/table_util")
@@ -24,6 +26,10 @@ local BookSearchDialog = InputContainer:extend {
   left_icon = nil,
   search_value = nil,
   close_callback = nil,
+  tab_items = nil,
+  tab_callback = nil,
+  active_tab = nil,
+  footer_items = nil,
 }
 
 function BookSearchDialog:createListItem(book, active_item)
@@ -159,6 +165,54 @@ function BookSearchDialog:init()
     left_icon = self.left_icon
     left_icon_callback = self.left_icon_callback
   end
+
+  local tab_button_table
+  if self.tab_items and #self.tab_items > 0 then
+    local tab_rows = {}
+    local row = {}
+    for i, tab in ipairs(self.tab_items) do
+      local current_tab = tab
+      table.insert(row, {
+        id = current_tab.key,
+        text_func = function()
+          local prefix = self.active_tab == current_tab.key and "• " or ""
+          local label = current_tab.text_func and current_tab.text_func() or current_tab.text
+          return prefix .. label
+        end,
+        callback = function()
+          if self.tab_callback then
+            self.tab_callback(current_tab.key)
+          end
+        end,
+      })
+      if #row == 3 or i == #self.tab_items then
+        table.insert(tab_rows, row)
+        row = {}
+      end
+    end
+
+    tab_button_table = ButtonTable:new {
+      width = self.width,
+      buttons = tab_rows,
+      zero_sep = true,
+      show_parent = self,
+    }
+  end
+
+  local footer_button_table
+  if self.footer_items and #self.footer_items > 0 then
+    footer_button_table = ButtonTable:new {
+      width = self.width,
+      buttons = { self.footer_items },
+      zero_sep = true,
+      show_parent = self,
+    }
+  end
+
+  local fixed_height = (tab_button_table and tab_button_table:getSize().h or 0)
+    + (footer_button_table and footer_button_table:getSize().h or 0)
+    + ((tab_button_table or footer_button_table) and 2 * Size.span.vertical_default or 0)
+
   self.menu = SearchMenu:new {
     single_line = false,
     multilines_show_more_text = true,
@@ -166,7 +220,8 @@ function BookSearchDialog:init()
     fullscreen = true,
     item_table = self:parseItems(self.items, self.active_item),
     width = self.width,
-    height = self.height,
+    height = math.max(Screen:scaleBySize(140), self.height - fixed_height),
+    is_popout = not tab_button_table,
     title_bar_left_icon = left_icon,
     onLeftButtonTap = left_icon_callback,
     onMenuSelect = function(menu, book)
@@ -181,9 +236,24 @@ function BookSearchDialog:init()
 
   self.items = nil
 
+  self.content = VerticalGroup:new {
+    align = "center",
+    width = self.width,
+    self.menu,
+  }
+
+  if tab_button_table then
+    table.insert(self.content, tab_button_table)
+    self.tab_button_table = tab_button_table
+  end
+  if footer_button_table then
+    table.insert(self.content, footer_button_table)
+    self.footer_button_table = footer_button_table
+  end
+
   self.container = CenterContainer:new {
     dimen = Screen:getSize(),
-    self.menu,
+    self.content,
   }
 
   self.menu.show_parent = self
@@ -240,7 +310,7 @@ function BookSearchDialog:onClose()
 end
 
 function BookSearchDialog:onTapClose(arg, ges)
-  if ges.pos:notIntersectWith(self.movable.dimen) then
+  if self.content and self.content.dimen and ges.pos:notIntersectWith(self.content.dimen) then
     self:onClose()
   end
   return true
@@ -252,7 +322,7 @@ function BookSearchDialog:parseItems(items, active_item)
   end)
 end
 
-function BookSearchDialog:setItems(title, items, active_item)
+function BookSearchDialog:setItems(title, items, active_item, search_value)
   if self.menu.halt_image_loading then
     self.menu.halt_image_loading()
   end
@@ -268,10 +338,18 @@ function BookSearchDialog:setItems(title, items, active_item)
     end
   end
   self.menu:switchItemTable(title, new_item_table)
+  self.search_value = search_value
+end
+
+function BookSearchDialog:setActiveTab(key)
+  self.active_tab = key
+  if self.tab_button_table then
+    UIManager:setDirty(self, "ui")
+  end
 end
 
 function BookSearchDialog:onTap(_, ges)
-  if ges.pos:notIntersectWith(self[1][1].dimen) then
+  if self.content and self.content.dimen and ges.pos:notIntersectWith(self.content.dimen) then
     -- Tap outside closes widget
     self:onClose()
     return true

@@ -9,7 +9,7 @@
 -- Providers still implement their own linkBook, getRemoteProgress,
 -- getRemotePercent and pushProgress, since those differ per API. `self.label`
 -- (e.g. "StoryGraph") must be set on the instance -- it's used to prefix the
--- debug log lines below, same as menu.lua/auto_wifi.lua's `label`.
+-- debug log lines below, same as the shared menus and auto_wifi's `label`.
 local _ = require("gettext")
 local T = require("ffi/util").template
 local logger = require("shelfsync/lib/common/safe_logger")
