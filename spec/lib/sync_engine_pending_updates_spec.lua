@@ -293,6 +293,186 @@ describe("SyncEngine pending updates", function()
       assert.is_nil(pending(settings))
     end)
 
+    it("sends what's queued before looking up a book opened offline, once the network is back", function()
+      openBook()
+      -- Long enough that the lookup when it opened has given up.
+      UIManager:_runUntilIdle()
+      queue(settings, OTHER_FILE, 50)
+      calls.findUserBook = {}
+
+      goOnline()
+      engine:onNetworkConnected()
+      UIManager:_runUntilIdle()
+
+      assert.are.same({ 43, 42 }, { calls.findUserBook[1], calls.findUserBook[2] })
+      assert.is_nil(pending(settings, OTHER_FILE))
+    end)
+
+    describe("when the first requests after connecting time out", function()
+      local timeouts
+
+      before_each(function()
+        timeouts = 0
+        local findUserBook = api.findUserBook
+        api.findUserBook = function(self, book_id, ...)
+          if timeouts > 0 then
+            timeouts = timeouts - 1
+            table.insert(calls.findUserBook, book_id)
+            return {}, { completed = false, request_error = "timeout" }
+          end
+          return findUserBook(self, book_id, ...)
+        end
+      end)
+
+      it("tries again a few seconds later", function()
+        queue(settings, FILE, 50)
+        timeouts = 2
+
+        goOnline()
+        hardcoverEngine(newUi(nil)):onNetworkConnected()
+        UIManager:_runUntil(mocks.Clock.now + 1)
+        assert.are.equal(1, #calls.findUserBook)
+        assert.are.equal(50, pending(settings).progress.value)
+
+        UIManager:_runUntilIdle()
+        assert.are.equal(3, #calls.findUserBook)
+        assert.are.same({ 150 }, pagesSent())
+        assert.is_nil(pending(settings))
+      end)
+
+      it("keeps what's queued after a few tries", function()
+        queue(settings, FILE, 50)
+        timeouts = 10
+
+        goOnline()
+        local browser = hardcoverEngine(newUi(nil))
+        browser:onNetworkConnected()
+        UIManager:_runUntilIdle()
+
+        assert.are.equal(4, #calls.findUserBook)
+        assert.are.same({}, calls.updatePage)
+        assert.are.equal(50, pending(settings).progress.value)
+
+        -- Tried again the next time the network connects.
+        timeouts = 0
+        browser:onNetworkConnected()
+        UIManager:_runUntilIdle()
+        assert.are.same({ 150 }, pagesSent())
+        assert.is_nil(pending(settings))
+      end)
+
+      it("starts over for another NetworkConnected while it's trying, and stops the earlier tries", function()
+        queue(settings, FILE, 50)
+        timeouts = 10
+
+        goOnline()
+        local browser = hardcoverEngine(newUi(nil))
+        browser:onNetworkConnected()
+        UIManager:_runUntil(mocks.Clock.now + 1)
+        browser:onNetworkConnected()
+        UIManager:_runUntilIdle()
+
+        -- The first try, then the four of the second NetworkConnected.
+        assert.are.equal(5, #calls.findUserBook)
+      end)
+
+      it("sends what's queued when the network comes back before the next try", function()
+        queue(settings, FILE, 50)
+        timeouts = 1
+
+        goOnline()
+        local browser = hardcoverEngine(newUi(nil))
+        browser:onNetworkConnected()
+        UIManager:_runUntil(mocks.Clock.now + 1)
+        goOffline()
+        UIManager:_runUntil(mocks.Clock.now + 1)
+        goOnline()
+        browser:onNetworkConnected()
+        UIManager:_runUntil(mocks.Clock.now + 1)
+        -- Gone again by the time the first NetworkConnected's next try is due.
+        goOffline()
+        UIManager:_runUntilIdle()
+
+        assert.are.same({ 150 }, pagesSent())
+        assert.is_nil(pending(settings))
+      end)
+
+      it("doesn't turn Wi-Fi on to try again", function()
+        settings:updateSetting(SETTING.SHARED.ENABLE_WIFI, true)
+        queue(settings, FILE, 50)
+        timeouts = 10
+        local restores = 0
+        local restoreWifiAsync = NetworkMgr.restoreWifiAsync
+        NetworkMgr.restoreWifiAsync = function(...)
+          restores = restores + 1
+          return restoreWifiAsync(...)
+        end
+        finally(function() NetworkMgr.restoreWifiAsync = restoreWifiAsync end)
+
+        goOnline()
+        hardcoverEngine(newUi(nil)):onNetworkConnected()
+        UIManager:_runUntil(mocks.Clock.now + 1)
+        goOffline()
+        UIManager:_runUntilIdle()
+
+        assert.are.equal(1, #calls.findUserBook)
+        assert.are.equal(0, restores)
+        assert.are.equal(50, pending(settings).progress.value)
+      end)
+
+      it("doesn't try again when ShelfSync turned Wi-Fi on itself", function()
+        settings:updateSetting(SETTING.SHARED.ENABLE_WIFI, true)
+        NetworkMgr._online = true
+        queue(settings, FILE, 50)
+        timeouts = 10
+        local restores = 0
+        local restoreWifiAsync = NetworkMgr.restoreWifiAsync
+        NetworkMgr.restoreWifiAsync = function(...)
+          restores = restores + 1
+          return restoreWifiAsync(...)
+        end
+        -- On a Kindle, Wi-Fi is still connected for a while after it starts
+        -- turning off. Here it's long enough for any retry to run first.
+        local turnOffWifi = NetworkMgr.turnOffWifi
+        NetworkMgr.turnOffWifi = function(self, cb)
+          UIManager:scheduleIn(30, function() turnOffWifi(self, cb) end)
+        end
+        -- As ShelfSyncApp:onNetworkConnected passes it on.
+        local forwarding = true
+        UIManager._addListener(function(event)
+          if forwarding and event.name == "NetworkConnected" then
+            hardcoverEngine(newUi(nil)):onNetworkConnected()
+          end
+        end)
+        finally(function()
+          forwarding = false
+          NetworkMgr.restoreWifiAsync = restoreWifiAsync
+          NetworkMgr.turnOffWifi = turnOffWifi
+        end)
+
+        flushFromFileBrowser()
+
+        -- The flush that turned Wi-Fi on, then the one for its NetworkConnected.
+        assert.are.equal(2, #calls.findUserBook)
+        assert.are.equal(1, restores)
+        assert.are.equal(50, pending(settings).progress.value)
+      end)
+
+      it("doesn't try again once the network has gone", function()
+        queue(settings, FILE, 50)
+        timeouts = 1
+
+        goOnline()
+        hardcoverEngine(newUi(nil)):onNetworkConnected()
+        UIManager:_runUntil(mocks.Clock.now + 1)
+        goOffline()
+        UIManager:_runUntilIdle()
+
+        assert.are.equal(1, #calls.findUserBook)
+        assert.are.equal(50, pending(settings).progress.value)
+      end)
+    end)
+
     it("sends the position a book was closed at once it has closed", function()
       goOnline()
       openBook()

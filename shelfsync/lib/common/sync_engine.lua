@@ -842,15 +842,20 @@ end
 
 -- Sends queued updates, if any. Like other updates, this goes through
 -- AutoWifi, so it only turns Wi-Fi on if "Enable wifi on demand" is set.
-function SyncEngine:flushPendingUpdates()
+-- Then calls `done`, if given, with false if the provider couldn't be reached.
+function SyncEngine:flushPendingUpdates(done)
+  done = done or function() end
   if not self:isActive() or #self.settings.pending_updates:filenames() == 0 then
-    return
+    return done()
   end
 
   self.cache:serializeUpdate(function(wifi_error)
+    local ok, sent = true, nil
     if not wifi_error and NetworkManager:isConnected() then
-      self:_sendPendingUpdates()
+      ok, sent = pcall(self._sendPendingUpdates, self)
     end
+    done(ok and sent)
+    if not ok then error(sent, 0) end
   end)
 end
 
@@ -861,9 +866,10 @@ function SyncEngine:_sendPendingUpdates()
       -- book goes last next time, so one that keeps failing can't hold up
       -- the others.
       self.settings.pending_updates:markTried(filename)
-      return
+      return false
     end
   end
+  return true
 end
 
 -- Sends filename's queued update, read afresh as it may have changed while
@@ -1012,7 +1018,34 @@ function SyncEngine:onNetworkConnected()
   if will_start then
     self:startReadCache()
   end
-  self:flushPendingUpdates()
+  if self.wifi:turnedWifiOn() then
+    -- ShelfSync's own connection, for something else, so not retried: a retry
+    -- as it's being turned off would turn it on again, and so start this again.
+    self:flushPendingUpdates()
+  else
+    self:_flushAfterConnecting()
+  end
+end
+
+-- The first requests after connecting can time out, as on a Kindle, and
+-- nothing else may send what's queued for a while, so try a few more times
+-- while still connected. The first try is right away, ahead of the open book's
+-- lookup. Connecting again starts the tries over, and the earlier ones stop.
+function SyncEngine:_flushAfterConnecting()
+  local round = (self.flush_round or 0) + 1
+  self.flush_round = round
+  local tries = 0
+  local function try()
+    tries = tries + 1
+    self:flushPendingUpdates(function(sent)
+      if sent ~= false or tries == 4 then return end
+      -- 4, 8 and then 16 seconds after a failed try.
+      UIManager:scheduleIn(2 ^ (tries + 1), function()
+        if self.flush_round == round and NetworkManager:isConnected() then try() end
+      end)
+    end)
+  end
+  try()
 end
 
 function SyncEngine:onEndOfBook()
