@@ -139,8 +139,8 @@ describe("unified provider menus", function()
     enable_menu.sub_item_table[1].callback()
     assert.is_false(states.storygraph.provider_enabled)
 
-    local link_menu = findItem(items, "Book linking")
-    link_menu.sub_item_table[1].callback(menu_instance)
+    local link_item = findItem(items, "Link or relink book")
+    link_item.callback(menu_instance)
     assert.equals(1, manual_link_calls)
     assert.equals(1, menu_updates)
 

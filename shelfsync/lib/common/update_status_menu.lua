@@ -10,10 +10,8 @@ local SpinWidget = require("ui/widget/spinwidget")
 
 local STORYGRAPH = require("shelfsync/lib/storygraph/constants")
 local HARDCOVER = require("shelfsync/lib/hardcover/constants")
-local GOODREADS = require("shelfsync/lib/goodreads/constants")
-local FABLE = require("shelfsync/lib/fable/constants")
-local PAGEBOUND = require("shelfsync/lib/pagebound/constants")
 local ICON = require("shelfsync/lib/common/constants/icons")
+local STATUS = require("shelfsync/lib/common/constants/status")
 
 local privacy_labels = {
   [HARDCOVER.PRIVACY.PUBLIC] = "Public",
@@ -21,56 +19,622 @@ local privacy_labels = {
   [HARDCOVER.PRIVACY.PRIVATE] = "Private",
 }
 
-local function storygraphStatusItem(self, icon, status_id)
-  return {
-    text = _(icon .. " " .. STORYGRAPH.STATUS_NAME[status_id]),
-    checked_func = function()
-      return self.state.book_status.status_id == status_id
-    end,
-    callback = function(menu_instance)
-      self.dialog_manager:maybeConfirm({
-        text = ("Mark book as %s?"):format(STORYGRAPH.STATUS_NAME[status_id]),
-        ok_callback = function()
-          self.cache:updateBookStatus(self.ui.document.file, status_id)
-          menu_instance.item_table = self:getStatusSubMenuItems()
-          menu_instance:updateItems()
-        end,
-        no_confirm_callback = function()
+local status_choices = {
+  { icon = ICON.BOOKMARK, status_id = STATUS.STATUS.TO_READ },
+  { icon = ICON.OPEN_BOOK, status_id = STATUS.STATUS.READING },
+  { icon = ICON.CHECKMARK, status_id = STATUS.STATUS.FINISHED },
+  { icon = ICON.PAUSE, status_id = STATUS.STATUS.PAUSED },
+  { icon = ICON.STOP_CIRCLE, status_id = STATUS.STATUS.DNF },
+}
+
+local function eligibleProviders(self, status_id)
+  local eligible, unsupported = {}, {}
+  for _, provider in ipairs(self.providers) do
+    local engine = self.engines[provider.key]
+    if engine and engine:isActive() and engine.settings:bookLinked() then
+      local supported_statuses = provider.constants.SUPPORTED_STATUS_IDS
+      if not supported_statuses or supported_statuses[status_id] then
+        table.insert(eligible, { provider = provider, engine = engine })
+      else
+        table.insert(unsupported, { provider = provider, engine = engine })
+      end
+    end
+  end
+  return eligible, unsupported
+end
+
+local function providerLabels(entries)
+  local labels = {}
+  for _entry_index, entry in ipairs(entries) do
+    table.insert(labels, _(entry.provider.label))
+  end
+  return table.concat(labels, ", ")
+end
+
+local function updateStatusAcrossProviders(self, status_id, menu_instance)
+  local filename = self.ui.document and self.ui.document.file
+  if not filename then return end
+
+  local eligible, unsupported = eligibleProviders(self, status_id)
+  local status_name = _(STATUS.STATUS_NAME[status_id])
+  if #eligible == 0 then
+    if #unsupported > 0 then
+      UIManager:show(InfoMessage:new {
+        text = T(_("%1 does not support %2 and was left unchanged."),
+          providerLabels(unsupported), status_name),
+      })
+    end
+    return
+  end
+
+  local confirmation_text = T(_("Mark this book as %1 on %2?"), status_name, providerLabels(eligible))
+  if #unsupported > 0 then
+    confirmation_text = confirmation_text .. "\n\n"
+      .. T(_("%1 does not support %2 and will be left unchanged."),
+        providerLabels(unsupported), status_name)
+  end
+
+  eligible[1].engine.dialog_manager:maybeConfirm({
+    text = confirmation_text,
+    ok_callback = function()
+      local progress_message = InfoMessage:new {
+        text = T(_("Updating status on %1..."), providerLabels(eligible)),
+      }
+      UIManager:show(progress_message)
+      Trapper:wrap(function()
+        local succeeded, unconfirmed, failed = {}, {}, {}
+        for _, entry in ipairs(eligible) do
+          local call_ok, result = xpcall(function()
+            return entry.engine.cache:updateBookStatus(filename, status_id)
+          end, debug.traceback)
+          if not call_ok then
+            entry.engine.settings:debugWarn(entry.engine.label .. ": status update raised an error")
+            table.insert(failed, entry)
+          elseif result and result.status_id == status_id then
+            table.insert(succeeded, entry)
+          elseif result
+              and entry.provider.constants.WRITE_ONLY_STATUS_IDS
+              and entry.provider.constants.WRITE_ONLY_STATUS_IDS[status_id] then
+            table.insert(unconfirmed, entry)
+          else
+            table.insert(failed, entry)
+          end
+        end
+
+        if menu_instance and menu_instance.updateItems then
           menu_instance:updateItems()
         end
-      })
+        UIManager:close(progress_message)
+
+        local messages = {}
+        if #succeeded > 0 then
+          table.insert(messages, T(_("Updated to %1 on: %2"), status_name, providerLabels(succeeded)))
+        end
+        if #failed > 0 then
+          table.insert(messages, T(_("Could not update %1 on: %2"), status_name, providerLabels(failed)))
+        end
+        if #unconfirmed > 0 then
+          table.insert(messages, T(_("Sent %1 to %2, but its status could not be confirmed."),
+            status_name, providerLabels(unconfirmed)))
+        end
+        if #unsupported > 0 then
+          table.insert(messages, T(_("%1 does not support %2 and was left unchanged."),
+            providerLabels(unsupported), status_name))
+        end
+        UIManager:show(InfoMessage:new {
+          text = table.concat(messages, "\n"),
+          icon = (#failed > 0 or #unconfirmed > 0) and "notice-warning" or nil,
+        })
+      end)
     end,
-    radio = true
+    no_confirm_callback = function()
+      if menu_instance and menu_instance.updateItems then
+        menu_instance:updateItems()
+      end
+    end,
+  })
+end
+
+local function sharedStatusItem(self, icon, status_id)
+  return {
+    text = icon .. " " .. T(_("Set to %1"), _(STATUS.STATUS_NAME[status_id])),
+    enabled_func = function()
+      local eligible, unsupported = eligibleProviders(self, status_id)
+      return #eligible > 0 or #unsupported > 0
+    end,
+    callback = function(menu_instance)
+      updateStatusAcrossProviders(self, status_id, menu_instance)
+    end,
+    keep_menu_open = true,
   }
 end
 
-local function storygraphStatusItems(self)
-  local items = {
-    self:_statusMenuItem(ICON.BOOKMARK, STORYGRAPH.STATUS.TO_READ),
-    self:_statusMenuItem(ICON.OPEN_BOOK, STORYGRAPH.STATUS.READING),
-    self:_statusMenuItem(ICON.CHECKMARK, STORYGRAPH.STATUS.FINISHED),
-    self:_statusMenuItem(ICON.PAUSE, STORYGRAPH.STATUS.PAUSED),
-    self:_statusMenuItem(ICON.STOP_CIRCLE, STORYGRAPH.STATUS.DNF),
-    {
-      text = _(ICON.TRASH .. " Remove"),
-      enabled_func = function()
-        return self:isActive() and self.state.book_status.status_id ~= nil
+local function linkStatusLabel(provider, engine)
+  if not engine.settings:bookLinked() then
+    return T(_("%1: %2"), _(provider.label), _("Not linked"))
+  end
+
+  local book_status = engine.state.book_status or {}
+  local status_id = book_status.status_id
+  local status_name = status_id and provider.constants.STATUS_NAME[status_id]
+  local status_label = status_name and _(status_name) or _("Status unknown")
+  local method_label = engine.provider:getLinkMethodLabel()
+  return T(_("%1: %2 (link method: %3)"), _(provider.label), status_label, method_label)
+end
+
+local function linkStatusItems(self)
+  local items = {}
+  for _provider_index, provider in ipairs(self.providers) do
+    local current_provider = provider
+    local engine = self.engines[current_provider.key]
+    table.insert(items, {
+      text_func = function()
+        return linkStatusLabel(current_provider, engine)
+      end,
+      callback = function() end,
+      keep_menu_open = true,
+    })
+  end
+  return items
+end
+
+local function activeLinkedProviders(self)
+  local entries = {}
+  for _provider_index, provider in ipairs(self.providers) do
+    local engine = self.engines[provider.key]
+    if engine and engine:isActive() and engine.settings:bookLinked() then
+      table.insert(entries, { provider = provider, engine = engine })
+    end
+  end
+  return entries
+end
+
+local function removableProviders(self)
+  local entries = {}
+  for _provider_index, entry in ipairs(activeLinkedProviders(self)) do
+    local book_status = entry.engine.state.book_status or {}
+    if book_status.id and book_status.status_id then
+      table.insert(entries, entry)
+    end
+  end
+  return entries
+end
+
+local function providerStatusLabel(entry)
+  local book_status = entry.engine.state.book_status or {}
+  local status_name = entry.provider.constants.STATUS_NAME[book_status.status_id]
+    or _("Status unknown")
+  return T(_("%1: %2"), _(entry.provider.label), _(status_name))
+end
+
+local function selectedRemovableProviders(self, selected)
+  local entries = {}
+  for _provider_index, entry in ipairs(removableProviders(self)) do
+    if selected[entry.provider.key] then
+      table.insert(entries, entry)
+    end
+  end
+  return entries
+end
+
+local removeProviderChecklistItems
+
+local function removeSelectedProviders(self, selected, menu_instance)
+  local entries = selectedRemovableProviders(self, selected)
+  if #entries == 0 then return end
+
+  entries[1].engine.dialog_manager:maybeConfirm({
+    text = T(_("Remove this book from %1? Your local book links will remain."), providerLabels(entries)),
+    ok_callback = function()
+      local progress_message = InfoMessage:new {
+        text = T(_("Removing this book from %1..."), providerLabels(entries)),
+      }
+      UIManager:show(progress_message)
+      Trapper:wrap(function()
+        local succeeded, failed = {}, {}
+        for _entry_index, entry in ipairs(entries) do
+          local book_status = entry.engine.state.book_status or {}
+          local call_ok, result = xpcall(function()
+            return entry.engine.api:removeRead(book_status.id)
+          end, debug.traceback)
+
+          if call_ok and result then
+            entry.engine.state.book_status = {}
+            table.insert(succeeded, entry)
+          else
+            entry.engine.settings:debugWarn(entry.engine.label .. ": book removal failed")
+            table.insert(failed, entry)
+          end
+          selected[entry.provider.key] = nil
+        end
+
+        UIManager:close(progress_message)
+        if menu_instance and menu_instance.updateItems then
+          menu_instance.item_table = removeProviderChecklistItems(self, selected)
+          menu_instance:updateItems()
+        end
+
+        local messages = {}
+        if #succeeded > 0 then
+          table.insert(messages, T(_("Removed from: %1"), providerLabels(succeeded)))
+        end
+        if #failed > 0 then
+          table.insert(messages, T(_("Could not remove from: %1"), providerLabels(failed)))
+        end
+        UIManager:show(InfoMessage:new {
+          text = table.concat(messages, "\n"),
+          icon = #failed > 0 and "notice-warning" or nil,
+        })
+      end)
+    end,
+  })
+end
+
+removeProviderChecklistItems = function(self, selected)
+  local entries = removableProviders(self)
+  local items = {}
+
+  if #entries == 0 then
+    return { { text = _("No linked provider statuses are available to remove"), enabled = false } }
+  end
+
+  for entry_index, entry in ipairs(entries) do
+    local current_entry = entry
+    local provider_key = current_entry.provider.key
+    local item = {
+      text_func = function()
+        return providerStatusLabel(current_entry)
+      end,
+      checked_func = function()
+        return selected[provider_key] == true
       end,
       callback = function(menu_instance)
-        self.dialog_manager:maybeConfirm({
-          text = "Remove current book status?",
-          ok_callback = function()
-            local result = self.api:removeRead(self.state.book_status.id)
-            if result then
-              self.state.book_status = {}
-              menu_instance.item_table = self:getStatusSubMenuItems()
-              menu_instance:updateItems()
-            end
-          end
-        })
+        if selected[provider_key] then
+          selected[provider_key] = nil
+        else
+          selected[provider_key] = true
+        end
+        if menu_instance and menu_instance.updateItems then
+          menu_instance:updateItems()
+        end
       end,
       keep_menu_open = true,
-    },
+    }
+    if entry_index == #entries then
+      item.separator = true
+    end
+    table.insert(items, item)
+  end
+
+  table.insert(items, {
+    text = _(ICON.TRASH .. " Remove selected"),
+    enabled_func = function()
+      return #selectedRemovableProviders(self, selected) > 0
+    end,
+    callback = function(menu_instance)
+      removeSelectedProviders(self, selected, menu_instance)
+    end,
+    keep_menu_open = true,
+  })
+
+  return items
+end
+
+local function removeFromProvidersItem(self)
+  local selected = {}
+  return {
+    text = _(ICON.TRASH .. " Remove from providers"),
+    enabled_func = function()
+      return #activeLinkedProviders(self) > 0
+    end,
+    sub_item_table_func = function()
+      for _provider_index, entry in ipairs(activeLinkedProviders(self)) do
+        entry.engine.cache:cacheUserBook()
+      end
+      return removeProviderChecklistItems(self, selected)
+    end,
+  }
+end
+
+local function progressProviders(self, filename)
+  local eligible, skipped = {}, {}
+  for _provider_index, provider in ipairs(self.providers) do
+    local engine = self.engines[provider.key]
+    if engine and engine:isActive() and engine.settings:bookLinked() then
+      local entry = { provider = provider, engine = engine }
+      local book_status = engine.state.book_status or {}
+      if book_status.status_id ~= provider.constants.STATUS.READING then
+        local status_name = book_status.status_id and provider.constants.STATUS_NAME[book_status.status_id]
+        entry.skip_reason = status_name
+            and T(_("not currently reading (%1)"), _(status_name))
+          or _("reading status is unknown")
+        table.insert(skipped, entry)
+      elseif engine.provider.requires_remote_page_count
+          and (not tonumber(engine.settings:pages()) or tonumber(engine.settings:pages()) <= 0) then
+        entry.skip_reason = _("linked edition page count is unavailable")
+        table.insert(skipped, entry)
+      elseif not engine:syncFileUpdates(filename) then
+        entry.skip_reason = _("sync is disabled for this book")
+        table.insert(skipped, entry)
+      else
+        table.insert(eligible, entry)
+      end
+    end
+  end
+  return eligible, skipped
+end
+
+local function progressTargetLabel(value, update_type, remote_pages)
+  if update_type == "pages" then
+    return T(_("Page %1 / %2"), value, remote_pages or "?")
+  end
+  return T(_("%1%"), value)
+end
+
+local function progressSkippedLabels(entries)
+  local labels = {}
+  for _entry_index, entry in ipairs(entries) do
+    table.insert(labels, T(_("%1 (%2)"), _(entry.provider.label), entry.skip_reason))
+  end
+  return table.concat(labels, ", ")
+end
+
+local function updateProgressAcrossProviders(self, document, local_page, targets, skipped, menu_instance)
+  local confirmation_lines = {
+    T(_("Set progress to local page %1 / %2?"), local_page, document:getPageCount()),
+  }
+  local moves_backwards = {}
+  for _target_index, target in ipairs(targets) do
+    table.insert(confirmation_lines, T(_("%1: %2"),
+      _(target.provider.label), target.preview_label))
+    local remote_progress = tonumber(target.engine.provider:getRemoteProgress(
+      target.engine.state.book_status, target.update_type
+    ))
+    if remote_progress and target.value < remote_progress then
+      table.insert(moves_backwards, target)
+    end
+  end
+  if #moves_backwards > 0 then
+    table.insert(confirmation_lines, "\n" .. T(_("This moves progress backward on: %1"), providerLabels(moves_backwards)))
+  end
+  if #skipped > 0 then
+    table.insert(confirmation_lines, "\n" .. T(_("Will be left unchanged: %1"), progressSkippedLabels(skipped)))
+  end
+
+  local confirmation_dialog = targets[1].engine.dialog_manager
+  local confirm_options = {
+    text = table.concat(confirmation_lines, "\n"),
+    ok_callback = function()
+      local progress_message = InfoMessage:new {
+        text = T(_("Updating progress on %1..."), providerLabels(targets)),
+      }
+      UIManager:show(progress_message)
+
+      local succeeded, failed = {}, {}
+      local stopped = {}
+      local target_index = 1
+      local function finish()
+        UIManager:close(progress_message)
+        if menu_instance and menu_instance.updateItems then
+          menu_instance:updateItems()
+        end
+
+        local messages = {}
+        if #succeeded > 0 then
+          table.insert(messages, T(_("Updated progress on: %1"), providerLabels(succeeded)))
+        end
+        if #failed > 0 then
+          table.insert(messages, T(_("Could not update progress on: %1"), providerLabels(failed)))
+        end
+        if #stopped > 0 then
+          table.insert(messages, T(_("Stopped before updating: %1"), providerLabels(stopped)))
+        end
+        if #skipped > 0 then
+          table.insert(messages, T(_("Left unchanged: %1"), progressSkippedLabels(skipped)))
+        end
+        UIManager:show(InfoMessage:new {
+          text = table.concat(messages, "\n"),
+          icon = (#failed > 0 or #stopped > 0) and "notice-warning" or nil,
+        })
+      end
+
+      local function updateNextProvider()
+        if target_index > #targets then
+          finish()
+          return
+        end
+        if self.ui.document ~= document then
+          while target_index <= #targets do
+            table.insert(stopped, targets[target_index])
+            target_index = target_index + 1
+          end
+          finish()
+          return
+        end
+
+        local target = targets[target_index]
+        target_index = target_index + 1
+        local call_ok = xpcall(function()
+          target.engine:updateProgressAtLocalPage(function(result, reason)
+            if result then
+              table.insert(succeeded, target)
+            else
+              if reason then
+                target.engine.settings:debugWarn(target.engine.label .. ": manual progress update failed")
+              end
+              table.insert(failed, target)
+            end
+            updateNextProvider()
+          end, local_page)
+        end, debug.traceback)
+        if not call_ok then
+          target.engine.settings:debugWarn(target.engine.label .. ": manual progress update raised an error")
+          table.insert(failed, target)
+          updateNextProvider()
+        end
+      end
+
+      updateNextProvider()
+    end,
+  }
+  if #moves_backwards > 0 then
+    confirmation_dialog:confirm(confirm_options)
+  else
+    confirmation_dialog:maybeConfirm(confirm_options)
+  end
+end
+
+local function sharedProgressItem(self)
+  local function eligibleProviders()
+    if not self.ui.document then return {}, {} end
+    return progressProviders(self, self.ui.document.file)
+  end
+
+  return {
+    text_func = function()
+      local document = self.ui.document
+      local current_page = self.ui:getCurrentPage()
+      local total_pages = document and document:getPageCount() or "?"
+      return T(_("Update progress: Page %1 / %2"), current_page, total_pages)
+    end,
+    enabled_func = function()
+      local eligible = eligibleProviders()
+      return #eligible > 0
+    end,
+    callback = function(menu_instance)
+      local document = self.ui.document
+      if not document then return end
+      local total_pages = tonumber(document:getPageCount())
+      if not total_pages or total_pages <= 0 then
+        UIManager:show(InfoMessage:new { text = _("Local page count is unavailable") })
+        return
+      end
+
+      local current_page = self.ui:getCurrentPage()
+      local spinner = SpinWidget:new {
+        value = current_page,
+        value_min = 0,
+        value_max = total_pages,
+        value_step = 1,
+        value_hold_step = 20,
+        ok_text = _("Preview updates"),
+        title_text = _("Set current local page"),
+        callback = function(spin)
+          local local_page = tonumber(spin.value)
+          local eligible, skipped = progressProviders(self, document.file)
+          local targets = {}
+          for _provider_index, entry in ipairs(eligible) do
+            local value, update_type, remote_pages = entry.engine:getProgressTarget(local_page, total_pages)
+            if value ~= nil then
+              local target = {
+                provider = entry.provider,
+                engine = entry.engine,
+                value = value,
+                update_type = update_type,
+                preview_label = progressTargetLabel(value, update_type, remote_pages),
+              }
+              table.insert(targets, target)
+            else
+              entry.skip_reason = remote_pages or update_type or _("page mapping is unavailable")
+              table.insert(skipped, entry)
+            end
+          end
+
+          if #targets == 0 then
+            UIManager:show(InfoMessage:new {
+              text = #skipped > 0
+                and T(_("No providers can be updated. %1"), progressSkippedLabels(skipped))
+                or _("No linked providers are currently marked as reading"),
+              icon = "notice-warning",
+            })
+            return
+          end
+          updateProgressAcrossProviders(self, document, local_page, targets, skipped, menu_instance)
+        end,
+      }
+      UIManager:show(spinner)
+    end,
+    keep_menu_open = true,
+  }
+end
+
+local function canAddNote(provider, engine)
+  if not engine or not engine:isActive() or not engine.settings:bookLinked() then
+    return false
+  end
+  local book_status = engine.state.book_status or {}
+  local status_id = book_status.status_id
+  if provider.key == "hardcover" then
+    return book_status.id ~= nil
+  elseif provider.key == "pagebound" then
+    return status_id == provider.constants.STATUS.READING
+  end
+
+  local status = provider.constants.STATUS
+  return status_id ~= nil and status_id ~= status.FINISHED
+    and status_id ~= status.DNF and status_id ~= status.TO_READ
+end
+
+local function providerNoteItems(self)
+  local items = {}
+  for _provider_index, provider in ipairs(self.providers) do
+    local current_provider = provider
+    local engine = self.engines[current_provider.key]
+    local current_engine = engine
+    if canAddNote(current_provider, current_engine) then
+      local is_pagebound = current_provider.key == "pagebound"
+      table.insert(items, {
+        text = T(_("%1: %2"), _(current_provider.label),
+          is_pagebound and _("Add forum note") or _("Add journal note")),
+        callback = function()
+          local book_status = current_engine.state.book_status or {}
+          local current_page = current_engine.ui:getCurrentPage()
+          local remote_percent
+          if current_provider.key == "hardcover" then
+            local reads = book_status.user_book_reads
+            local current_read = reads and reads[#reads]
+            current_page = current_read and current_read.progress_pages or 0
+          else
+            remote_percent = current_engine.provider:getRemotePercent(book_status) or 0
+          end
+          current_engine.dialog_manager:journalEntryForm(
+            "",
+            current_engine.ui.document,
+            current_page,
+            current_engine.settings:pages(),
+            nil,
+            remote_percent,
+            "note"
+          )
+        end,
+        keep_menu_open = true,
+      })
+    end
+  end
+  return items
+end
+
+local function addNoteItem(self)
+  return {
+    text = _("Add note"),
+    enabled_func = function()
+      return #activeLinkedProviders(self) > 0
+    end,
+    sub_item_table_func = function()
+      for _provider_index, entry in ipairs(activeLinkedProviders(self)) do
+        entry.engine.cache:cacheUserBook()
+      end
+      local items = providerNoteItems(self)
+      if #items == 0 then
+        return { { text = _("No linked providers can add a note in the current status"), enabled = false } }
+      end
+      return items
+    end,
+  }
+end
+
+local function storygraphOptionItems(self)
+  local items = {
     {
       text = _("Owned"),
       enabled_func = function()
@@ -111,39 +675,6 @@ local function storygraphStatusItems(self)
   }
 
   local status = self.state.book_status.status_id
-
-  -- Update progress: only when NOT read, DNF, removed, or want to read
-  if status and status ~= STORYGRAPH.STATUS.FINISHED and status ~= STORYGRAPH.STATUS.DNF and status ~= STORYGRAPH.STATUS.TO_READ then
-    table.insert(items, {
-      text_func = function()
-        local current_page = self.ui:getCurrentPage()
-        local total_pages = self.ui.document:getPageCount()
-        local remote_pages = self.settings:pages()
-        if self.settings:syncByRemotePages() then
-          local mapped_page = self.page_mapper:getMappedPage(current_page, total_pages, remote_pages)
-          return T(_("Update progress: Page %1 / %2"), mapped_page, remote_pages or "?")
-        else
-          local current_percent = math.floor((current_page / total_pages) * 100 + 0.5)
-          return T(_("Update progress: %1%"), current_percent)
-        end
-      end,
-      callback = function()
-        local current_page = self.ui:getCurrentPage()
-        local remote_percent = self.state.book_status.last_reached_percent or 0
-
-        self.dialog_manager:journalEntryForm(
-          "",
-          self.ui.document,
-          current_page,
-          self.settings:pages(),
-          nil, -- let journalEntryForm handle it based on settings
-          remote_percent,
-          "note"
-        )
-      end,
-      keep_menu_open = true
-    })
-  end
 
   -- Review: only when read or DNF or can_review
   if status and (status == STORYGRAPH.STATUS.FINISHED or status == STORYGRAPH.STATUS.DNF or self.state.book_status.can_review) then
@@ -426,32 +957,6 @@ local function storygraphReviewItems(self, menu_instance)
   }
 end
 
-local function hardcoverStatusItem(self, icon, status_id)
-  return {
-    text = _(icon .. " " .. HARDCOVER.STATUS_NAME[status_id]),
-    enabled_func = function()
-      return self:isActive()
-    end,
-    checked_func = function()
-      return self.state.book_status.status_id == status_id
-    end,
-    callback = function(menu_instance)
-      self.dialog_manager:maybeConfirm({
-        text = ("Mark book as %s?"):format(HARDCOVER.STATUS_NAME[status_id]),
-        ok_callback = function()
-          self.cache:updateBookStatus(self.ui.document.file, status_id)
-          menu_instance.item_table = self:getStatusSubMenuItems()
-          menu_instance:updateItems()
-        end,
-        no_confirm_callback = function()
-          menu_instance:updateItems()
-        end
-      })
-    end,
-    radio = true
-  }
-end
-
 local function hardcoverVisibilityItems(self)
   return {
     {
@@ -487,139 +992,73 @@ local function hardcoverVisibilityItems(self)
   }
 end
 
-local function hardcoverStatusItems(self)
+local function hardcoverOptionItems(self)
   local items = {
-    self:_statusMenuItem(ICON.BOOKMARK, HARDCOVER.STATUS.TO_READ),
-    self:_statusMenuItem(ICON.OPEN_BOOK, HARDCOVER.STATUS.READING),
-    self:_statusMenuItem(ICON.CHECKMARK, HARDCOVER.STATUS.FINISHED),
-    self:_statusMenuItem(ICON.PAUSE, HARDCOVER.STATUS.PAUSED),
-    self:_statusMenuItem(ICON.STOP_CIRCLE, HARDCOVER.STATUS.DNF),
-    {
-      text = _(ICON.TRASH .. " Remove"),
-      enabled_func = function()
-        return self:isActive() and self.state.book_status.status_id ~= nil
-      end,
-      callback = function(menu_instance)
-        self.dialog_manager:maybeConfirm({
-          text = "Remove current book status?",
-          ok_callback = function()
-            local result = self.api:removeRead(self.state.book_status.id)
-            if result then
-              self.state.book_status = {}
-              menu_instance.item_table = self:getStatusSubMenuItems()
-              menu_instance:updateItems()
-            end
-          end
-        })
-      end,
-      keep_menu_open = true,
-      separator = true
-    },
     {
       text_func = function()
         local reads = self.state.book_status.user_book_reads
         local current_page = reads and reads[#reads] and reads[#reads].progress_pages or 0
-        local max_pages = self.settings:pages()
-
-        if not max_pages then
-          max_pages = "???"
-        end
-
-        return T(_("Update page: %1 of %2"), current_page, max_pages)
+        return T(_("Set Hardcover edition page: %1 / %2"), current_page, self.settings:pages() or "?")
       end,
       enabled_func = function()
-        return self:isActive() and self.state.book_status.status_id == HARDCOVER.STATUS.READING and self.settings:pages()
+        return self:isActive() and self.state.book_status.status_id == HARDCOVER.STATUS.READING
+          and self.settings:pages()
       end,
       callback = function(menu_instance)
         local reads = self.state.book_status.user_book_reads
         local current_read = reads and reads[#reads]
-        local last_hardcover_page = current_read and current_read.progress_pages or 0
-
+        local current_hardcover_page = current_read and current_read.progress_pages or 0
         local document_page = self.ui:getCurrentPage()
         local document_pages = self.ui.document:getPageCount()
-
         local remote_pages = self.settings:pages()
         local mapped_page = self.page_mapper:getMappedPage(document_page, document_pages, remote_pages)
 
-        local left_text = "Edition"
-        if last_hardcover_page > 0 then
-          left_text = left_text .. ": was " .. last_hardcover_page
-        end
-
         local spinner = UpdateDoubleSpinWidget:new {
           ok_always_enabled = true,
-
-          left_text = left_text,
+          left_text = T(_("Edition page: %1"), current_hardcover_page),
           left_value = mapped_page,
           left_min = 0,
           left_max = remote_pages,
           left_step = 1,
           left_hold_step = 20,
-
-          right_text = "Local page",
+          right_text = _("Local page"),
           right_value = document_page,
           right_min = 0,
           right_max = document_pages,
           right_step = 1,
           right_hold_step = 20,
-
           update_callback = function(new_edition_page, new_document_page, edition_page_changed)
             if edition_page_changed then
-              local new_mapped_page = self.page_mapper:getUnmappedPage(new_edition_page, document_pages, remote_pages)
-              return new_edition_page, new_mapped_page
-            else
-              local new_mapped_page = self.page_mapper:getMappedPage(new_document_page, document_pages, remote_pages)
-              return new_mapped_page, new_document_page
+              return new_edition_page,
+                self.page_mapper:getUnmappedPage(new_edition_page, document_pages, remote_pages)
             end
+            return self.page_mapper:getMappedPage(new_document_page, document_pages, remote_pages),
+              new_document_page
           end,
           ok_text = _("Set page"),
-          title_text = _("Set current page"),
-
-          callback = function(edition_page, _document_page)
+          title_text = _("Set Hardcover edition page"),
+          callback = function(edition_page)
             local result
-
             if current_read then
               result = self.api:updatePage(current_read.id, current_read.edition_id, edition_page,
                 current_read.started_at)
             else
-              local start_date = os.date("%Y-%m-%d")
-              result = self.api:createRead(self.state.book_status.id, self.state.book_status.edition_id, edition_page,
-                start_date)
+              result = self.api:createRead(self.state.book_status.id, self.state.book_status.edition_id,
+                edition_page, os.date("%Y-%m-%d"))
             end
 
             if result then
               self.state.book_status = result
               menu_instance:updateItems()
             else
-              self.dialog_manager:showError("Page could not be saved")
+              self.dialog_manager:showError(_("Page could not be saved"))
             end
-          end
+          end,
         }
         UIManager:show(spinner)
       end,
-      keep_menu_open = true
-    },
-    {
-      text = _("Add a note"),
-      enabled_func = function()
-        return self:isActive() and self.state.book_status.id ~= nil
-      end,
-      callback = function()
-        local reads = self.state.book_status.user_book_reads
-        local current_read = reads and reads[#reads]
-        local current_page = current_read and current_read.progress_pages or 0
-
-        self.dialog_manager:journalEntryForm(
-          "",
-          self.ui.document,
-          current_page,
-          self.settings:pages(),
-          nil, -- let journalEntryForm handle it based on settings
-          nil,
-          "note"
-        )
-      end,
-      keep_menu_open = true
+      keep_menu_open = true,
+      separator = true,
     },
     {
       text_func = function()
@@ -689,292 +1128,9 @@ local function hardcoverStatusItems(self)
   return items
 end
 
-local function goodreadsStatusItem(self, icon, status_id)
-  return {
-    text = _(icon .. " " .. GOODREADS.STATUS_NAME[status_id]),
-    checked_func = function()
-      return self.state.book_status.status_id == status_id
-    end,
-    callback = function(menu_instance)
-      self.dialog_manager:maybeConfirm({
-        text = ("Mark book as %s?"):format(GOODREADS.STATUS_NAME[status_id]),
-        ok_callback = function()
-          self.cache:updateBookStatus(self.ui.document.file, status_id)
-          menu_instance.item_table = self:getStatusSubMenuItems()
-          menu_instance:updateItems()
-        end,
-        no_confirm_callback = function()
-          menu_instance:updateItems()
-        end
-      })
-    end,
-    radio = true
-  }
-end
-
-local function goodreadsStatusItems(self)
-  local items = {
-    self:_statusMenuItem(ICON.BOOKMARK, GOODREADS.STATUS.TO_READ),
-    self:_statusMenuItem(ICON.OPEN_BOOK, GOODREADS.STATUS.READING),
-    self:_statusMenuItem(ICON.CHECKMARK, GOODREADS.STATUS.FINISHED),
-    self:_statusMenuItem(ICON.PAUSE, GOODREADS.STATUS.PAUSED),
-    self:_statusMenuItem(ICON.STOP_CIRCLE, GOODREADS.STATUS.DNF),
-    {
-      text = _(ICON.TRASH .. " Remove"),
-      enabled_func = function()
-        return self:isActive() and self.state.book_status.status_id ~= nil
-      end,
-      callback = function(menu_instance)
-        self.dialog_manager:maybeConfirm({
-          text = "Remove current book status?",
-          ok_callback = function()
-            local result = self.api:removeRead(self.state.book_status.id)
-            if result then
-              self.state.book_status = {}
-              menu_instance.item_table = self:getStatusSubMenuItems()
-              menu_instance:updateItems()
-            end
-          end
-        })
-      end,
-      keep_menu_open = true,
-    },
-  }
-
-  local status = self.state.book_status.status_id
-
-  -- Update progress: only when NOT read, DNF, removed, or want to read
-  if status and status ~= GOODREADS.STATUS.FINISHED and status ~= GOODREADS.STATUS.DNF and status ~= GOODREADS.STATUS.TO_READ then
-    table.insert(items, {
-      text_func = function()
-        local current_page = self.ui:getCurrentPage()
-        local total_pages = self.ui.document:getPageCount()
-        local remote_pages = self.settings:pages()
-        if self.settings:syncByRemotePages() then
-          local mapped_page = self.page_mapper:getMappedPage(current_page, total_pages, remote_pages)
-          return T(_("Update progress: Page %1 / %2"), mapped_page, remote_pages or "?")
-        else
-          local current_percent = math.floor((current_page / total_pages) * 100 + 0.5)
-          return T(_("Update progress: %1%"), current_percent)
-        end
-      end,
-      callback = function()
-        local current_page = self.ui:getCurrentPage()
-        local remote_percent = self.goodreads:getRemotePercent(self.state.book_status) or 0
-
-        self.dialog_manager:journalEntryForm(
-          "",
-          self.ui.document,
-          current_page,
-          self.settings:pages(),
-          nil, -- let journalEntryForm handle it based on settings
-          remote_percent,
-          "note"
-        )
-      end,
-      keep_menu_open = true
-    })
-  end
-
-  return items
-end
-
-local function fableStatusItem(self, icon, status_id)
-  return {
-    text = _(icon .. " " .. FABLE.STATUS_NAME[status_id]),
-    checked_func = function()
-      return self.state.book_status.status_id == status_id
-    end,
-    callback = function(menu_instance)
-      self.dialog_manager:maybeConfirm({
-        text = ("Mark book as %s?"):format(FABLE.STATUS_NAME[status_id]),
-        ok_callback = function()
-          Trapper:wrap(function()
-            self.cache:updateBookStatus(self.ui.document.file, status_id)
-            menu_instance.item_table = self:getStatusSubMenuItems()
-            menu_instance:updateItems()
-          end)
-        end,
-        no_confirm_callback = function()
-          menu_instance:updateItems()
-        end
-      })
-    end,
-    radio = true
-  }
-end
-
-local function fableStatusItems(self)
-  local items = {
-    self:_statusMenuItem(ICON.BOOKMARK, FABLE.STATUS.TO_READ),
-    self:_statusMenuItem(ICON.OPEN_BOOK, FABLE.STATUS.READING),
-    self:_statusMenuItem(ICON.CHECKMARK, FABLE.STATUS.FINISHED),
-    self:_statusMenuItem(ICON.STOP_CIRCLE, FABLE.STATUS.DNF),
-    {
-      text = _(ICON.TRASH .. " Remove"),
-      enabled_func = function()
-        return self:isActive() and self.state.book_status.status_id ~= nil
-      end,
-      callback = function(menu_instance)
-        self.dialog_manager:maybeConfirm({
-          text = "Remove current book status?",
-          ok_callback = function()
-            Trapper:wrap(function()
-              local result = self.api:removeRead(self.state.book_status.id)
-              if result then
-                self.state.book_status = {}
-                menu_instance.item_table = self:getStatusSubMenuItems()
-                menu_instance:updateItems()
-              end
-            end)
-          end
-        })
-      end,
-      keep_menu_open = true,
-    },
-  }
-
-  local status = self.state.book_status.status_id
-
-  -- Update progress: only when NOT read, DNF, or want to read
-  if status and status ~= FABLE.STATUS.FINISHED and status ~= FABLE.STATUS.DNF and status ~= FABLE.STATUS.TO_READ then
-    table.insert(items, {
-      text_func = function()
-        local current_page = self.ui:getCurrentPage()
-        local total_pages = self.ui.document:getPageCount()
-        local remote_pages = self.settings:pages()
-        if self.settings:syncByRemotePages() then
-          local mapped_page = self.page_mapper:getMappedPage(current_page, total_pages, remote_pages)
-          return T(_("Update progress: Page %1 / %2"), mapped_page, remote_pages or "?")
-        else
-          local current_percent = math.floor((current_page / total_pages) * 100 + 0.5)
-          return T(_("Update progress: %1%"), current_percent)
-        end
-      end,
-      callback = function()
-        local current_page = self.ui:getCurrentPage()
-        local remote_percent = self.fable:getRemotePercent(self.state.book_status) or 0
-
-        self.dialog_manager:journalEntryForm(
-          "",
-          self.ui.document,
-          current_page,
-          self.settings:pages(),
-          nil, -- let journalEntryForm handle it based on settings
-          remote_percent,
-          "note"
-        )
-      end,
-      keep_menu_open = true
-    })
-  end
-
-  return items
-end
-
-local function pageboundStatusItem(self, icon, status_id)
-  return {
-    text = _(icon .. " " .. PAGEBOUND.STATUS_NAME[status_id]),
-    checked_func = function()
-      return self.state.book_status.status_id == status_id
-    end,
-    callback = function(menu_instance)
-      self.dialog_manager:maybeConfirm({
-        text = ("Mark book as %s?"):format(PAGEBOUND.STATUS_NAME[status_id]),
-        ok_callback = function()
-          self.cache:updateBookStatus(self.ui.document.file, status_id)
-          menu_instance.item_table = self:getStatusSubMenuItems()
-          menu_instance:updateItems()
-        end,
-        no_confirm_callback = function()
-          menu_instance:updateItems()
-        end
-      })
-    end,
-    radio = true
-  }
-end
-
-local function pageboundStatusItems(self)
-  local items = {
-    self:_statusMenuItem(ICON.BOOKMARK, PAGEBOUND.STATUS.TO_READ),
-    self:_statusMenuItem(ICON.OPEN_BOOK, PAGEBOUND.STATUS.READING),
-    self:_statusMenuItem(ICON.CHECKMARK, PAGEBOUND.STATUS.FINISHED),
-    self:_statusMenuItem(ICON.PAUSE, PAGEBOUND.STATUS.PAUSED),
-    self:_statusMenuItem(ICON.STOP_CIRCLE, PAGEBOUND.STATUS.DNF),
-    {
-      text = _(ICON.TRASH .. " Remove"),
-      enabled_func = function()
-        return self:isActive() and self.state.book_status.status_id ~= nil
-      end,
-      callback = function(menu_instance)
-        self.dialog_manager:maybeConfirm({
-          text = "Remove current book status?",
-          ok_callback = function()
-            local result = self.api:removeRead(self.state.book_status.id)
-            if result then
-              self.state.book_status = {}
-              menu_instance.item_table = self:getStatusSubMenuItems()
-              menu_instance:updateItems()
-            end
-          end
-        })
-      end,
-      keep_menu_open = true,
-    },
-  }
-
-  local status = self.state.book_status.status_id
-
-  -- Progress updates are available only during an active reading session.
-  if status == PAGEBOUND.STATUS.READING then
-    table.insert(items, {
-      text_func = function()
-        local current_page = self.ui:getCurrentPage()
-        local total_pages = self.ui.document:getPageCount()
-        local remote_pages = self.settings:pages()
-        if self.settings:syncByRemotePages() then
-          local mapped_page = self.page_mapper:getMappedPage(current_page, total_pages, remote_pages)
-          return T(_("Update progress or add forum note: Page %1 / %2"), mapped_page, remote_pages or "?")
-        else
-          local current_percent = math.floor((current_page / total_pages) * 100 + 0.5)
-          return T(_("Update progress or add forum note: %1%"), current_percent)
-        end
-      end,
-      callback = function()
-        local current_page = self.ui:getCurrentPage()
-        local remote_percent = self.pagebound:getRemotePercent(self.state.book_status) or 0
-
-        self.dialog_manager:journalEntryForm(
-          "",
-          self.ui.document,
-          current_page,
-          self.settings:pages(),
-          nil, -- let journalEntryForm handle it based on settings
-          remote_percent,
-          "note"
-        )
-      end,
-      keep_menu_open = true
-    })
-  end
-
-  return items
-end
-local status_item_builders = {
-  storygraph = storygraphStatusItem,
-  hardcover = hardcoverStatusItem,
-  goodreads = goodreadsStatusItem,
-  fable = fableStatusItem,
-  pagebound = pageboundStatusItem,
-}
-
-local status_builders = {
-  storygraph = storygraphStatusItems,
-  hardcover = hardcoverStatusItems,
-  goodreads = goodreadsStatusItems,
-  fable = fableStatusItems,
-  pagebound = pageboundStatusItems,
+local option_builders = {
+  storygraph = storygraphOptionItems,
+  hardcover = hardcoverOptionItems,
 }
 
 local UpdateStatusMenu = {}
@@ -986,11 +1142,11 @@ end
 
 local function providerContext(provider, engine)
   local context = setmetatable({ [provider.key] = engine.provider }, { __index = engine })
-  context._statusMenuItem = function(_, icon, status_id)
-    return status_item_builders[provider.key](context, icon, status_id)
-  end
-  context.getStatusSubMenuItems = function()
-    return status_builders[provider.key](context)
+  local option_builder = option_builders[provider.key]
+  if option_builder then
+    context.getProviderOptionItems = function()
+      return option_builder(context)
+    end
   end
   if provider.key == "storygraph" then
     context.getReviewSubMenuItems = function(_, menu_instance)
@@ -1010,20 +1166,39 @@ function UpdateStatusMenu:getSubMenuItems()
   end
 
   local menu_items = {}
+  for _choice_index, choice in ipairs(status_choices) do
+    local item = sharedStatusItem(self, choice.icon, choice.status_id)
+    table.insert(menu_items, item)
+  end
+
+  table.insert(menu_items, {
+    text = _("Link Status"),
+    sub_item_table_func = function()
+      return linkStatusItems(self)
+    end,
+  })
+
+  table.insert(menu_items, sharedProgressItem(self))
+  table.insert(menu_items, removeFromProvidersItem(self))
+  table.insert(menu_items, addNoteItem(self))
+  menu_items[#menu_items].separator = true
+
   for _provider_index, provider in ipairs(self.providers) do
     local current_provider = provider
     local engine = self.engines[current_provider.key]
-    local context = providerContext(current_provider, engine)
-    table.insert(menu_items, {
-      text = _(current_provider.label),
-      enabled_func = function()
-        return engine:isActive() and engine.settings:bookLinked()
-      end,
-      sub_item_table_func = function()
-        engine.cache:cacheUserBook()
-        return context:getStatusSubMenuItems()
-      end,
-    })
+    if option_builders[current_provider.key] then
+      local context = providerContext(current_provider, engine)
+      table.insert(menu_items, {
+        text = _(current_provider.label .. " options"),
+        enabled_func = function()
+          return engine:isActive() and engine.settings:bookLinked()
+        end,
+        sub_item_table_func = function()
+          engine.cache:cacheUserBook()
+          return context:getProviderOptionItems()
+        end,
+      })
+    end
   end
 
   return menu_items

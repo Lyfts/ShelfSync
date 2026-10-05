@@ -206,6 +206,12 @@ function BaseProvider:linkBookManually(book)
   return self:linkBookWithMethod(book, LINK_METHOD.MANUAL)
 end
 
+function BaseProvider:getLinkMethodLabel()
+  local filename = self.ui and self.ui.document and self.ui.document.file
+  local method = filename and self.settings:readBookSetting(filename, "link_method")
+  return LINK_METHOD_LABELS[method] or _("Unknown")
+end
+
 function BaseProvider:getLinkedBookLabel()
   local filename = self.ui and self.ui.document and self.ui.document.file
   local title = filename and self.settings:getLinkedTitle()
@@ -213,8 +219,7 @@ function BaseProvider:getLinkedBookLabel()
     title = self.settings:getLinkedBookId()
   end
 
-  local method = filename and self.settings:readBookSetting(filename, "link_method")
-  local method_label = LINK_METHOD_LABELS[method] or _("Unknown")
+  local method_label = self:getLinkMethodLabel()
   return T(_("Linked book (%1): %2"), method_label, tostring(title or ""))
 end
 

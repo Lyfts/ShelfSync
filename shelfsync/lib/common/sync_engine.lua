@@ -475,7 +475,14 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
   end
 
   local update = function()
-    local result, reason = self.provider:pushProgress(current_read, value, update_type, filename)
+    local push_ok, result, reason = xpcall(function()
+      return self.provider:pushProgress(current_read, value, update_type, filename)
+    end, debug.traceback)
+    if not push_ok then
+      self.settings:debugWarn(self.label .. ": progress update raised an error")
+      result = nil
+      reason = _("Progress update failed on " .. self.label)
+    end
     if result then
       self.state.book_status = result
       self:registerHighlight()
@@ -704,20 +711,51 @@ function SyncEngine:onResume()
   end
 end
 
+function SyncEngine:getProgressTarget(local_page, document_pages)
+  local_page = tonumber(local_page)
+  document_pages = tonumber(document_pages)
+  if not local_page or not document_pages or document_pages <= 0 then
+    return nil, nil, _("Local page count is unavailable")
+  end
+
+  local remote_pages = tonumber(self.settings:pages())
+  if remote_pages and remote_pages <= 0 then
+    remote_pages = nil
+  end
+  if self.provider.requires_remote_page_count and not remote_pages then
+    return nil, nil, _("The linked edition page count is unavailable")
+  end
+  local decimal_percent, mapped_page = self.page_mapper:getRemotePagePercent(
+    local_page,
+    document_pages,
+    remote_pages
+  )
+  if self.settings:syncByRemotePages() and remote_pages and mapped_page ~= nil then
+    return mapped_page, "pages", remote_pages
+  end
+
+  return math.floor((decimal_percent or 0) * 100 + 0.5), "percentage", remote_pages
+end
+
+function SyncEngine:updateProgressAtLocalPage(callback, local_page)
+  local document = self.ui.document
+  if not document then
+    if callback then callback(nil, _("No book active")) end
+    return
+  end
+
+  local value, update_type, err = self:getProgressTarget(local_page, document:getPageCount())
+  if value == nil then
+    if callback then callback(nil, err) end
+    return
+  end
+
+  self:_handlePageUpdate(document.file, value, true, callback, update_type)
+end
+
 function SyncEngine:updatePageNow(callback, value, update_type)
-  if not value then
-    local decimal_percent, mapped_page = self.page_mapper:getRemotePagePercent(
-      self.state.page,
-      self.ui.document:getPageCount(),
-      self.settings:pages()
-    )
-    if self.settings:syncByRemotePages() and mapped_page then
-      value = mapped_page
-      update_type = "pages"
-    else
-      value = math.floor(decimal_percent * 100 + 0.5)
-      update_type = "percentage"
-    end
+  if value == nil then
+    return self:updateProgressAtLocalPage(callback, self.state.page)
   end
   self:_handlePageUpdate(self.ui.document.file, value, true, callback, update_type)
 end

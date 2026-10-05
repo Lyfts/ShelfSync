@@ -208,10 +208,7 @@ function ProviderSettingsMenu:getSubMenuItems()
   }
 
   if has_document then
-    table.insert(menu_items, {
-      text = _("Book linking"),
-      sub_item_table = { linkItem(self.manual_link_dialog) },
-    })
+    table.insert(menu_items, linkItem(self.manual_link_dialog))
     table.insert(menu_items, {
       text = _("Automatically track progress"),
       sub_item_table = tracking_items,

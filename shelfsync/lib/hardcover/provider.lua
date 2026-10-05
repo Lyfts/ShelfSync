@@ -49,6 +49,7 @@ end
 -- just because there's no existing user_book_reads entry yet.
 local Hardcover = setmetatable({
   allows_new_read = true,
+  requires_remote_page_count = true,
 }, { __index = BaseProvider })
 Hardcover.__index = Hardcover
 
