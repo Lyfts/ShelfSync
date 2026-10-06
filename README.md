@@ -65,7 +65,7 @@ Without that setup, grab a cookie by hand instead. Rather than copying each one 
 4. Right-click it -> Copy Value, and paste the whole thing into the `cookie` field of the `goodreads` section in `shelfsync_config.lua`.
    - Alternatively, you can paste it directly into the **Goodreads** menu's **Settings > Account (Cookie)** field from within KOReader instead of editing the config file.
 
-This cookie will go stale again periodically unless you set up the Docker refresher above — when that happens, syncing pauses until you repeat the steps above.
+Without the Docker refresher, this cookie will go stale again periodically — when that happens, syncing pauses until you repeat the steps above.
 
 ### Fable authentication
 Unlike the other services, Fable has a real login API, so the plugin logs in directly with your Fable email and password rather than a cookie/token you have to fetch by hand.

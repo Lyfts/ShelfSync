@@ -156,16 +156,17 @@ local function get_headers(self, custom_headers)
   return headers
 end
 
--- Mirrors get_headers()'s cookie resolution (setting, then legacy config
--- fallback) so callers can check for a usable credential without triggering
--- a network request or the "no session cookie" warning log.
+-- Check for a stored cookie or configured refresher without triggering a
+-- network request or the "no session cookie" warning log.
 function GoodreadsApi:hasCredential()
   local cookie = ""
   if self.settings then
     cookie = self.settings:readSetting(SETTING.GOODREADS.SESSION_COOKIE)
   end
   if not cookie or cookie == "" then cookie = config.cookie or "" end
-  return cookie ~= ""
+  local refresh_url = self.settings
+    and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_URL)
+  return cookie ~= "" or (refresh_url ~= nil and refresh_url ~= "")
 end
 
 -- Helper to decode HTML entities
@@ -234,8 +235,8 @@ local function refresher_failure_hint(code)
   return "still logged out? see its noVNC view"
 end
 
--- Escape hatch for the WAF-challenge dead end below: hits the refresher's
--- /refresh endpoint to force a freshly browser-solved cookie.
+-- Hits the refresher's /refresh endpoint to force a freshly browser-solved
+-- cookie when Goodreads rejects the current session.
 local function fetch_refreshed_cookie(refresh_url, auth_token, timeout)
   return fetch_from_refresher(refresh_url, "POST", auth_token, timeout)
 end
@@ -797,7 +798,7 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     local current_method = method or "GET"
     local max_hops = 5
     local code, _headers, response_body
-    local waf_retried = false
+    local cookie_refresh_attempted = false
     -- Only those Goodreads set, so the parent can add them to whatever it has
     -- kept by the time this is back.
     local set_cookies = ""
@@ -860,32 +861,34 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         .. " location=" .. tostring(location) .. " set_cookie=" .. tostring(set_cookie ~= nil)
         .. " waf_action=" .. tostring(waf_action) .. " content_type=" .. tostring(content_type)
         .. " response_length=" .. #response_body)
-      local waf_retry_now = false
-      if waf_action and is_goodreads_origin(current_url) then
+      local cookie_retry_now = false
+      local refresh_reason = waf_action and "WAF challenge"
+        or (code == 403 and "HTTP 403 response")
+      if refresh_reason and is_goodreads_origin(current_url) then
         -- Stored setting is just the refresher's base URL (e.g.
         -- http://192.168.1.50:5080) -- the /refresh path is always the
         -- same, so there's no reason to make the user type it.
         local refresh_base = self.settings and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_URL)
         local refresh_url = refresh_base and refresh_base ~= "" and (refresh_base:gsub("/+$", "") .. "/refresh")
         local refresh_token = self.settings and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_TOKEN)
-        if refresh_url and not waf_retried then
-          waf_retried = true
-          logger.info("Goodreads: WAF challenge hit, trying local cookie-refresher at " .. refresh_url)
+        if refresh_url and not cookie_refresh_attempted then
+          cookie_refresh_attempted = true
+          logger.info("Goodreads: " .. refresh_reason .. ", trying local cookie-refresher at " .. refresh_url)
           local fresh_cookie, refresher_code = fetch_refreshed_cookie(refresh_url, refresh_token, timeout)
           if fresh_cookie and fresh_cookie ~= headers["Cookie"] then
             headers["Cookie"] = fresh_cookie
             refreshed_cookie = fresh_cookie
             set_cookies = ""
-            waf_retry_now = true
+            cookie_retry_now = true
             logger.info("Goodreads: got a refreshed cookie, retrying")
           else
             logger.warn("Goodreads: cookie-refresher at " .. refresh_url .. " didn't return a usable cookie (HTTP "
               .. tostring(refresher_code) .. " -- " .. refresher_failure_hint(refresher_code) .. ")")
           end
+        elseif not cookie_refresh_attempted then
+          logger.warn("Goodreads: " .. refresh_reason .. " but no Cookie Auto-Refresh URL is configured")
         else
-          logger.warn("Goodreads: request blocked by AWS WAF bot-challenge (not a code bug -- "
-            .. "the saved session cookie's challenge token is stale/rejected; needs a fresh "
-            .. "browser-solved cookie capture, retrying won't help)")
+          logger.warn("Goodreads: " .. refresh_reason .. " persisted after retrying with a refreshed cookie")
         end
       end
 
@@ -898,7 +901,7 @@ function GoodreadsApi:request(url, method, data, custom_headers)
           logger.warn("Goodreads: refusing redirect outside https://www.goodreads.com")
           break
         end
-      elseif waf_retry_now and hop < max_hops then
+      elseif cookie_retry_now and hop < max_hops then
         -- current_url/current_method unchanged: same request, fresh cookie
       else
         break
@@ -991,6 +994,8 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     if headers["x-refreshed-cookie"] and self.settings then
       logger.info("Goodreads: saving refreshed cookie from local cookie-refresher")
       self.settings:updateSetting(SETTING.GOODREADS.SESSION_COOKIE, headers["x-refreshed-cookie"])
+      -- CSRF tokens may be tied to the cookie session that fetched them.
+      self.last_csrf = nil
     end
 
     -- Kept for the saved cookie the request went out with, or the refresher's
@@ -1261,11 +1266,26 @@ function GoodreadsApi:updateUserBook(book_id, status_id)
     ["Sec-Fetch-Dest"] = "empty",
   }
 
-  local code, resp = self:request(base_url .. "/shelf/add_to_shelf", "POST", {
-    book_id = book_id,
-    name = shelf,
-    a = "",
-  }, custom_headers)
+  local function send_update()
+    return self:request(base_url .. "/shelf/add_to_shelf", "POST", {
+      book_id = book_id,
+      name = shelf,
+      a = "",
+    }, custom_headers)
+  end
+
+  local code, resp, response_headers = send_update()
+  if code == 403 and response_headers and response_headers["x-refreshed-cookie"] then
+    -- request() already retried with the refreshed cookie. If Goodreads still
+    -- rejected that POST, fetch a CSRF token from the refreshed session before
+    -- the final shelf-update attempt.
+    local refreshed_csrf = self:refreshSession()
+    if refreshed_csrf then
+      custom_headers["X-CSRF-Token"] = refreshed_csrf
+      logger.info("Goodreads: retrying shelf update with refreshed session CSRF token")
+      code, resp = send_update()
+    end
+  end
   self.settings:debugLog("Goodreads: updateUserBook POST response code=" .. tostring(code))
 
   if code and code >= 200 and code < 300 then

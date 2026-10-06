@@ -3,6 +3,7 @@
 <!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
 
 ## Unreleased
+- (fix) Allow Goodreads syncing when only Cookie Auto-Refresh URL is configured, and refresh rejected cookies after HTTP 403 responses.
 
 ## 1.6.0
 - (feat) 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟

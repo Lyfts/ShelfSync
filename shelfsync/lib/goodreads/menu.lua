@@ -311,9 +311,9 @@ Goodreads accounts are linked through Amazon, so this cookie is a large bundle r
       end,
       hold_callback = function()
         UIManager:show(InfoMessage:new {
-          text = _([[Optional. If the Goodreads Cookie above goes stale, syncing normally just fails until you repaste a fresh one by hand.
+          text = _([[Optional. A configured refresher can provide the first cookie when the Goodreads Cookie above is blank, and can replace a cookie Goodreads rejects.
 
-Instead, you can run a small local helper (see the separate goodreads-cookie-refresher repo) that keeps a real logged-in browser alive on your home network and hands out fresh cookies automatically. Point this at its base address, e.g. http://192.168.1.50:5080 -- no path needed, just leave blank to disable.]]),
+Run the small local helper (see the separate goodreads-cookie-refresher repo) to keep a real logged-in browser alive on your home network and hand out fresh cookies automatically. Point this at its base address, e.g. http://192.168.1.50:5080 -- no path needed, just leave blank to disable.]]),
         })
       end,
       callback = function()
