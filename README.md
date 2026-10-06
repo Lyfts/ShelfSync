@@ -58,6 +58,8 @@ Goodreads accounts are linked through Amazon, so a valid session is a bundle of 
 
 [`goodreads-cookie-refresher`](https://github.com/Lyfts/goodreads-cookie-refresher) is an optional self-hosted Docker setup that handles both of those for you: it keeps a real logged-in browser session alive on your network and hands the plugin fresh cookies automatically, covering initial setup (leave the cookie field below blank) as well as every future refresh, so you never have to do the manual steps below at all.
 
+For multiple Goodreads accounts on separate KOReader installs, configure the refresher with one account ID per login. Keep the default refresher URL on one device; on another, append its account path, such as `/accounts/girlfriend`, to **Cookie Auto-Refresh URL**.
+
 Without that setup, grab a cookie by hand instead. Rather than copying each one individually from the cookie storage view, grab the browser's pre-assembled `Cookie` request header instead — it's the exact same cookies, already joined into the one string this plugin needs.
 1. Log in to [goodreads.com](https://goodreads.com) in your browser.
 2. Open Developer Tools (F12) -> Network tab, then reload the page.
