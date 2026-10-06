@@ -76,6 +76,21 @@ local function resolve_redirect(current_url, location)
   return origin .. directory .. location
 end
 
+local function is_sign_in_url(url)
+  if type(url) ~= "string" then return false end
+  local lower_url = url:lower()
+  return lower_url:find("/user/sign_in", 1, true) ~= nil
+    or lower_url:find("signin", 1, true) ~= nil
+end
+
+local function is_sign_in_page(body)
+  if type(body) ~= "string" then return false end
+  local lower_body = body:lower()
+  return lower_body:find("something wrong with your goodreads cookie", 1, true) ~= nil
+    or (lower_body:find("/user/sign_in", 1, true) ~= nil
+      and lower_body:find('name="email"', 1, true) ~= nil)
+end
+
 local GoodreadsApi = {
   enabled = true,
   settings = nil, -- Injected by main.lua
@@ -705,11 +720,14 @@ local function parse_new_session_rowid(html)
   return html:match("data%-rowid=['\"]([^'\"]+)['\"]")
 end
 
--- Helper to extract authenticity token from HTML. Only the classic homepage
--- carries this meta tag -- the book/search pages don't -- so this is always
--- called against a homepage fetch (see refreshSession below).
-function GoodreadsApi:extract_csrf(html)
-  if not html then return self.last_csrf end
+-- Extracts the authenticity token from a classic Goodreads HTML page. Normal
+-- callers may reuse the cached value if parsing fails; connection checks pass
+-- fresh_only so an old token cannot make a stale cookie look valid.
+function GoodreadsApi:extract_csrf(html, fresh_only)
+  if not html then
+    if fresh_only then return nil end
+    return self.last_csrf
+  end
 
   local csrf = html:match('<meta%s+[^>]*name=["\']csrf%-token["\']%s+[^>]*content=["\']([^"\']+)["\']')
             or html:match('<meta%s+[^>]*content=["\']([^"\']+)["\']%s+[^>]*name=["\']csrf%-token["\']')
@@ -721,10 +739,11 @@ function GoodreadsApi:extract_csrf(html)
     self.last_csrf = csrf
   end
 
+  if fresh_only and not csrf then return nil end
   return csrf or self.last_csrf
 end
 
-function GoodreadsApi:request(url, method, data, custom_headers)
+function GoodreadsApi:request(url, method, data, custom_headers, request_options)
   if not NetworkManager:isConnected() or not self.enabled then
     if self.settings then
       self.settings:debugWarn("Goodreads: request() aborted before sending - NetworkManager connected="
@@ -862,8 +881,11 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         .. " waf_action=" .. tostring(waf_action) .. " content_type=" .. tostring(content_type)
         .. " response_length=" .. #response_body)
       local cookie_retry_now = false
-      local refresh_reason = waf_action and "WAF challenge"
-        or (code == 403 and "HTTP 403 response")
+      local expired_session = code == 401 or code == 403
+        or is_sign_in_url(location) or is_sign_in_url(current_url)
+        or is_sign_in_page(response_body)
+      local refresh_reason = (waf_action or code == 202) and "WAF challenge"
+        or (expired_session and "expired session")
       if refresh_reason and is_goodreads_origin(current_url) then
         -- Stored setting is just the refresher's base URL (e.g.
         -- http://192.168.1.50:5080) -- the /refresh path is always the
@@ -892,7 +914,10 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         end
       end
 
-      if is_redirect and location and hop < max_hops
+      if cookie_retry_now and hop < max_hops then
+        -- Retry the same page with the refresher's cookie before following a
+        -- sign-in redirect from the rejected session.
+      elseif is_redirect and location and hop < max_hops
           and (current_method == "GET" or current_method == "HEAD") then
         local next_url = resolve_redirect(current_url, location)
         if is_goodreads_origin(next_url) then
@@ -901,8 +926,6 @@ function GoodreadsApi:request(url, method, data, custom_headers)
           logger.warn("Goodreads: refusing redirect outside https://www.goodreads.com")
           break
         end
-      elseif cookie_retry_now and hop < max_hops then
-        -- current_url/current_method unchanged: same request, fresh cookie
       else
         break
       end
@@ -978,12 +1001,14 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     headers["x-session-cookie"] = nil
 
     local redirect = headers["location"] or ""
-    if code_num == 401 or redirect:match("signin") or redirect:match("sign_in") then
+    if code_num == 401 or is_sign_in_url(redirect) then
       -- Unless the cookie it went out with has been replaced since.
       if self.session_generation == sent_generation and saved_cookie(self) == sent_saved then
         forget_session(self)
       end
-      self:notifyAuthFailure()
+      if not (request_options and request_options.suppress_auth_error) then
+        self:notifyAuthFailure()
+      end
       return code_num, response, headers, "Unauthorized"
     end
 
@@ -1020,6 +1045,60 @@ function GoodreadsApi:request(url, method, data, custom_headers)
       .. tostring(completed) .. " content_present=" .. tostring(content ~= nil) .. " url=" .. url)
   end
   return nil, "Request failed"
+end
+
+-- Read-only account check, mirroring the separate Goodreads plugin's GET
+-- /review/list probe. request() bootstraps a missing cookie from /cookie and
+-- retries an expired/WAF-blocked session through the configured refresher.
+function GoodreadsApi:testConnection()
+  if not self:hasCredential() then
+    return { ok = false, error = "no_cookies" }
+  end
+  if not NetworkManager:isConnected() then
+    return { ok = false, error = "no_network" }
+  end
+
+  local html_headers = {
+    ["Accept"] = "text/html,application/xhtml+xml",
+    ["X-Requested-With"] = nil,
+  }
+  local code, body, headers, request_error = self:request(
+    base_url .. "/review/list",
+    "GET",
+    nil,
+    html_headers,
+    { suppress_auth_error = true }
+  )
+
+  headers = headers or {}
+  if code == 202 or headers["x-amzn-waf-action"] then
+    return { ok = false, error = "waf_challenge" }
+  end
+
+  local final_url = headers["x-final-url"] or ""
+  local location = headers.location or ""
+  if code == 401 or code == 403 or request_error == "Unauthorized"
+      or is_sign_in_url(final_url) or is_sign_in_url(location) or is_sign_in_page(body) then
+    return { ok = false, error = "session_expired" }
+  end
+
+  if code == 200 and body and self:extract_csrf(body, true) then
+    local user_id = body:match("/user/show/(%d+)")
+    if user_id then self.last_user_id = user_id end
+    return {
+      ok = true,
+      user_id = user_id,
+      cookie_refreshed = headers["x-refreshed-cookie"] ~= nil,
+    }
+  end
+
+  if not code then
+    return { ok = false, error = request_error or "connection_failed" }
+  end
+  if code == 200 then
+    return { ok = false, error = "unexpected_response" }
+  end
+  return { ok = false, error = "HTTP " .. tostring(code) }
 end
 
 -- Warn (once per cooldown) that the stored session cookie is dead
