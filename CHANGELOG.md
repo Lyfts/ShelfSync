@@ -5,6 +5,7 @@
 ## Unreleased
 - (feat) Add a Goodreads account connection check that verifies the cookie and uses the configured cookie refresher when the cookie is missing or expired.
 - (fix) Allow Goodreads syncing when only Cookie Auto-Refresh URL is configured, and refresh rejected cookies after HTTP 403 responses.
+- (fix) Goodreads shelf changes now send the cookies that came with their CSRF token. Without them, they could get a 404 "Page not found" page.
 
 ## 1.6.0
 - (feat) 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟
