@@ -66,6 +66,17 @@ local function age(settings, filename, seconds)
   file:flush()
 end
 
+-- As if the last failed try at the date of filename's queued finished status
+-- was an hour (or `seconds`) earlier, so it's due another.
+local function waitForDateRetry(settings, filename, seconds)
+  local file = LuaSettings:open(settings.pending_updates.path)
+  local updates = file:readSetting("updates")
+  local update = updates[filename or FILE]
+  update.date_tried_at = update.date_tried_at - (seconds or 3600)
+  file:saveSetting("updates", updates)
+  file:flush()
+end
+
 local function queue(settings, filename, progress, finished)
   local book = settings:readBookSettings(filename)
   if progress then settings.pending_updates:addProgress(filename, book, progress, "percentage") end
@@ -2144,6 +2155,7 @@ describe("SyncEngine pending updates", function()
         api = {
           hasCredential = function() return true end,
           findUserBook = function(_, book_id)
+            table.insert(calls.findUserBook, book_id)
             if not NetworkMgr._connected then return {}, "Failed to fetch book" end
             return { book_id = book_id, status_id = shelf }
           end,
@@ -2153,13 +2165,17 @@ describe("SyncEngine pending updates", function()
           end,
           updateUserBook = function(_, _book_id, status_id)
             table.insert(calls.updateUserBook, status_id)
+            -- e.g. answered by Goodreads' bot check, which it takes for success
+            if fails.status then return { status_id = shelf } end
             shelf = status_id
-            -- Like the real one, nil if the shelf it set couldn't be read back.
-            if not fails.readback then return { status_id = status_id } end
+            -- Like the real one, nil if the response is lost, even if the shelf was set.
+            if not fails.response then return { status_id = status_id } end
           end,
           setDateFinished = function(_, book_id, finished_at)
             table.insert(calls.setDateFinished, { book_id, finished_at })
-            return not fails.date
+            -- e.g. Wi-Fi lost during the request
+            if fails.connection then goOffline() end
+            return not (fails.date or fails.connection)
           end,
         },
         ui = engine_ui,
@@ -2171,12 +2187,22 @@ describe("SyncEngine pending updates", function()
       UIManager:_runUntilIdle()
     end
 
+    -- Counts the "book finished" broadcasts, for main.lua's "submit a review?" prompt.
+    local function countAnnounced()
+      local count, listening = 0, true
+      UIManager._addListener(function(event)
+        if listening and event.name == "ShelfSyncBookFinished" then count = count + 1 end
+      end)
+      finally(function() listening = false end)
+      return function() return count end
+    end
+
     before_each(function()
       ReaderUI.instance = nil
       settings = GoodreadsSettings:new(SETTINGS_PATH, newUi(nil), nil)
       settings:updateBookSetting(FILE, { book_id = "42", pages = 300 })
       DocSettings:open(FILE):saveSetting("summary", { status = "complete" })
-      calls = { updateProgress = {}, updateUserBook = {}, setDateFinished = {} }
+      calls = { findUserBook = {}, updateProgress = {}, updateUserBook = {}, setDateFinished = {} }
       shelf = GOODREADS_CONST.STATUS.READING
       fails = {}
       goOnline()
@@ -2219,8 +2245,8 @@ describe("SyncEngine pending updates", function()
       queue(settings, FILE, nil, true)
       local finished_at = pending(settings).finished_at
 
-      -- The shelf is set, but can't be read back.
-      fails.readback = true
+      -- The shelf is set, but the response is lost.
+      fails.response = true
       flushFromFileBrowser()
       assert.are.same({}, calls.setDateFinished)
       assert.are.equal(finished_at, pending(settings).finished_at)
@@ -2230,12 +2256,154 @@ describe("SyncEngine pending updates", function()
       flushFromFileBrowser()
       assert.are.equal(finished_at, pending(settings).finished_at)
 
+      -- Not tried again for an hour.
       fails = {}
+      flushFromFileBrowser()
+      assert.are.equal(1, #calls.setDateFinished)
+
+      waitForDateRetry(settings)
       flushFromFileBrowser()
 
       assert.are.same({ GOODREADS_CONST.STATUS.FINISHED }, calls.updateUserBook)
       assert.are.same({ { "42", finished_at }, { "42", finished_at } }, calls.setDateFinished)
       assert.is_nil(pending(settings))
+    end)
+
+    it("gives up on the date after 3 tries an hour apart, without looking the book up in between", function()
+      queue(settings, FILE, nil, true)
+      local finished_at = pending(settings).finished_at
+      fails.date = true
+
+      flushFromFileBrowser()
+      flushFromFileBrowser()
+      assert.are.equal(1, #calls.findUserBook)
+      assert.are.equal(1, #calls.setDateFinished)
+
+      waitForDateRetry(settings, FILE, 59 * 60)
+      flushFromFileBrowser()
+      assert.are.equal(1, #calls.setDateFinished)
+
+      waitForDateRetry(settings, FILE, 60)
+      flushFromFileBrowser()
+      assert.are.equal(finished_at, pending(settings).finished_at)
+
+      waitForDateRetry(settings)
+      flushFromFileBrowser()
+
+      assert.are.same({ GOODREADS_CONST.STATUS.FINISHED }, calls.updateUserBook)
+      assert.are.same({ { "42", finished_at }, { "42", finished_at }, { "42", finished_at } }, calls.setDateFinished)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("doesn't count a try at the date that failed as the network was lost", function()
+      queue(settings, FILE, nil, true)
+      fails.connection = true
+      flushFromFileBrowser()
+      assert.is_truthy(pending(settings).finished_at)
+
+      goOnline()
+      fails = { date = true }
+      flushFromFileBrowser()
+      waitForDateRetry(settings)
+      flushFromFileBrowser()
+      assert.are.equal(3, #calls.setDateFinished)
+      assert.is_truthy(pending(settings).finished_at)
+
+      waitForDateRetry(settings)
+      flushFromFileBrowser()
+      assert.are.equal(4, #calls.setDateFinished)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("tries the date again if the clock's been put back since the last try", function()
+      queue(settings, FILE, nil, true)
+      fails.date = true
+      flushFromFileBrowser()
+      waitForDateRetry(settings, FILE, -2 * 3600)
+      flushFromFileBrowser()
+
+      assert.are.equal(2, #calls.setDateFinished)
+    end)
+
+    it("doesn't try the date again early when progress is queued with it, and drops the progress", function()
+      local announced = countAnnounced()
+      queue(settings, FILE, nil, true)
+      fails.date = true
+      flushFromFileBrowser()
+      queue(settings, FILE, 100)
+      flushFromFileBrowser()
+
+      assert.are.equal(1, #calls.setDateFinished)
+      assert.is_truthy(pending(settings).finished_at)
+      assert.is_nil(pending(settings).progress)
+      -- Nothing was sent, so it's not announced again.
+      assert.are.equal(1, announced())
+
+      -- So the book's not looked up again until the date's due.
+      flushFromFileBrowser()
+      assert.are.equal(2, #calls.findUserBook)
+    end)
+
+    it("doesn't try the date again early when the status has to be sent again, but still announces it", function()
+      local announced = countAnnounced()
+      queue(settings, FILE, nil, true)
+      fails.date = true
+      flushFromFileBrowser()
+
+      -- e.g. moved back to Currently Reading there
+      shelf = GOODREADS_CONST.STATUS.READING
+      queue(settings, FILE, 100)
+      flushFromFileBrowser()
+
+      local FINISHED = GOODREADS_CONST.STATUS.FINISHED
+      assert.are.same({ FINISHED, FINISHED }, calls.updateUserBook)
+      assert.are.equal(1, #calls.setDateFinished)
+      assert.is_truthy(pending(settings).finished_at)
+      -- As when it was first sent.
+      assert.are.equal(2, announced())
+    end)
+
+    it("keeps a queued finished status that didn't go through, however often the date fails", function()
+      queue(settings, FILE, nil, true)
+      -- e.g. both answered by Goodreads' bot check
+      fails = { status = true, date = true }
+      for _ = 1, 4 do flushFromFileBrowser() end
+
+      assert.are.equal(4, #calls.updateUserBook)
+      assert.are.equal(4, #calls.setDateFinished)
+      assert.is_truthy(pending(settings).finished_at)
+
+      fails = {}
+      flushFromFileBrowser()
+      assert.are.equal(GOODREADS_CONST.STATUS.FINISHED, shelf)
+      assert.is_nil(pending(settings))
+    end)
+
+    it("tries the date of a book finished again right away, with all its tries", function()
+      queue(settings, FILE, nil, true)
+      fails.date = true
+      flushFromFileBrowser()
+      waitForDateRetry(settings)
+      flushFromFileBrowser()
+      assert.are.equal(2, #calls.setDateFinished)
+
+      -- Marked as reading again and read on offline, so its progress stays
+      -- queued, then finished again.
+      goOffline()
+      queue(settings, FILE, 40)
+      DocSettings:open(FILE):saveSetting("summary", { status = "reading" })
+      goodreadsEngine(newUi(nil)):onDocSettingsItemsChanged(FILE, { summary = { status = "reading" } })
+      UIManager:_runUntilIdle()
+      assert.is_nil(pending(settings).finished_at)
+      -- Still read there, as that was offline.
+      shelf = GOODREADS_CONST.STATUS.FINISHED
+      DocSettings:open(FILE):saveSetting("summary", { status = "complete" })
+      queue(settings, FILE, nil, true)
+      goOnline()
+      flushFromFileBrowser()
+
+      assert.are.equal(3, #calls.setDateFinished)
+      assert.is_truthy(pending(settings).finished_at)
     end)
 
     it("dates a queued finished status when the book's marked finished again, and keeps it until it's dated", function()

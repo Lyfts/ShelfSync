@@ -913,6 +913,9 @@ function SyncEngine:_sendPendingUpdate(filename)
   -- The open book's progress is left to live tracking, whose next successful
   -- page update clears it.
   if not update or (not update.finished_at and filename == self:_openFile()) then return true end
+  -- Nor is anything sent for a finished status that's only waiting to try its
+  -- date again.
+  if not update.progress and not pending_updates:dateDue(update) then return true end
 
   local book_id = update.book_id
   local status, err = self.provider:findUserBookFor(book)
@@ -969,7 +972,14 @@ function SyncEngine:_sendPendingUpdate(filename)
       -- As Cache:updateBookStatus does: dated when it was finished, and kept
       -- until that date's set too (Goodreads). Then only the date's set, as
       -- the book's already finished there, e.g. when the status was set but
-      -- couldn't be read back.
+      -- couldn't be read back. A date that can't be set while connected is
+      -- only tried a few times, an hour apart (see PendingUpdates:dateNotSet),
+      -- even if the status had to be sent again. That's still announced, as
+      -- onMarkedFinished does.
+      if not pending_updates:dateDue(update) then
+        if not already_finished then self.provider:notifyBookFinished(filename) end
+        return true
+      end
       local dated
       if already_finished then
         dated = self.provider:setDateFinished(book_id, update.finished_at)
@@ -980,6 +990,10 @@ function SyncEngine:_sendPendingUpdate(filename)
         pending_updates:clearFinished(filename, update)
       elseif not NetworkManager:isConnected() then
         return false
+      -- Only once the book's shown as finished there. Goodreads takes its bot
+      -- check's answer for success, so the status may not have gone through.
+      elseif result.status_id == STATUS.FINISHED and pending_updates:dateNotSet(filename, update) then
+        logger.info(self.label .. ": Giving up on setting the date a queued finished status was finished")
       end
     elseif not NetworkManager:isConnected() then
       return false

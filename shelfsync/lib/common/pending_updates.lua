@@ -9,6 +9,11 @@
 local LuaSettings = require("luasettings")
 
 local MAX_AGE = 28 * 24 * 3600 -- 4 weeks, as KOSyncQueue
+-- Tries at the date of a finished status the provider has accepted
+-- (Goodreads), while connected, before it's given up on. They're an hour
+-- apart, so a passing problem, e.g. Goodreads' bot check, doesn't use them all.
+local DATE_TRIES = 3
+local DATE_RETRY_INTERVAL = 3600
 
 local PendingUpdates = {}
 PendingUpdates.__index = PendingUpdates
@@ -61,7 +66,10 @@ function PendingUpdates:addFinished(filename, book, finished_at)
   if not book then return end
   local file, updates = self:_load()
   local update = entryFor(updates, filename, book)
-  update.finished_at = update.finished_at or finished_at or os.time()
+  if not update.finished_at then
+    update.finished_at = finished_at or os.time()
+    update.date_tries, update.date_tried_at = nil, nil
+  end
   save(file, updates)
 end
 
@@ -132,15 +140,47 @@ function PendingUpdates:clearProgress(filename, sent)
   save(file, updates)
 end
 
+-- Whether `update` still has the finished status `sent` had, if given.
+local function finishedAsSent(update, sent)
+  return update and update.finished_at and not (sent and (tostring(update.book_id) ~= tostring(sent.book_id)
+    or update.finished_at ~= sent.finished_at))
+end
+
 function PendingUpdates:clearFinished(filename, sent)
   local file, updates = self:_load()
   local update = updates[filename]
-  if not (update and update.finished_at) or (sent and (tostring(update.book_id) ~= tostring(sent.book_id)
-      or update.finished_at ~= sent.finished_at)) then return end
+  if not finishedAsSent(update, sent) then return end
 
   update.finished_at = nil
   updates[filename] = update.progress and update or nil
   save(file, updates)
+end
+
+-- Records a failed try at the date of filename's finished status, once the
+-- provider has accepted the status. After DATE_TRIES, the finished status is
+-- dropped, and the book's left with whatever date the provider gave it.
+-- Returns whether it was.
+function PendingUpdates:dateNotSet(filename, sent)
+  local file, updates = self:_load()
+  local update = updates[filename]
+  if not finishedAsSent(update, sent) then return false end
+
+  update.date_tries = (update.date_tries or 0) + 1
+  update.date_tried_at = os.time()
+  local given_up = update.date_tries >= DATE_TRIES
+  if given_up then
+    update.finished_at, update.date_tries, update.date_tried_at = nil, nil, nil
+    updates[filename] = update.progress and update or nil
+  end
+  save(file, updates)
+  return given_up
+end
+
+-- Whether the date of `update`'s finished status is due another try, as it
+-- is if the clock's been put back since the last.
+function PendingUpdates:dateDue(update)
+  local since = update.date_tried_at and os.time() - update.date_tried_at
+  return not since or since >= DATE_RETRY_INTERVAL or since < 0
 end
 
 -- Drops a finished status queued for book_id under another filename, e.g.
