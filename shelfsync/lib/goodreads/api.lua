@@ -752,6 +752,7 @@ function GoodreadsApi:request(url, method, data, custom_headers, request_options
     return nil, "Network not connected"
   end
 
+  local completed, content, sent_saved, sent_generation
   local subprocess_fn = function()
     local maxtime = 15
     local timeout = 10
@@ -886,7 +887,11 @@ function GoodreadsApi:request(url, method, data, custom_headers, request_options
         or is_sign_in_page(response_body)
       local refresh_reason = (waf_action or code == 202) and "WAF challenge"
         or (expired_session and "expired session")
-      if refresh_reason and is_goodreads_origin(current_url) then
+      local session_replaced_while_request_was_in_flight = self.session_generation ~= sent_generation
+        or saved_cookie(self) ~= sent_saved
+      if refresh_reason and is_goodreads_origin(current_url) and session_replaced_while_request_was_in_flight then
+        logger.info("Goodreads: rejected response belongs to a replaced session; keeping the newer session")
+      elseif refresh_reason and is_goodreads_origin(current_url) then
         -- Stored setting is just the refresher's base URL (e.g.
         -- http://192.168.1.50:5080) -- the /refresh path is always the
         -- same, so there's no reason to make the user type it.
@@ -962,7 +967,6 @@ function GoodreadsApi:request(url, method, data, custom_headers, request_options
 
   -- One retry recovers most transient subprocess-fork failures, mirroring
   -- StoryGraph's request().
-  local completed, content, sent_saved, sent_generation
   for attempt = 1, 2 do
     -- Cookies kept from earlier responses go with the saved cookie they were
     -- set for, so they're dropped once that's changed or removed. This
