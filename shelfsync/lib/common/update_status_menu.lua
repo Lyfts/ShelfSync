@@ -77,31 +77,16 @@ local function updateStatusAcrossProviders(self, status_id, menu_instance)
   eligible[1].engine.dialog_manager:maybeConfirm({
     text = confirmation_text,
     ok_callback = function()
+      local item_table = menu_instance and menu_instance.item_table
       local progress_message = InfoMessage:new {
         text = T(_("Updating status on %1..."), providerLabels(eligible)),
       }
       UIManager:show(progress_message)
-      Trapper:wrap(function()
-        local succeeded, unconfirmed, failed = {}, {}, {}
-        for _, entry in ipairs(eligible) do
-          local call_ok, result = xpcall(function()
-            return entry.engine.cache:updateBookStatus(filename, status_id)
-          end, debug.traceback)
-          if not call_ok then
-            entry.engine.settings:debugWarn(entry.engine.label .. ": status update raised an error")
-            table.insert(failed, entry)
-          elseif result and result.status_id == status_id then
-            table.insert(succeeded, entry)
-          elseif result
-              and entry.provider.constants.WRITE_ONLY_STATUS_IDS
-              and entry.provider.constants.WRITE_ONLY_STATUS_IDS[status_id] then
-            table.insert(unconfirmed, entry)
-          else
-            table.insert(failed, entry)
-          end
-        end
-
-        if menu_instance and menu_instance.updateItems then
+      local succeeded, unconfirmed, failed = {}, {}, {}
+      local remaining = #eligible
+      local completed = {}
+      local function finish()
+        if menu_instance and menu_instance.updateItems and menu_instance.item_table == item_table then
           menu_instance:updateItems()
         end
         UIManager:close(progress_message)
@@ -125,7 +110,34 @@ local function updateStatusAcrossProviders(self, status_id, menu_instance)
           text = table.concat(messages, "\n"),
           icon = (#failed > 0 or #unconfirmed > 0) and "notice-warning" or nil,
         })
-      end)
+      end
+      local function record(entry, saved)
+        if completed[entry] then return end
+        completed[entry] = true
+        local result = entry.engine.state.book_status
+        if saved and result and result.status_id == status_id then
+          table.insert(succeeded, entry)
+        elseif saved
+            and entry.provider.constants.WRITE_ONLY_STATUS_IDS
+            and entry.provider.constants.WRITE_ONLY_STATUS_IDS[status_id] then
+          table.insert(unconfirmed, entry)
+        else
+          table.insert(failed, entry)
+        end
+        remaining = remaining - 1
+        if remaining == 0 then finish() end
+      end
+      for _, entry in ipairs(eligible) do
+        local call_ok, err = pcall(function()
+          entry.engine.cache:queueBookStatus(filename, status_id, function(saved)
+            record(entry, saved)
+          end)
+        end)
+        if not call_ok then
+          entry.engine.settings:debugWarn(entry.engine.label .. ": status update raised an error: " .. tostring(err))
+          record(entry, false)
+        end
+      end
     end,
     no_confirm_callback = function()
       if menu_instance and menu_instance.updateItems then
@@ -222,6 +234,7 @@ local removeProviderChecklistItems
 local function removeSelectedProviders(self, selected, menu_instance)
   local entries = selectedRemovableProviders(self, selected)
   if #entries == 0 then return end
+  local item_table = menu_instance and menu_instance.item_table
 
   entries[1].engine.dialog_manager:maybeConfirm({
     text = T(_("Remove this book from %1? Your local book links will remain."), providerLabels(entries)),
@@ -230,26 +243,12 @@ local function removeSelectedProviders(self, selected, menu_instance)
         text = T(_("Removing this book from %1..."), providerLabels(entries)),
       }
       UIManager:show(progress_message)
-      Trapper:wrap(function()
-        local succeeded, failed = {}, {}
-        for _entry_index, entry in ipairs(entries) do
-          local book_status = entry.engine.state.book_status or {}
-          local call_ok, result = xpcall(function()
-            return entry.engine.api:removeRead(book_status.id)
-          end, debug.traceback)
-
-          if call_ok and result then
-            entry.engine.state.book_status = {}
-            table.insert(succeeded, entry)
-          else
-            entry.engine.settings:debugWarn(entry.engine.label .. ": book removal failed")
-            table.insert(failed, entry)
-          end
-          selected[entry.provider.key] = nil
-        end
-
+      local succeeded, failed = {}, {}
+      local remaining = #entries
+      local completed = {}
+      local function finish()
         UIManager:close(progress_message)
-        if menu_instance and menu_instance.updateItems then
+        if menu_instance and menu_instance.updateItems and menu_instance.item_table == item_table then
           menu_instance.item_table = removeProviderChecklistItems(self, selected)
           menu_instance:updateItems()
         end
@@ -265,7 +264,31 @@ local function removeSelectedProviders(self, selected, menu_instance)
           text = table.concat(messages, "\n"),
           icon = #failed > 0 and "notice-warning" or nil,
         })
-      end)
+      end
+      local function record(entry, removed)
+        if completed[entry] then return end
+        completed[entry] = true
+        selected[entry.provider.key] = nil
+        if removed then
+          table.insert(succeeded, entry)
+        else
+          entry.engine.settings:debugWarn(entry.engine.label .. ": book removal failed")
+          table.insert(failed, entry)
+        end
+        remaining = remaining - 1
+        if remaining == 0 then finish() end
+      end
+      for _entry_index, entry in ipairs(entries) do
+        local call_ok, err = pcall(function()
+          entry.engine.cache:queueBookRemoval(self.ui.document.file, function(removed)
+            record(entry, removed)
+          end)
+        end)
+        if not call_ok then
+          entry.engine.settings:debugWarn(entry.engine.label .. ": book removal raised an error: " .. tostring(err))
+          record(entry, false)
+        end
+      end
     end,
   })
 end
@@ -329,7 +352,10 @@ local function removeFromProvidersItem(self)
     end,
     sub_item_table_func = function()
       for _provider_index, entry in ipairs(activeLinkedProviders(self)) do
-        entry.engine.cache:cacheUserBook()
+        local status = entry.engine.state.book_status or {}
+        if not (status.id and status.status_id) then
+          entry.engine.cache:cacheUserBook()
+        end
       end
       return removeProviderChecklistItems(self, selected)
     end,

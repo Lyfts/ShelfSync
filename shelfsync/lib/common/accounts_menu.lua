@@ -1,4 +1,5 @@
 local _ = require("gettext")
+local T = require("ffi/util").template
 local UIManager = require("ui/uimanager")
 local Trapper = require("ui/trapper")
 local InfoMessage = require("ui/widget/infomessage")
@@ -355,6 +356,68 @@ Goodreads accounts are linked through Amazon, so this cookie is a large bundle r
           },
         }
         UIManager:show(dialog)
+      end,
+    },
+    {
+      text = _("Test connection"),
+      keep_menu_open = true,
+      separator = true,
+      help_text = _([[Check that your Goodreads session works. If a Cookie Auto-Refresh URL is set,
+the plugin tries it when the cookie is missing or expired.]]),
+      callback = function()
+        local loading = InfoMessage:new { text = _("Testing Goodreads connection…") }
+        UIManager:show(loading)
+
+        local function show_result(result)
+          local text
+          local icon
+          if result and result.ok then
+            if result.cookie_refreshed then
+              text = _("Goodreads: connection OK (cookie refreshed)")
+            elseif result.user_id then
+              text = T(_("Goodreads: connection OK (user %1)"), tostring(result.user_id))
+            else
+              text = _("Goodreads: connection OK")
+            end
+          else
+            icon = "notice-warning"
+            local err = result and result.error
+            if err == "no_network" or err == "Network not connected" then
+              text = _("Goodreads: no network connection")
+            elseif err == "no_cookies" then
+              text = _("Goodreads: no session cookie or Cookie Auto-Refresh URL is configured")
+            elseif err == "session_expired" or err == "Unauthorized" then
+              text = _("Goodreads: session expired. Replace the cookie or check the configured refresher.")
+            elseif err == "waf_challenge" then
+              text = _("Goodreads: AWS WAF blocked the request. The cookie refresher could not clear the challenge.")
+            elseif err == "unexpected_response" then
+              text = _("Goodreads: could not confirm an active session from the response.")
+            elseif err == "connection_failed" then
+              text = _("Goodreads: connection failed")
+            else
+              text = _("Goodreads: ") .. tostring(err or _("connection failed"))
+            end
+          end
+          UIManager:show(InfoMessage:new { text = text, icon = icon })
+        end
+
+        local function run_test(_wifi_enabled, wifi_error)
+          if wifi_error then
+            UIManager:close(loading)
+            show_result({ ok = false, error = "no_network" })
+            return
+          end
+
+          local result = self.api:testConnection()
+          UIManager:close(loading)
+          show_result(result)
+        end
+
+        if self.wifi then
+          self.wifi:withWifi(run_test)
+        else
+          run_test()
+        end
       end,
     },
     {

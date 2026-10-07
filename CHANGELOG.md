@@ -6,7 +6,24 @@
 - (feat) Replace separate provider menus with unified **Provider settings** and **Accounts** menus, and apply shared reading-status and progress actions across active linked providers. **Update status** shows each provider's status and link method under **Link Status**, offers a shared checklist to remove the book from selected providers, and groups provider journal/forum actions under **Add note**.
 - (feat) Open one tabbed book search from **Provider settings > Link or relink book** to link, relink, or unlink the open document across all providers.
 - (feat) Show a checkmark beside providers with saved credentials in **Accounts**.
+
+## 1.7.0
+- (feat) 🌟 Keep progress and finished status from KOReader that can't be sent (e.g. with Wi-Fi off) for up to 4 weeks, and send them once the network is back, even after the book is closed or from the file browser. On Goodreads and Fable, progress is only sent within a day. 🌟
+- (fix) Run ShelfSync's handling when a book is closed, which never ran. Closing a book now sends or queues progress that hadn't been sent yet.
+- (fix) Send each provider's updates one at a time, so a late response can't undo a newer status or progress change.
+- (fix) Say when a status change or removal from the status menu fails, instead of failing silently.
+- (fix) Show the review result when a provider rejects a review without giving a reason, instead of stopping without a message.
+- (fix) Keep Goodreads finished dates accurate while preserving existing reviews and retrying date saves that fail.
+- (fix) Wait for the Goodreads browser cookie refresher to return before retrying requests after WAF challenges.
+- (fix) Let interrupted Goodreads requests retry after the reader handles the touch that interrupted them.
+- (fix) Don't show a progress mismatch warning just after ShelfSync marks a book as Read.
+- (fix) Linking a book no longer tries to mark it as Currently Reading after a failed status lookup (all providers).
+- (fix) Opening a linked Goodreads book no longer does so when its shelf can't be read or is one ShelfSync doesn't track.
+
+## 1.6.1
+- (feat) Add a Goodreads account connection check that verifies the cookie and uses the configured cookie refresher when the cookie is missing or expired.
 - (fix) Allow Goodreads syncing when only Cookie Auto-Refresh URL is configured, and refresh rejected cookies after HTTP 403 responses.
+- (fix) Goodreads shelf changes now send the cookies that came with their CSRF token. Without them, they could get a 404 "Page not found" page.
 
 ## 1.6.0
 - (feat) 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟

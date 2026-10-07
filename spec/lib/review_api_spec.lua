@@ -1,9 +1,21 @@
 require("spec.support.koreader_mocks")
+local dkjson = require("dkjson")
+local json = {
+  encode = dkjson.encode,
+  util = { null = dkjson.null, InitArray = function(value) return value end },
+}
+json.decode = setmetatable({ simple = {} }, {
+  __call = function(_, text)
+    local value, _, err = dkjson.decode(text, 1, dkjson.null)
+    if err then error(err) end
+    return value
+  end,
+})
+package.loaded["json"] = json
 local Goodreads = require("shelfsync/lib/goodreads/api")
 local Hardcover = require("shelfsync/lib/hardcover/api")
 local Fable = require("shelfsync/lib/fable/api")
 local Pagebound = require("shelfsync/lib/pagebound/api")
-local json = require("json")
 
 describe("Review requests", function()
   local saved_util
@@ -12,40 +24,64 @@ describe("Review requests", function()
     json.util = { null = {}, InitArray = function(t) return t end }
   end)
   after_each(function() json.util = saved_util end)
-  for _, method in ipairs({ "post", "put" }) do
-    it("uses the Goodreads form action and " .. method .. " method", function()
-      local calls = {}
-      local api = setmetatable({
-        settings = { debugLog = function() end, debugWarn = function() end },
-        refreshSession = function() return "csrf" end,
-        request = function(_, url, verb, body)
-          calls[#calls + 1] = { url, verb, body }
-          if verb == "GET" then
-            return 200, '<form action="/review/987">'
-              .. (method == "put" and '<input name="_method" value="put">' or '')
-              .. '<textarea name="review[review]">old</textarea>'
-              .. '<textarea name="review[notes]">A &amp; B</textarea></form>'
-          end
-          return 302, ""
-        end,
-      }, { __index = Goodreads })
-      assert.is_true(api:setReviewText(123, "New text"))
-      assert.equals("https://www.goodreads.com/review/987", calls[2][1])
-      assert.equals(method == "put" and "put" or nil, calls[2][3]._method)
-      assert.equals("New text", calls[2][3]["review[review]"])
-      assert.equals("A & B", calls[2][3]["review[notes]"])
-    end)
-  end
-
-  it("does not guess a Goodreads update URL when the form is missing", function()
+  it("submits Goodreads review text through the current Next.js action", function()
+    local action_id = string.rep("b", 40)
+    local book_id = "kca://book/123"
+    local edit_url = "https://www.goodreads.com/review/edit/123"
+    local flight = json.encode({
+      bookId = book_id,
+      readingSessions = {},
+      userFormattedText = "Original review",
+      initialPrivateNotes = "A & B",
+      initialPostToBlog = true,
+      initialAddToUpdateFeed = false,
+      spoilerStatus = true,
+      isAlreadyOwned = true,
+    })
+    local editor_html = '<script src="/_next/static/chunks/app/review/edit/%5Bid%5D/page-test.js"></script>'
+      .. "<script>self.__next_f.push([1," .. json.encode(flight) .. "])</script>"
+    local calls, submitted = {}, nil
     local api = setmetatable({
       settings = { debugLog = function() end, debugWarn = function() end },
-      refreshSession = function() return "csrf" end,
+      refreshSession = function() return nil end,
+      request = function(_, url, verb, body, headers)
+        calls[#calls + 1] = { url, verb }
+        if verb == "GET" and url == edit_url then return 200, editor_html end
+        if verb == "GET" and url:match("page%-test%.js$") then
+          return 200, '(0,N.createServerReference)("' .. action_id
+            .. '",N.callServer,void 0,N.findSourceMapURL,"submitReviewFormAction")'
+        end
+        if verb == "POST" and url == edit_url then
+          assert.equals(action_id, headers["Next-Action"])
+          submitted = json.decode(body)[1]
+          return 200, '{"legacyId":"123","errors":"$Q1"}\n1:[]'
+        end
+        error("Unexpected Goodreads request: " .. tostring(verb) .. " " .. tostring(url))
+      end,
+    }, { __index = Goodreads })
+
+    assert.is_true(api:setReviewText(123, "New text"))
+    assert.equals(3, #calls)
+    assert.equals("POST", calls[3][2])
+    assert.equals("New text", submitted.reviewText)
+    assert.same({}, submitted.readingSessions)
+    assert.equals("$0:0:readingSessions", submitted.initialReadingSessions)
+    assert.equals("A & B", submitted.privateNotes)
+    assert.is_true(submitted.postToBlog)
+    assert.is_false(submitted.addToUpdateFeed)
+    assert.is_true(submitted.spoilerStatus)
+    assert.is_true(submitted.isOwnedEdition)
+  end)
+
+  it("does not submit review text when the Next.js editor state is unreadable", function()
+    local api = setmetatable({
+      settings = { debugLog = function() end, debugWarn = function() end },
+      refreshSession = function() return nil end,
       request = function(_, _, method) assert.equals("GET", method); return 200, "Login required" end,
     }, { __index = Goodreads })
     local ok, err = api:setReviewText(123, "Review")
     assert.is_nil(ok)
-    assert.matches("Could not locate", err)
+    assert.matches("Could not read", err)
   end)
 
   it("preserves omitted Hardcover fields and accepts a null error", function()

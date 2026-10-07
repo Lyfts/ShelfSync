@@ -14,13 +14,16 @@ local GOODREADS = require("shelfsync/lib/goodreads/constants")
 -- see the note on getRemoteProgress below for why there's nothing to read.
 local Goodreads = setmetatable({
   allows_new_read = true,
+  -- See getRemoteProgress.
+  has_remote_progress = false,
 }, { __index = BaseProvider })
 Goodreads.__index = Goodreads
 
 function Goodreads:linkBook(book, link_method)
   local filename = self.ui.document.file
 
-  local status = self.api:findUserBook(book.book_id) or {}
+  local status, lookup_error = self.api:findUserBook(book.book_id)
+  status = status or {}
 
   local delete = self:_deletedKeys(book, { "book_id", "edition_id", "pages", "title" })
 
@@ -35,7 +38,16 @@ function Goodreads:linkBook(book, link_method)
   self.settings:updateBookSetting(filename, new_settings)
   self.state.book_status = status
 
-  if not self.state.book_status.status_id then
+  -- Only a lookup confirming the book isn't on any shelf can safely add it:
+  -- after a failed lookup, or with a shelf we don't map to a status, adding
+  -- it could replace a status the book already has (e.g. Read).
+  if lookup_error then
+    logger.warn("Goodreads: Couldn't check the book's status, not adding it to Currently Reading: " .. tostring(lookup_error))
+    UIManager:show(InfoMessage:new {
+      text = _("Linked, but couldn't check the book's status on Goodreads, so it wasn't marked as Currently Reading automatically. Use \"Update status\" to set it manually."),
+      icon = "notice-warning",
+    })
+  elseif not self.state.book_status.status_id and not self.state.book_status.shelved then
     logger.info("Goodreads: Book has no status, adding to Currently Reading automatically")
     local added = self.api:updateUserBook(book.book_id, GOODREADS.STATUS.READING)
     if added and added.status_id then
@@ -85,6 +97,11 @@ function Goodreads:pushProgress(_current_read, value, update_type, filename)
   if not result then
     return nil
   end
+  -- The write went through even if reading the book page back failed, so
+  -- keep the status already known rather than replacing it with nothing.
+  if not result.id then
+    result = self.state.book_status
+  end
 
   local finished
   if update_type == "pages" then
@@ -96,7 +113,7 @@ function Goodreads:pushProgress(_current_read, value, update_type, filename)
 
   if result.status_id == GOODREADS.STATUS.READING and finished then
     local finished_result = self.api:updateUserBook(book_id, GOODREADS.STATUS.FINISHED)
-    if finished_result then
+    if finished_result and finished_result.id then
       result = finished_result
       self:onMarkedFinished(book_id, filename)
     end
@@ -109,9 +126,25 @@ end
 -- for Finished transitions that go through the shared status menu/SyncEngine,
 -- and directly above for the auto-track-to-100% finished path (which
 -- bypasses Cache since it needs updateUserBook's return value inline).
-function Goodreads:onMarkedFinished(book_id, filename)
+-- A queued "finished" is dated `finished_at`, when the book was finished.
+function Goodreads:onMarkedFinished(book_id, filename, finished_at)
   self:notifyBookFinished(filename)
-  self.api:setDateFinished(book_id)
+  finished_at = tonumber(finished_at) or os.time()
+  local dated = self:setDateFinished(book_id, finished_at)
+  if not dated then
+    -- The shelf write may have succeeded even when Goodreads' separate
+    -- finished-date editor request was interrupted or failed. Keep the
+    -- original finish time so the pending-update flow can retry just the date.
+    local book = self.settings and self.settings:readBookSettings(filename)
+    if book and tostring(book.book_id) == tostring(book_id) and self.settings.pending_updates then
+      self.settings.pending_updates:addFinished(filename, book, finished_at)
+    end
+  end
+  return dated
+end
+
+function Goodreads:setDateFinished(book_id, finished_at)
+  return self.api:setDateFinished(book_id, finished_at)
 end
 
 -- ReviewMenu entry point: submits a star rating and/or free-text review from

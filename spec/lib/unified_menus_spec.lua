@@ -44,6 +44,9 @@ local function makeEngine(key)
     edition_id = nil,
     book_id = key .. "-book",
     cache_updates = 0,
+    status_updates = 0,
+    book_removals = 0,
+    connection_checks = 0,
     edition_dialogs = 0,
     suggestions = 0,
     linked_updates = {},
@@ -73,18 +76,35 @@ local function makeEngine(key)
       hasCredential = function() return state.credential end,
       findBooks = function() return {} end,
       findEditions = function() return {} end,
+      testConnection = function()
+        state.connection_checks = state.connection_checks + 1
+        return { ok = true, user_id = 7 }
+      end,
     },
     provider = {
       showChangeEditionDialog = function() state.edition_dialogs = state.edition_dialogs + 1 end,
       showRandomBookDialog = function() state.suggestions = state.suggestions + 1 end,
     },
     cache = { cacheUserBook = function() state.cache_updates = state.cache_updates + 1 end },
+    wifi = { withWifi = function(_, callback) callback(false, nil) end },
     state = { book_status = {} },
     ui = { document = { file = "/books/test.epub" }, getCurrentPage = function() return 10 end },
     user = { getId = function() return 7 end },
-    dialog_manager = {},
+    dialog_manager = {
+      maybeConfirm = function(_, options) options.ok_callback() end,
+    },
     page_mapper = {},
   }
+  function engine.cache:queueBookStatus(_filename, status, callback)
+    state.status_updates = state.status_updates + 1
+    engine.state.book_status = { id = key .. "-status", status_id = status }
+    if callback then callback(true) end
+  end
+  function engine.cache:queueBookRemoval(_filename, callback)
+    state.book_removals = state.book_removals + 1
+    engine.state.book_status = {}
+    if callback then callback(true) end
+  end
   function engine:isActive() return state.active end
   return engine, state
 end
@@ -184,6 +204,17 @@ describe("unified provider menus", function()
     end
   end)
 
+  it("keeps the Goodreads connection check in Accounts", function()
+    local engines, states = makeEngines()
+    local menu = AccountsMenu:new { providers = providers, engines = engines }
+    local goodreads_items = menu:getSubMenuItems()[3].sub_item_table_func()
+    local test_connection = findItem(goodreads_items, "Test connection")
+
+    assert.is_truthy(test_connection)
+    test_connection.callback()
+    assert.equals(1, states.goodreads.connection_checks)
+  end)
+
   it("gates Update status by document, provider activation, and saved book link", function()
     local engines, states = makeEngines()
     local ui = { document = { file = "/books/test.epub" } }
@@ -214,5 +245,53 @@ describe("unified provider menus", function()
     ui.document = nil
     assert.is_false(root_item.enabled_func())
     assert.equals(0, #menu:getSubMenuItems())
+  end)
+
+  it("routes shared status changes through each provider's serialized cache write", function()
+    local engines, states = makeEngines()
+    local menu = UpdateStatusMenu:new {
+      providers = providers,
+      engines = engines,
+      ui = { document = { file = "/books/test.epub" } },
+    }
+
+    menu:getSubMenuItems()[1].callback({ updateItems = function() end })
+
+    for _, provider in ipairs(providers) do
+      assert.equals(1, states[provider.key].status_updates)
+    end
+  end)
+
+  it("routes shared removals through each provider's queued cache path", function()
+    local engines, states = makeEngines()
+    for _, provider in ipairs(providers) do
+      engines[provider.key].state.book_status = {
+        id = provider.key .. "-status",
+        status_id = provider.constants.STATUS.READING,
+      }
+    end
+    local menu = UpdateStatusMenu:new {
+      providers = providers,
+      engines = engines,
+      ui = { document = { file = "/books/test.epub" } },
+    }
+
+    local remove_item
+    for _, item in ipairs(menu:getSubMenuItems()) do
+      if item.text and item.text:find("Remove from providers", 1, true) then
+        remove_item = item
+        break
+      end
+    end
+    local checklist = remove_item.sub_item_table_func()
+    local menu_instance = { updateItems = function() end }
+    for i = 1, #providers do
+      checklist[i].callback(menu_instance)
+    end
+    checklist[#checklist].callback(menu_instance)
+
+    for _, provider in ipairs(providers) do
+      assert.equals(1, states[provider.key].book_removals)
+    end
   end)
 end)

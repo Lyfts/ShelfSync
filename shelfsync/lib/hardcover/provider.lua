@@ -50,6 +50,9 @@ end
 local Hardcover = setmetatable({
   allows_new_read = true,
   requires_remote_page_count = true,
+  -- A book findUserBook finds no status for isn't on the user's shelves,
+  -- rather than possibly on a page that loaded without them (Goodreads).
+  has_reliable_status = true,
 }, { __index = BaseProvider })
 Hardcover.__index = Hardcover
 
@@ -101,19 +104,21 @@ function Hardcover:showRandomBookDialog()
   end)
 end
 
-function Hardcover:updateCurrentBookStatus(status, privacy_setting_id)
-  self.cache:updateBookStatus(self.ui.document.file, status, privacy_setting_id)
-  if not self.state.book_status.id then
-    self.dialog_manager:showError("Book status could not be updated")
-  end
-end
-
 function Hardcover:changeBookVisibility(visibility)
-  self.cache:cacheUserBook()
-
-  if self.state.book_status.id then
-    self:updateCurrentBookStatus(self.state.book_status.status_id, visibility)
+  local filename = self.settings:getFilePath()
+  local book_id = self.settings:readBookSetting(filename, "book_id")
+  -- Still sent if the book's closed before its turn, as long as its link hasn't changed.
+  local function linked()
+    return book_id and tostring(self.settings:readBookSetting(filename, "book_id")) == tostring(book_id)
   end
+  self.cache:serializeUpdate(function(wifi_error)
+    if wifi_error or not linked() then return end
+    self.cache:cacheUserBook(filename)
+    if linked() and self.state.book_status.id
+        and not self.cache:updateBookStatus(filename, self.state.book_status.status_id, visibility) then
+      self.dialog_manager:showError("Book status could not be updated")
+    end
+  end)
 end
 
 function Hardcover:linkBook(book, link_method)
@@ -132,7 +137,7 @@ function Hardcover:linkBook(book, link_method)
   }
 
   self.settings:updateBookSetting(filename, new_settings)
-  self.cache:cacheUserBook()
+  local lookup_error = self.cache:cacheUserBook()
 
   if book.book_id and self.state.book_status.id then
     if new_settings.edition_id and new_settings.edition_id ~= self.state.book_status.edition_id then
@@ -144,6 +149,14 @@ function Hardcover:linkBook(book, link_method)
         new_settings.edition_id
       ) or {}
     end
+  elseif book.book_id and lookup_error then
+    -- A failed lookup isn't proof the book has no status, and adding it
+    -- could replace one it already has (e.g. Read).
+    logger.warn("Hardcover: Couldn't check the book's status, not adding it to Currently Reading: " .. formatApiError(lookup_error))
+    UIManager:show(InfoMessage:new {
+      text = _("Linked, but couldn't check the book's status on Hardcover, so it wasn't marked as Currently Reading automatically. Use \"Update status\" to set it manually."),
+      icon = "notice-warning",
+    })
   elseif book.book_id and not self.state.book_status.status_id then
     -- Auto-Add to Library if no status was found (mirrors StoryGraph:linkBook)
     logger.info("Hardcover: Book has no status, adding to Currently Reading automatically")
@@ -191,8 +204,9 @@ end
 
 -- Remote progress in `update_type`'s unit, read from a cached book_status
 -- table (e.g. self.state.book_status), used by SyncEngine to skip a
--- background write that would move progress backward.
-function Hardcover:getRemoteProgress(status, update_type)
+-- background write that would move progress backward. `filename` defaults
+-- to the open document.
+function Hardcover:getRemoteProgress(status, update_type, filename)
   local reads = status and status.user_book_reads
   local current_read = reads and reads[#reads]
   local remote_page = (current_read and tonumber(current_read.progress_pages)) or 0
@@ -201,7 +215,7 @@ function Hardcover:getRemoteProgress(status, update_type)
     return remote_page
   end
 
-  return pageToPercent(remote_page, tonumber(self.settings:pages())) or 0
+  return pageToPercent(remote_page, tonumber(self.settings:pages(filename))) or 0
 end
 
 -- Overall remote completion percent (0-100), or nil if unknown (no active
@@ -214,18 +228,24 @@ function Hardcover:getRemotePercent(status)
   return pageToPercent(page, tonumber(self.settings:pages()))
 end
 
+-- A percentage needs a page count to be converted to a page number.
+function Hardcover:canPushProgress(update_type, filename)
+  return update_type == "pages" or tonumber(self.settings:pages(filename)) ~= nil
+end
+
 -- Writes a page-progress update to Hardcover and returns the refreshed
 -- status, or nil plus an error reason on failure. `value` may be a page
 -- number or a percentage depending on `update_type`; it's always converted
 -- to a page number before writing, since that's all Hardcover accepts.
 -- Creates a new read session if the book doesn't have one yet, rather than
--- requiring one to exist.
-function Hardcover:pushProgress(current_read, value, update_type, _filename)
-  local edition_id = self.settings:getLinkedEditionId()
+-- requiring one to exist. `status` defaults to the open book's cached one;
+-- queued updates for other books pass their own.
+function Hardcover:pushProgress(current_read, value, update_type, filename, status)
+  local edition_id = self.settings:readBookSetting(filename, "edition_id")
 
   local page = value
   if update_type ~= "pages" then
-    page = percentToPage(value, tonumber(self.settings:pages()))
+    page = percentToPage(value, tonumber(self.settings:pages(filename)))
     if not page then
       return nil, "Hardcover: linked edition has no known page count"
     end
@@ -237,17 +257,18 @@ function Hardcover:pushProgress(current_read, value, update_type, _filename)
     return self.api:updatePage(current_read.id, edition_id, page, current_read.started_at)
   end
 
-  if not self.state.book_status.id then
+  status = status or self.state.book_status
+  if not status.id then
     return nil, "No linked book found on Hardcover"
   end
 
-  return self.api:createRead(self.state.book_status.id, edition_id, page, os.date("%Y-%m-%d"))
+  return self.api:createRead(status.id, edition_id, page, os.date("%Y-%m-%d"))
 end
 
 -- ReviewMenu entry point. Hardcover only accepts half-star increments, so a
 -- quarter-star value is rounded down to a half star here.
 function Hardcover:submitReview(filename, rating, text)
-  if self.cache then self.cache:cacheUserBook() end
+  if self.cache then self.cache:cacheUserBook(filename) end
   local user_book_id = self.state.book_status and self.state.book_status.id
   if not user_book_id then
     return false, "No linked book found on Hardcover"
