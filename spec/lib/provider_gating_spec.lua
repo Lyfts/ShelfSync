@@ -10,6 +10,7 @@ local UIManager = mocks.UIManager
 
 local SETTING = require("shelfsync/lib/common/constants/settings")
 local AutoWifi = require("shelfsync/lib/common/auto_wifi")
+local Cache = require("shelfsync/lib/common/cache")
 local SyncEngine = require("shelfsync/lib/common/sync_engine")
 local HardcoverProvider = require("shelfsync/lib/hardcover/provider")
 local HardcoverSettings = require("shelfsync/lib/hardcover/settings")
@@ -70,7 +71,8 @@ describe("Provider enable/credential gating", function()
     state = { page = nil, pos = nil, search_results = {}, book_status = {} }
     local wifi = AutoWifi:new { settings = settings, label = "Hardcover" }
     local user = { getId = function() return 1 end }
-    local cache = {
+    local cache = Cache:new {
+      settings = settings, wifi = wifi,
       cacheUserBook = function()
         calls.cacheUserBook = calls.cacheUserBook + 1
       end,

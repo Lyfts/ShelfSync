@@ -182,12 +182,20 @@ function StoryGraphMenu:_statusMenuItem(icon, status_id)
       return self.state.book_status.status_id == status_id
     end,
     callback = function(menu_instance)
+      -- Only refreshed if it's still showing once the change is done.
+      local item_table = menu_instance.item_table
       self.dialog_manager:maybeConfirm({
         text = ("Mark book as %s?"):format(STORYGRAPH.STATUS_NAME[status_id]),
         ok_callback = function()
-          self.cache:updateBookStatus(self.ui.document.file, status_id)
-          menu_instance.item_table = self:getStatusSubMenuItems()
-          menu_instance:updateItems()
+          self.cache:queueBookStatus(self.ui.document.file, status_id, function(saved)
+            if not saved then
+              self.dialog_manager:showError("Book status could not be updated")
+            end
+            if menu_instance.item_table == item_table then
+              menu_instance.item_table = self:getStatusSubMenuItems()
+              menu_instance:updateItems()
+            end
+          end)
         end,
         no_confirm_callback = function()
           menu_instance:updateItems()
@@ -211,15 +219,19 @@ function StoryGraphMenu:getStatusSubMenuItems()
         return self:isActive() and self.state.book_status.status_id ~= nil
       end,
       callback = function(menu_instance)
+        -- Only refreshed if it's still showing once the change is done.
+        local item_table = menu_instance.item_table
         self.dialog_manager:maybeConfirm({
           text = "Remove current book status?",
           ok_callback = function()
-            local result = self.api:removeRead(self.state.book_status.id)
-            if result then
-              self.state.book_status = {}
-              menu_instance.item_table = self:getStatusSubMenuItems()
-              menu_instance:updateItems()
-            end
+            self.cache:queueBookRemoval(self.ui.document.file, function(removed)
+              if not removed then
+                self.dialog_manager:showError("Book status could not be removed")
+              elseif menu_instance.item_table == item_table then
+                menu_instance.item_table = self:getStatusSubMenuItems()
+                menu_instance:updateItems()
+              end
+            end)
           end
         })
       end,

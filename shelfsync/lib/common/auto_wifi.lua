@@ -240,6 +240,12 @@ function AutoWifi:withWifi(callback)
   end
 end
 
+-- Whether Wi-Fi is on because withWifi turned it on, until it's turned off
+-- again, so NetworkConnected is from that rather than the user.
+function AutoWifi:turnedWifiOn()
+  return active_wifi_session ~= nil
+end
+
 function AutoWifi:wifiDisableSilent(callback)
   NetworkMgr:turnOffWifi(function()
     -- explicitly disable wifi was on

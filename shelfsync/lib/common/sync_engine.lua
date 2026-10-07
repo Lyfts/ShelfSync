@@ -9,6 +9,7 @@
 -- plugin-wide rather than per-provider.
 local _ = require("gettext")
 local DocSettings = require("docsettings")
+local lfs = require("libs/libkoreader-lfs")
 local logger = require("shelfsync/lib/common/safe_logger")
 local math = require("math")
 
@@ -32,6 +33,11 @@ local SyncEngine = {
   enabled = true,
 }
 SyncEngine.__index = SyncEngine
+
+-- Without remote progress to compare against (Goodreads, Fable), older queued
+-- progress could undo what's been read on another device since, so it's only
+-- sent for a day.
+local UNCHECKED_PROGRESS_MAX_AGE = 24 * 3600
 
 function SyncEngine:new(o)
   o = o or {}
@@ -304,6 +310,17 @@ function SyncEngine:onNote(note_params)
 end
 
 function SyncEngine:onSettingsChanged(field, change, _original_value)
+  -- Drops what's queued for books no longer synced. Disabling the provider
+  -- keeps its queued updates; they're just not sent meanwhile.
+  if field == SETTING.SHARED.ALWAYS_SYNC then
+    for _, filename in ipairs(self.settings.pending_updates:filenames()) do
+      -- Not for a book that's been moved or deleted, whose own setting is gone.
+      if lfs.attributes(filename, "mode") then
+        self.settings.pending_updates:get(filename,
+          self:syncFileUpdates(filename) and self.settings:readBookSettings(filename))
+      end
+    end
+  end
   if field == SETTING.BOOKS then
     local book_settings = change.config
     if self:_bookSettingChanged(book_settings, "sync") then
@@ -401,18 +418,9 @@ function SyncEngine:warnStatusMismatch(filename)
     ok_text = _("Mark as Reading"),
     cancel_text = _("Ignore"),
     ok_callback = function()
-      self.wifi:withWifi(function(_wifi_enabled, wifi_error)
-        if wifi_error then
-          UIManager:show(InfoMessage:new {
-            text = _("Failed to update status on " .. self.label),
-            icon = "notice-warning",
-          })
-          return
-        end
-
-        self.cache:updateBookStatus(filename, self.constants.STATUS.READING)
+      self.cache:queueBookStatus(filename, self.constants.STATUS.READING, function(saved)
         self:registerHighlight()
-        if self.state.book_status.status_id == self.constants.STATUS.READING then
+        if saved then
           UIManager:show(Notification:new {
             text = _("Marked as Currently Reading")
           })
@@ -470,26 +478,99 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
     return bail(_("No active reading session found on " .. self.label))
   end
 
-  local update = function()
+  local generation = self.page_update_generation
+  local book = self:_syncedBook(filename)
+  local book_id, edition_id = book.book_id, book.edition_id
+  local function sameBook()
+    local linked = self:_syncedBook(filename)
+    if linked and tostring(linked.book_id) == tostring(book_id)
+        and tostring(linked.edition_id) == tostring(edition_id) then
+      return linked
+    end
+  end
+  local function currentBook()
+    return generation == self.page_update_generation and self:isActive() and sameBook()
+  end
+
+  -- A background update that fails for lack of a network is kept for
+  -- flushPendingUpdates; manual ones report the failure instead.
+  local function queue()
+    if not (immediate and callback) then
+      self.settings.pending_updates:addProgress(filename, currentBook(), value, update_type)
+    end
+  end
+
+  -- Until a background update is sent, closing the book can cancel it (see
+  -- _queueClosingProgress). Once a later one, manual or not, is sent, it no
+  -- longer needs to be.
+  local unsent = { value = value, update_type = update_type, book_id = book_id, edition_id = edition_id }
+  local earlier_unsent = self.state.unsent_progress
+  local earlier_synced = self.state.synced_progress
+  if not (immediate and callback) then
+    self.state.unsent_progress = unsent
+  end
+
+  local update = function(wifi_error)
+    if not currentBook() then return bail(_("Progress update cancelled")) end
+    -- A status change or removal that took its turn first can't be undone by
+    -- progress allowed by the status before it.
+    reads = self.state.book_status.user_book_reads
+    current_read = reads and reads[#reads]
+    if self.state.book_status.status_id ~= self.constants.STATUS.READING
+        or not (current_read or self.provider.allows_new_read) then
+      return bail(_("Book is not currently marked as reading on " .. self.label))
+    end
+    -- Nor can a background update undo progress sent while it waited, e.g.
+    -- by a manual update.
+    local synced = self.state.synced_progress
+    if not immediate and (value < self.provider:getRemoteProgress(self.state.book_status, update_type)
+        or synced ~= earlier_synced and synced.update_type == update_type and value < synced.value) then
+      logger.info(self.label .. ": Local progress (" .. value .. " " .. update_type .. ") is behind progress sent since. Skipping auto-update.")
+      return
+    end
+    -- Not sent at all, even if Wi-Fi connected without getting online.
+    if wifi_error then
+      queue()
+      return bail(wifi_error)
+    end
+    local pending = self.settings.pending_updates:get(filename, self:_syncedBook(filename))
     local result, reason = self.provider:pushProgress(current_read, value, update_type, filename)
     if result then
-      self.state.book_status = result
-      self:registerHighlight()
+      -- Sent, even if it's been cancelled since (e.g. by a suspend), so
+      -- closing the book doesn't queue it again.
+      if sameBook() then
+        self.state.synced_progress = { value = value, update_type = update_type, book_id = book_id, edition_id = edition_id }
+        if self.state.unsent_progress == unsent or self.state.unsent_progress == earlier_unsent then
+          self.state.unsent_progress = nil
+        end
+      end
+      if currentBook() then
+        self.state.book_status = result
+        self:registerHighlight()
+      end
+      if pending then
+        self.settings.pending_updates:clearProgress(filename, pending)
+      end
+      -- Also the same progress if it was queued while this was being sent,
+      -- e.g. as the book was closed.
+      local queued = self.settings.pending_updates:get(filename, self.settings:readBookSettings(filename))
+      local progress = queued and queued.progress
+      if progress and progress.value == value and progress.update_type == update_type
+          and tostring(queued.book_id) == tostring(book_id) and tostring(progress.edition_id) == tostring(edition_id) then
+        self.settings.pending_updates:clearProgress(filename, queued)
+      end
+    elseif not NetworkManager:isConnected() then
+      queue()
     end
     if callback then
       callback(result, reason)
     end
+    self:flushPendingUpdates()
   end
 
   local immediate_update = function()
-    self.wifi:withWifi(function(_wifi_enabled, wifi_error)
-      -- AutoWifi supplies the Trapper coroutine and keeps its Wi-Fi lease
-      -- until update (including its subprocess request) returns.
-      if wifi_error then
-        return bail(wifi_error)
-      end
-      update()
-    end)
+    if not currentBook() then return bail(_("Progress update cancelled")) end
+    self.cache:serializeUpdate(update)
   end
 
   if immediate then
@@ -525,19 +606,7 @@ function SyncEngine:pageUpdateEvent(page)
   local remote_pages = self.settings:pages()
 
   if self.settings:trackByTime() then
-    local decimal_percent, mapped_page = self.page_mapper:getRemotePagePercent(
-      self.state.page,
-      self.ui.document:getPageCount(),
-      self.settings:pages()
-    )
-    local value, update_type
-    if self.settings:syncByRemotePages() and mapped_page then
-      value = mapped_page
-      update_type = "pages"
-    else
-      value = math.floor(decimal_percent * 100 + 0.5)
-      update_type = "percentage"
-    end
+    local value, update_type = self:_progressValue(self.state.page)
 
     self.settings:debugLog(self.label .. ": trackByTime check - value=" .. tostring(value) .. " update_type=" .. update_type)
     self:_throttledHandlePageUpdate(self.ui.document.file, value, false, nil, update_type)
@@ -643,6 +712,7 @@ function SyncEngine:onReaderReady()
   self.page_mapper:cachePageMap()
   self:registerHighlight()
   self.state.page = self.ui:getCurrentPage()
+  self.state.opened_page = self.state.page
 
   if self.ui.document and (self.settings:bookLinked() or self.settings:autolinkEnabled()) then
     UIManager:scheduleIn(1, self.startReadCache, self)
@@ -650,6 +720,7 @@ function SyncEngine:onReaderReady()
 end
 
 function SyncEngine:cancelPendingUpdates()
+  self.page_update_generation = (self.page_update_generation or 0) + 1
   if self._cancelPageUpdate then
     self:_cancelPageUpdate()
   end
@@ -664,12 +735,19 @@ function SyncEngine:onDocumentClose()
   self.state.read_cache_started = false
   self.state.status_mismatch_warned = false
 
-  if not self.state.book_status.id and not self.settings:syncEnabled() then
-    return
+  local ok, err = pcall(self._queueClosingProgress, self)
+  if not ok then
+    logger.warn(self.label .. ": could not queue progress on close: " .. tostring(err))
+  end
+  -- Sent once the document has closed, so it isn't skipped as the open book.
+  -- That includes progress queued before it was opened, which stays queued
+  -- until newer progress is sent, e.g. if it's closed where it was opened.
+  if self.settings.pending_updates:queuedBook(self.settings:getFilePath()) then
+    UIManager:nextTick(self.flushPendingUpdates, self)
   end
 
-  if self.page_update_pending then
-    self:updatePageNow()
+  if not self.state.book_status.id and not self.settings:syncEnabled() then
+    return
   end
 
   self.state.process_page_turns = false
@@ -700,22 +778,239 @@ function SyncEngine:onResume()
   end
 end
 
+-- Local `page` as the progress value and update_type that get sent.
+function SyncEngine:_progressValue(page)
+  local decimal_percent, mapped_page = self.page_mapper:getRemotePagePercent(
+    page,
+    self.ui.document:getPageCount(),
+    self.settings:pages()
+  )
+  if self.settings:syncByRemotePages() and mapped_page then
+    return mapped_page, "pages"
+  end
+  return math.floor(decimal_percent * 100 + 0.5), "percentage"
+end
+
 function SyncEngine:updatePageNow(callback, value, update_type)
   if not value then
-    local decimal_percent, mapped_page = self.page_mapper:getRemotePagePercent(
-      self.state.page,
-      self.ui.document:getPageCount(),
-      self.settings:pages()
-    )
-    if self.settings:syncByRemotePages() and mapped_page then
-      value = mapped_page
-      update_type = "pages"
-    else
-      value = math.floor(decimal_percent * 100 + 0.5)
-      update_type = "percentage"
-    end
+    value, update_type = self:_progressValue(self.state.page)
   end
   self:_handlePageUpdate(self.ui.document.file, value, true, callback, update_type)
+end
+
+-- Queues where the reader left off on close (the document is still open),
+-- unless it's been sent already. Covers books read offline, whose page turns
+-- aren't tracked because their remote status couldn't be fetched, and the
+-- periodic update that closing cancels.
+function SyncEngine:_queueClosingProgress()
+  local filename = self.settings:getFilePath()
+  local book = self:_syncedBook(filename)
+  local status_id = self.state.book_status.status_id
+  -- Not if the book's known not to be being read there, or to have no status
+  -- there since it was removed from the menu. A status that couldn't be read
+  -- or set (e.g. offline) is checked when it's sent.
+  if not (book and self:isActive()) or (status_id and status_id ~= self.constants.STATUS.READING)
+      or self.state.book_status == self.state.removed_status then
+    return
+  end
+
+  local page = self.ui:getCurrentPage()
+  local value, update_type = self:_progressValue(page)
+  -- Only what was sent, or left unsent, for the book and edition it's linked
+  -- to now, not before it was relinked.
+  local function forBook(progress)
+    if progress and tostring(progress.book_id) == tostring(book.book_id)
+        and tostring(progress.edition_id) == tostring(book.edition_id) then
+      return progress
+    end
+  end
+  local synced = forBook(self.state.synced_progress)
+  local unsent = forBook(self.state.unsent_progress)
+  if self.settings:trackByTime() then
+    if page == self.state.opened_page or (synced and synced.value == value and synced.update_type == update_type) then
+      return
+    end
+  -- Progress/page tracking only sends progress forward, when crossing an
+  -- interval. So queue where it was left off only if nothing's been sent and
+  -- that's further than where the book was opened, or else a crossing that
+  -- wasn't sent (cancelled by closing or a suspend, or failed).
+  elseif synced or not (self.state.opened_page and page > self.state.opened_page) then
+    if not unsent then
+      return
+    end
+    value, update_type = unsent.value, unsent.update_type
+  end
+
+  self.settings.pending_updates:addProgress(filename, book, value, update_type)
+end
+
+-- Sends queued updates, if any. Like other updates, this goes through
+-- AutoWifi, so it only turns Wi-Fi on if "Enable wifi on demand" is set.
+-- Then calls `done`, if given, with false if the provider couldn't be reached.
+function SyncEngine:flushPendingUpdates(done)
+  done = done or function() end
+  if not self:isActive() or #self.settings.pending_updates:filenames() == 0 then
+    return done()
+  end
+
+  self.cache:serializeUpdate(function(wifi_error)
+    local ok, sent = true, nil
+    if not wifi_error and NetworkManager:isConnected() then
+      ok, sent = pcall(self._sendPendingUpdates, self)
+    end
+    done(ok and sent)
+    if not ok then error(sent, 0) end
+  end)
+end
+
+function SyncEngine:_sendPendingUpdates()
+  for _, filename in ipairs(self.settings.pending_updates:filenames()) do
+    if not self:_sendPendingUpdate(filename) then
+      -- Offline, or the provider's down, so the rest would fail too. This
+      -- book goes last next time, so one that keeps failing can't hold up
+      -- the others.
+      self.settings.pending_updates:markTried(filename)
+      return false
+    end
+  end
+  return true
+end
+
+-- Sends filename's queued update, read afresh as it may have changed while
+-- others were being sent. Returns false if the provider couldn't be reached.
+function SyncEngine:_sendPendingUpdate(filename)
+  local STATUS = self.constants.STATUS
+  local pending_updates = self.settings.pending_updates
+  -- filename's queued update, and the book it's for. Nothing while the
+  -- provider's turned off, even if only in another plugin instance so far.
+  local function queued()
+    if not (self:isActive() and self.settings:providerEnabledOnDisk()) then return end
+    local book = self:_syncedBook(filename)
+    -- A book that's been moved or deleted since took its settings, and so its
+    -- link, with it. Its finished status is still sent, to the book it was
+    -- queued for, but not its progress, which needs its edition and page count.
+    local gone = not book and not lfs.attributes(filename, "mode")
+    if gone then
+      book = pending_updates:queuedBook(filename)
+    end
+    local update = pending_updates:get(filename, book,
+      self.provider.has_remote_progress == false and UNCHECKED_PROGRESS_MAX_AGE or nil)
+    if update and update.progress and gone then
+      pending_updates:clearProgress(filename, update)
+      update.progress = nil
+    end
+    if update and update.finished_at and not gone then
+      -- Not if it's been marked as reading again in KOReader since, even if
+      -- only in the reader it's open in, which may not have saved that yet.
+      local reader = filename == self:_openFile() and require("apps/reader/readerui").instance
+      local doc_settings = reader and reader.doc_settings or self.settings:getDocSettings(filename)
+      local summary = doc_settings:readSetting("summary")
+      if not (summary and summary.status == "complete") then
+        pending_updates:clearFinished(filename, update)
+        update.finished_at = nil
+      end
+    end
+    return update and (update.progress or update.finished_at) and update, book
+  end
+
+  local update, book = queued()
+  -- The open book's progress is left to live tracking, whose next successful
+  -- page update clears it.
+  if not update or (not update.finished_at and filename == self:_openFile()) then return true end
+  -- Nor is anything sent for a finished status that's only waiting to try its
+  -- date again.
+  if not update.progress and not pending_updates:dateDue(update) then return true end
+
+  local book_id = update.book_id
+  local status, err = self.provider:findUserBookFor(book)
+  -- Hardcover skips requests without an error while disconnected.
+  if err or not NetworkManager:isConnected() then
+    logger.warn(self.label .. ": could not send queued updates, keeping them: " .. tostring(err))
+    return false
+  end
+  status = status or {}
+
+  -- Requests yield: the link, sync setting, open document or queue may have
+  -- changed since the lookup began. Never combine one book's status with another's link.
+  update, book = queued()
+  if not update or tostring(update.book_id) ~= tostring(book_id) then return true end
+  -- Without remote progress (Goodreads, Fable), a queued finished status
+  -- covers it, and sending 100% first would mark it finished as of today.
+  local progress = filename ~= self:_openFile()
+    and not (update.finished_at and self.provider.has_remote_progress == false) and update.progress
+  if progress then
+    local reads = status.user_book_reads
+    local current_read = reads and reads[#reads]
+    local sendable = self.provider:canPushProgress(progress.update_type, filename)
+    if sendable and not status.status_id and not self.provider.has_reliable_status then
+      -- e.g. a page that loaded without the user's shelf on it, so try again later.
+      logger.info(self.label .. ": Keeping queued progress - the book's status couldn't be read")
+    elseif not sendable or status.status_id ~= STATUS.READING or not (current_read or self.provider.allows_new_read)
+        or progress.value < self.provider:getRemoteProgress(status, progress.update_type, filename) then
+      logger.info(self.label .. ": Dropping queued progress - can't be sent, or the book isn't being read there"
+        .. " or is further along")
+      pending_updates:clearProgress(filename, update)
+    else
+      local result = self.provider:pushProgress(current_read, progress.value, progress.update_type, filename, status)
+      if result then
+        status = result
+        pending_updates:clearProgress(filename, update)
+      elseif not update.finished_at then
+        return false
+      end
+    end
+  end
+
+  update, book = queued()
+  if update and tostring(update.book_id) == tostring(book_id) and update.finished_at then
+    local already_finished = status.status_id == STATUS.FINISHED
+    local result = already_finished and status
+      or self.provider:updateUserBookFor(book, STATUS.FINISHED)
+    if result then
+      pending_updates:clearProgress(filename, update)
+      local linked = self:_syncedBook(filename)
+      if filename == self.settings:getFilePath() and linked and tostring(linked.book_id) == tostring(book_id) then
+        self.state.book_status = result
+        self:registerHighlight()
+      end
+      -- As Cache:updateBookStatus does: dated when it was finished, and kept
+      -- until that date's set too (Goodreads). Then only the date's set, as
+      -- the book's already finished there, e.g. when the status was set but
+      -- couldn't be read back. A date that can't be set while connected is
+      -- only tried a few times, an hour apart (see PendingUpdates:dateNotSet),
+      -- even if the status had to be sent again. That's still announced, as
+      -- onMarkedFinished does.
+      if not pending_updates:dateDue(update) then
+        if not already_finished then self.provider:notifyBookFinished(filename) end
+        return true
+      end
+      local dated
+      if already_finished then
+        dated = self.provider:setDateFinished(book_id, update.finished_at)
+      else
+        dated = self.provider:onMarkedFinished(book_id, filename, update.finished_at)
+      end
+      if dated then
+        pending_updates:clearFinished(filename, update)
+      elseif not NetworkManager:isConnected() then
+        return false
+      -- Only once the book's shown as finished there. Goodreads takes its bot
+      -- check's answer for success, so the status may not have gone through.
+      elseif result.status_id == STATUS.FINISHED and pending_updates:dateNotSet(filename, update) then
+        logger.info(self.label .. ": Giving up on setting the date a queued finished status was finished")
+      end
+    elseif not NetworkManager:isConnected() then
+      return false
+    end
+  end
+  return true
+end
+
+-- The document open in the reader, if any. Not necessarily this instance's:
+-- a closed reader's instance, or the file browser's, can be flushing.
+function SyncEngine:_openFile()
+  local reader = require("apps/reader/readerui").instance
+  return reader and reader.document and reader.document.file
 end
 
 function SyncEngine:onNetworkDisconnecting()
@@ -741,6 +1036,34 @@ function SyncEngine:onNetworkConnected()
   if will_start then
     self:startReadCache()
   end
+  if self.wifi:turnedWifiOn() then
+    -- ShelfSync's own connection, for something else, so not retried: a retry
+    -- as it's being turned off would turn it on again, and so start this again.
+    self:flushPendingUpdates()
+  else
+    self:_flushAfterConnecting()
+  end
+end
+
+-- The first requests after connecting can time out, as on a Kindle, and
+-- nothing else may send what's queued for a while, so try a few more times
+-- while still connected. The first try is right away, ahead of the open book's
+-- lookup. Connecting again starts the tries over, and the earlier ones stop.
+function SyncEngine:_flushAfterConnecting()
+  local round = (self.flush_round or 0) + 1
+  self.flush_round = round
+  local tries = 0
+  local function try()
+    tries = tries + 1
+    self:flushPendingUpdates(function(sent)
+      if sent ~= false or tries == 4 then return end
+      -- 4, 8 and then 16 seconds after a failed try.
+      UIManager:scheduleIn(2 ^ (tries + 1), function()
+        if self.flush_round == round and NetworkManager:isConnected() then try() end
+      end)
+    end)
+  end
+  try()
 end
 
 function SyncEngine:onEndOfBook()
@@ -765,11 +1088,10 @@ function SyncEngine:onEndOfBook()
     return
   end
 
-  local marker = function()
-    self.cache:updateBookStatus(file_path, self.constants.STATUS.FINISHED)
-  end
-
+  -- When it was finished, in case it has to be queued (see _saveBookStatus).
+  local finished_at = os.time()
   if mark_read_later then
+    local book_id = self.settings:readBookSetting(file_path, "book_id")
     UIManager:scheduleIn(30, function()
       local status = "reading"
       if DocSettings:hasSidecarFile(file_path) then
@@ -778,33 +1100,82 @@ function SyncEngine:onEndOfBook()
           status = summary.status
         end
       end
-      if status == "complete" then
-        self.wifi:withWifi(function(_wifi_enabled, wifi_error)
-          if wifi_error then
-            logger.warn(self.label .. ": could not mark book as finished: " .. tostring(wifi_error))
-            return
-          end
-          marker()
-        end)
+      if status == "complete" and self.settings:readBookSetting(file_path, "book_id") == book_id then
+        self:_saveBookStatus(file_path, self.constants.STATUS.FINISHED, nil, finished_at)
       end
     end)
   else
-    self.wifi:withWifi(function(_wifi_enabled, wifi_error)
-      if wifi_error then
-        logger.warn(self.label .. ": could not mark book as finished: " .. tostring(wifi_error))
-        return
+    self:_saveBookStatus(file_path, self.constants.STATUS.FINISHED, function(saved)
+      if saved then
+        UIManager:show(InfoMessage:new {
+          text = _(self.label .. " status saved"),
+          timeout = 2
+        })
       end
-      marker()
-      UIManager:show(InfoMessage:new {
-        text = _(self.label .. " status saved"),
-        timeout = 2
-      })
-    end)
+    end, finished_at)
   end
+end
+
+-- Sets filename's status on the provider and reports whether that worked. A
+-- "finished" that couldn't be set is queued for flushPendingUpdates, dated
+-- `finished_at` (by default, when this was called) rather than when it failed.
+-- Another status replaces a queued "finished", even if it can't be set now.
+function SyncEngine:_saveBookStatus(filename, status, callback, finished_at)
+  finished_at = finished_at or os.time()
+  local book_id = self.settings:readBookSetting(filename, "book_id")
+  -- The book can be moved or deleted while this waits to be sent (e.g. by
+  -- the "Delete file" end-of-book action), taking its link with it.
+  local linked_book = self:_syncedBook(filename)
+  -- Not once the provider's turned off, even if only in another plugin
+  -- instance so far, e.g. the file browser's once the book's closed.
+  local function currentBook()
+    local book = self:_syncedBook(filename)
+    if self:isActive() and self.settings:providerEnabledOnDisk() and book
+        and tostring(book.book_id) == tostring(book_id) then
+      return book
+    end
+  end
+  self.cache:serializeUpdate(function(wifi_error)
+    local saved = not wifi_error and currentBook() and self.cache:updateBookStatus(filename, status)
+    local book = currentBook()
+    if not book then
+      saved = false
+      -- If it's gone, a finished status is queued for the book it was
+      -- linked to, like one queued before it went (see _sendPendingUpdate).
+      if linked_book and status == self.constants.STATUS.FINISHED and self:isActive()
+          and not lfs.attributes(filename, "mode") then
+        self.settings.pending_updates:addFinished(filename, linked_book, finished_at)
+        if not wifi_error then
+          self:flushPendingUpdates()
+        end
+      end
+    elseif not saved then
+      logger.warn(self.label .. ": could not update book status: " .. tostring(wifi_error or "request failed"))
+      if status == self.constants.STATUS.FINISHED then
+        self.settings.pending_updates:addFinished(filename, book, finished_at)
+      end
+    end
+    local pending = book and status ~= self.constants.STATUS.FINISHED
+      and self.settings.pending_updates:get(filename, book)
+    if pending then
+      self.settings.pending_updates:clearFinished(filename, pending)
+    end
+    if book and status ~= self.constants.STATUS.FINISHED then
+      self.settings.pending_updates:clearFinishedElsewhere(filename, book.book_id)
+    end
+    if callback then callback(saved) end
+  end)
 end
 
 function SyncEngine:syncFileUpdates(filename)
   return self.settings:readBookSetting(filename, "book_id") and self.settings:fileSyncEnabled(filename)
+end
+
+-- filename's book settings, if its updates are synced.
+function SyncEngine:_syncedBook(filename)
+  if self.settings:providerEnabled() and self:syncFileUpdates(filename) then
+    return self.settings:readBookSettings(filename)
+  end
 end
 
 function SyncEngine:onDocSettingsItemsChanged(file, doc_settings)
@@ -820,17 +1191,13 @@ function SyncEngine:onDocSettingsItemsChanged(file, doc_settings)
   end
 
   if status then
-    self.wifi:withWifi(function(_wifi_enabled, wifi_error)
-      if wifi_error then
-        logger.warn(self.label .. ": could not update book status: " .. tostring(wifi_error))
-        return
+    self:_saveBookStatus(file, status, function(saved)
+      if saved then
+        UIManager:show(InfoMessage:new {
+          text = _(self.label .. " status saved"),
+          timeout = 2
+        })
       end
-      self.cache:updateBookStatus(file, status)
-
-      UIManager:show(InfoMessage:new {
-        text = _(self.label .. " status saved"),
-        timeout = 2
-      })
     end)
   end
 end
@@ -884,12 +1251,21 @@ function SyncEngine:startReadCache()
           if self.state.book_status.id and self.state.book_status.status_id then
             return success()
           else
-            self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+            -- In turn with this provider's other updates, so the lookup and
+            -- the automatic Currently Reading below can't cross a queued or
+            -- manual status change for the book.
+            self.cache:serializeUpdate(function(wifi_error)
               -- Wi-Fi restoration can take long enough for the reader to
               -- close this book or open another one. Don't let a stale cache
               -- request act on the new document (or on no document at all).
               if self.ui.document ~= document then
                 return
+              end
+
+              -- Set while this waited, e.g. by sending a queued finished
+              -- status, which a lagging read could otherwise undo below.
+              if self.state.book_status.id and self.state.book_status.status_id then
+                return success()
               end
 
               if wifi_error then
@@ -927,6 +1303,15 @@ function SyncEngine:startReadCache()
                   -- stable no-status result. Network errors keep the normal
                   -- exponential backoff below.
                   return fail(2)
+                end
+
+                -- Not for a book KOReader has marked as finished, which may
+                -- just have had its queued finished status sent, by the file
+                -- browser or a closed reader, and read back empty.
+                local summary = self.settings:getDocSettings(filename):readSetting("summary")
+                if summary and summary.status == "complete" then
+                  logger.info(self.label .. ": Already-linked book has no status, but is finished, not adding it to Currently Reading")
+                  return success()
                 end
 
                 -- Still genuinely no status after retrying: mirror linkBook()'s
@@ -989,6 +1374,11 @@ function SyncEngine:startReadCache()
           -- periodic/threshold sync pattern.
           self:pageUpdateEvent(self.state.page)
         end
+      end
+
+      -- Send what was queued while the network was unavailable.
+      if NetworkManager:isConnected() then
+        self:flushPendingUpdates()
       end
     end,
 

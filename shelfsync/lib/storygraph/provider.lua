@@ -155,8 +155,8 @@ end
 -- and only overwrites the fields the user actually set. Accepts the full
 -- quarter-star value unrounded.
 ---@diagnostic disable-next-line: duplicate-set-field
-function StoryGraph:submitReview(_filename, rating, text)
-  local cache_error = self.cache and self.cache:cacheUserBook()
+function StoryGraph:submitReview(filename, rating, text)
+  local cache_error = self.cache and self.cache:cacheUserBook(filename)
   if cache_error then
     return false, cache_error
   end

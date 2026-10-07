@@ -573,6 +573,7 @@ function PageboundApi:findUserBook(book_id, _user_id, book_uuid)
   if not user_book then
     return {
       book_id = tostring(book.id or book_id),
+      book_uuid = book.uuid,
       title = book.title,
       page_count = page_count,
       total_page_count = page_count,
@@ -851,14 +852,16 @@ function PageboundApi:updateProgress(book_id, status, current_read, value, updat
   if not book_id then return nil, "No linked book found on Pagebound" end
 
   status = status or self:findUserBook(book_id)
+  local page_count = status and (status.total_page_count or status.page_count)
   if not status or not status.id then
-    status = self:updateUserBook(book_id, PAGEBOUND.STATUS.READING)
+    status = self:updateUserBook(book_id, PAGEBOUND.STATUS.READING, page_count, status and status.book_uuid)
   end
   if not status then return nil, "Could not start a Pagebound reading session" end
 
   current_read = current_read or status.current_reading_instance
   if not current_read or not current_read.id then
-    status = self:updateUserBook(book_id, PAGEBOUND.STATUS.READING, status.total_page_count or status.page_count)
+    status = self:updateUserBook(book_id, PAGEBOUND.STATUS.READING, status.total_page_count or status.page_count,
+      status.book_uuid)
     current_read = status and status.current_reading_instance
   end
   if not current_read or not current_read.id then
@@ -878,8 +881,14 @@ function PageboundApi:updateProgress(book_id, status, current_read, value, updat
   local progress_method = pages_mode and "pages" or "percent"
   local total_pages = tonumber(status.total_page_count or status.page_count)
   if not total_pages or total_pages <= 0 then
-    total_pages = tonumber(self.settings
-      and self.settings:readBookSetting(self.settings:getFilePath(), "pages"))
+    total_pages = tonumber(page_count)
+  end
+  if not total_pages or total_pages <= 0 then
+    -- Only the open book's own page count applies; queued updates can be for other books.
+    local filename = self.settings and self.settings:getFilePath()
+    if filename and tostring(self.settings:readBookSetting(filename, "book_id")) == tostring(book_id) then
+      total_pages = tonumber(self.settings:readBookSetting(filename, "pages"))
+    end
   end
   if not total_pages or total_pages <= 0 then
     total_pages = nil
@@ -934,7 +943,7 @@ function PageboundApi:updateProgress(book_id, status, current_read, value, updat
     end
     return nil, "Pagebound progress update failed (HTTP " .. tostring(code or "unknown") .. ")"
   end
-  return self:findUserBook(book_id)
+  return self:findUserBook(book_id, nil, status.book_uuid)
 end
 
 -- Pagebound's captured note flow creates a post in the forum attached to the
