@@ -250,7 +250,14 @@ package.loaded["ui/network/manager"] = NetworkMgr
 package.loaded["socket.http"] = package.loaded["socket.http"] or {}
 package.loaded["ltn12"] = package.loaded["ltn12"] or { sink = { table = function() end } }
 package.loaded["json"] = package.loaded["json"] or { encode = function() end, decode = function() end }
-package.loaded["ffi/util"] = package.loaded["ffi/util"] or { template = function(s) return s end }
+package.loaded["ffi/util"] = package.loaded["ffi/util"] or {
+  template = function(s, ...)
+    local args = { ... }
+    return (s:gsub("%%(%d+)", function(index)
+      return tostring(args[tonumber(index)] or "")
+    end))
+  end,
+}
 package.loaded["socketutil"] = package.loaded["socketutil"] or {}
 
 ----------------------------------------------------------------------

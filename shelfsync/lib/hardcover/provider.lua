@@ -49,6 +49,7 @@ end
 -- just because there's no existing user_book_reads entry yet.
 local Hardcover = setmetatable({
   allows_new_read = true,
+  requires_remote_page_count = true,
   -- A book findUserBook finds no status for isn't on the user's shelves,
   -- rather than possibly on a page that loaded without them (Goodreads).
   has_reliable_status = true,

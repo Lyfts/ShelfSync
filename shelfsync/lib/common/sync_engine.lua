@@ -2,7 +2,7 @@
 -- (StoryGraph or Hardcover) from KOReader's reader lifecycle events. All
 -- provider-specific behavior is injected: `label` (display name), `constants`
 -- (STATUS/STATUS_NAME table), `api`/`user`/`cache`/`page_mapper`/`wifi`/
--- `dialog_manager`/`settings`/`menu` instances, and a `provider` object
+-- `dialog_manager`/`settings` instances, and a `provider` object
 -- (StoryGraph or Hardcover) implementing tryAutolink/getRemoteProgress/
 -- getRemotePercent/pushProgress. `plugin_settings` is always the single
 -- shared (StoryGraph) settings instance, since plugin-update bookkeeping is
@@ -68,14 +68,23 @@ end
 
 function SyncEngine:disable()
   self.enabled = false
-  if self.menu then
-    self.menu.enabled = false
-  end
   self:registerHighlight()
 end
 
 function SyncEngine:onLink()
   if not self:isActive() then return end
+
+  if self.manual_link_dialog then
+    self.manual_link_dialog:show(self.provider_key, function(provider, book)
+      if not book then
+        return
+      end
+      UIManager:show(Notification:new {
+        text = _("Linked to: " .. book.title .. " on " .. provider.label),
+      })
+    end)
+    return
+  end
 
   self.provider:showLinkBookDialog(false, function(book)
     UIManager:show(Notification:new {
@@ -375,7 +384,6 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
     if auth_setting_changed then
       if change and change ~= "" and not self.enabled then
         self.enabled = true
-        self.menu.enabled = true
         self.api.last_auth_warning = nil
         UIManager:show(Notification:new {
           text = _(self.label .. " syncing re-enabled"),
@@ -489,6 +497,9 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
 
   local generation = self.page_update_generation
   local book = self:_syncedBook(filename)
+  if not book then
+    return bail(_("Book is no longer linked on " .. self.label))
+  end
   local book_id, edition_id = book.book_id, book.edition_id
   local function sameBook()
     local linked = self:_syncedBook(filename)
@@ -543,7 +554,14 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
       return bail(wifi_error)
     end
     local pending = self.settings.pending_updates:get(filename, self:_syncedBook(filename))
-    local result, reason = self.provider:pushProgress(current_read, value, update_type, filename)
+    local push_ok, result, reason = xpcall(function()
+      return self.provider:pushProgress(current_read, value, update_type, filename)
+    end, debug.traceback)
+    if not push_ok then
+      self.settings:debugWarn(self.label .. ": progress update raised an error")
+      result = nil
+      reason = _("Progress update failed on " .. self.label)
+    end
     if result then
       -- Sent, even if it's been cancelled since (e.g. by a suspend), so
       -- closing the book doesn't queue it again.
@@ -792,6 +810,48 @@ function SyncEngine:onResume()
   end
 end
 
+function SyncEngine:getProgressTarget(local_page, document_pages)
+  local_page = tonumber(local_page)
+  document_pages = tonumber(document_pages)
+  if not local_page or not document_pages or document_pages <= 0 then
+    return nil, nil, _("Local page count is unavailable")
+  end
+
+  local remote_pages = tonumber(self.settings:pages())
+  if remote_pages and remote_pages <= 0 then
+    remote_pages = nil
+  end
+  if self.provider.requires_remote_page_count and not remote_pages then
+    return nil, nil, _("The linked edition page count is unavailable")
+  end
+  local decimal_percent, mapped_page = self.page_mapper:getRemotePagePercent(
+    local_page,
+    document_pages,
+    remote_pages
+  )
+  if self.settings:syncByRemotePages() and remote_pages and mapped_page ~= nil then
+    return mapped_page, "pages", remote_pages
+  end
+
+  return math.floor((decimal_percent or 0) * 100 + 0.5), "percentage", remote_pages
+end
+
+function SyncEngine:updateProgressAtLocalPage(callback, local_page)
+  local document = self.ui.document
+  if not document then
+    if callback then callback(nil, _("No book active")) end
+    return
+  end
+
+  local value, update_type, err = self:getProgressTarget(local_page, document:getPageCount())
+  if value == nil then
+    if callback then callback(nil, err) end
+    return
+  end
+
+  self:_handlePageUpdate(document.file, value, true, callback, update_type)
+end
+
 -- Local `page` as the progress value and update_type that get sent.
 function SyncEngine:_progressValue(page)
   local decimal_percent, mapped_page = self.page_mapper:getRemotePagePercent(
@@ -802,12 +862,20 @@ function SyncEngine:_progressValue(page)
   if self.settings:syncByRemotePages() and mapped_page then
     return mapped_page, "pages"
   end
-  return math.floor(decimal_percent * 100 + 0.5), "percentage"
+  return math.floor((decimal_percent or 0) * 100 + 0.5), "percentage"
 end
 
 function SyncEngine:updatePageNow(callback, value, update_type)
-  if not value then
-    value, update_type = self:_progressValue(self.state.page)
+  if value == nil then
+    local local_page = self.state.page
+    if local_page == nil and self.ui and self.ui.getCurrentPage then
+      local_page = self.ui:getCurrentPage()
+    end
+    return self:updateProgressAtLocalPage(callback, local_page)
+  end
+  if not self.ui.document then
+    if callback then callback(nil, _("No book active")) end
+    return
   end
   self:_handlePageUpdate(self.ui.document.file, value, true, callback, update_type)
 end

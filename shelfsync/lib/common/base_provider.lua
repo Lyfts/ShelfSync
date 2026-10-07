@@ -9,7 +9,7 @@
 -- Providers still implement their own linkBook, getRemoteProgress,
 -- getRemotePercent and pushProgress, since those differ per API. `self.label`
 -- (e.g. "StoryGraph") must be set on the instance -- it's used to prefix the
--- debug log lines below, same as menu.lua/auto_wifi.lua's `label`.
+-- debug log lines below, same as the shared menus and auto_wifi's `label`.
 local _ = require("gettext")
 local T = require("ffi/util").template
 local logger = require("shelfsync/lib/common/safe_logger")
@@ -206,6 +206,12 @@ function BaseProvider:linkBookManually(book)
   return self:linkBookWithMethod(book, LINK_METHOD.MANUAL)
 end
 
+function BaseProvider:getLinkMethodLabel()
+  local filename = self.ui and self.ui.document and self.ui.document.file
+  local method = filename and self.settings:readBookSetting(filename, "link_method")
+  return LINK_METHOD_LABELS[method] or _("Unknown")
+end
+
 function BaseProvider:getLinkedBookLabel()
   local filename = self.ui and self.ui.document and self.ui.document.file
   local title = filename and self.settings:getLinkedTitle()
@@ -213,8 +219,7 @@ function BaseProvider:getLinkedBookLabel()
     title = self.settings:getLinkedBookId()
   end
 
-  local method = filename and self.settings:readBookSetting(filename, "link_method")
-  local method_label = LINK_METHOD_LABELS[method] or _("Unknown")
+  local method_label = self:getLinkMethodLabel()
   return T(_("Linked book (%1): %2"), method_label, tostring(title or ""))
 end
 

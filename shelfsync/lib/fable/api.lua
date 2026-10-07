@@ -119,7 +119,7 @@ end
 -- flow), then persists the resulting idToken/refreshToken pair. Runs in a
 -- subprocess like every other network call here so it doesn't block the UI
 -- thread when called from inside a Trapper:wrap() coroutine (see
--- fable/menu.lua's login dialog).
+-- the ShelfSync Accounts menu's login dialog).
 function FableApi:login(email, password)
   if not NetworkManager:isConnected() then
     return nil, "Network not connected"

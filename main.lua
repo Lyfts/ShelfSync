@@ -69,6 +69,10 @@ local User = require("shelfsync/lib/common/user")
 local DialogManager = require("shelfsync/lib/common/ui/dialog_manager")
 local CommonMenu = require("shelfsync/lib/common/menu")
 local ReviewMenu = require("shelfsync/lib/common/review_menu")
+local ProviderSettingsMenu = require("shelfsync/lib/common/provider_settings_menu")
+local ManualLinkDialog = require("shelfsync/lib/common/manual_link_dialog")
+local UpdateStatusMenu = require("shelfsync/lib/common/update_status_menu")
+local AccountsMenu = require("shelfsync/lib/common/accounts_menu")
 
 local SETTING = require("shelfsync/lib/common/constants/settings")
 local PROVIDERS = require("shelfsync/lib/common/constants/providers")
@@ -139,7 +143,7 @@ for _, provider in ipairs(PROVIDERS) do
 end
 
 -- Builds the full per-provider object graph (settings/user/cache/page_mapper/
--- wifi/dialog_manager/provider/menu) and wraps it in a SyncEngine. `settings`
+-- wifi/dialog_manager/provider) and wraps it in a SyncEngine. `settings`
 -- and `plugin_settings` are constructed by the caller so the StoryGraph and
 -- Hardcover engines can be pointed at the same plugin-wide settings instance
 -- (see ShelfSyncApp:init).
@@ -180,6 +184,7 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
   cache.provider = provider_instance
 
   local engine = SyncEngine:new {
+    provider_key = provider.key,
     label = provider.label,
     constants = provider.constants,
     highlight_menu_name = provider.highlight_menu_name,
@@ -198,22 +203,6 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
     view = self.view,
     state = state,
   }
-
-  local menu = provider.menu_class:new {
-    app = self,
-    enabled = true,
-    api = provider.api,
-    user = user,
-    cache = cache,
-    dialog_manager = dialog_manager,
-    [provider.key] = provider_instance,
-    page_mapper = page_mapper,
-    settings = settings,
-    plugin_settings = plugin_settings,
-    state = state,
-    ui = self.ui,
-  }
-  engine.menu = menu
 
   settings:subscribe(function(field, change, original_value)
     engine:onSettingsChanged(field, change, original_value)
@@ -280,7 +269,7 @@ function ShelfSyncApp:init()
     UIManager:nextTick(function()
       if not hardcover.settings:hasPendingOAuthScopeNotice() then return end
       UIManager:show(InfoMessage:new {
-        text = _([[Hardcover OAuth permissions changed. You have been signed out of OAuth; sign in again from Hardcover > Account (OAuth / API Token) to authorize the current permissions. Your API token fallback is unchanged.]]),
+        text = _([[Hardcover OAuth permissions changed. You have been signed out of OAuth; sign in again from ShelfSync > Accounts > Hardcover to authorize the current permissions. Your API token fallback is unchanged.]]),
         icon = "notice-warning",
       })
       hardcover.settings:clearPendingOAuthScopeNotice()
@@ -289,6 +278,30 @@ function ShelfSyncApp:init()
 
   self.common_menu = CommonMenu:new { settings = plugin_settings, app = self }
   self.review_menu = ReviewMenu:new { settings = plugin_settings, app = self }
+  self.manual_link_dialog = ManualLinkDialog:new {
+    providers = PROVIDERS,
+    engines = self.engines,
+    ui = self.ui,
+  }
+  for _, engine in pairs(self.engines) do
+    engine.manual_link_dialog = self.manual_link_dialog
+  end
+  self.update_status_menu = UpdateStatusMenu:new {
+    providers = PROVIDERS,
+    engines = self.engines,
+    ui = self.ui,
+  }
+  self.provider_settings_menu = ProviderSettingsMenu:new {
+    providers = PROVIDERS,
+    engines = self.engines,
+    ui = self.ui,
+    manual_link_dialog = self.manual_link_dialog,
+    update_status_menu = self.update_status_menu,
+  }
+  self.accounts_menu = AccountsMenu:new {
+    providers = PROVIDERS,
+    engines = self.engines,
+  }
 
   self:onDispatcherRegisterActions()
   self.ui.menu:registerToMainMenu(self)
@@ -570,16 +583,9 @@ function ShelfSyncApp:onShelfSyncBookFinished(filename)
 end
 
 function ShelfSyncApp:addToMainMenu(menu_items)
-  local provider_items = {}
-  for _, provider in ipairs(PROVIDERS) do
-    table.insert(provider_items, self.engines[provider.key].menu:mainMenu())
-  end
-
   local sub_items = {}
-  table.insert(sub_items, {
-    text = _("Providers"),
-    sub_item_table = provider_items,
-  })
+  table.insert(sub_items, self.provider_settings_menu:mainMenu())
+  table.insert(sub_items, self.accounts_menu:mainMenu())
 
   if self.ui.document then
     table.insert(sub_items, {
@@ -619,9 +625,9 @@ ShelfSync plugin
 v]] .. version .. new_release_str .. [[
 
 
-Synchronizes reading progress, notes, and status to The StoryGraph, Hardcover, Goodreads, and/or Fable.
+Synchronizes reading progress, notes, and status to The StoryGraph, Hardcover, Goodreads, Fable, and Pagebound.
 
-See the StoryGraph, Hardcover, Goodreads, and Fable submenus for service-specific settings.
+See Provider settings for sync and book controls, and Accounts for sign-in options.
 
 Project:
 github.com/Lyfts/ShelfSync]],

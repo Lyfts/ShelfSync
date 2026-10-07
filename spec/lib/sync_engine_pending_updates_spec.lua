@@ -25,7 +25,7 @@ local HardcoverApi = require("shelfsync/lib/hardcover/api")
 package.loaded["ui/widget/spinwidget"] = package.loaded["ui/widget/spinwidget"] or {}
 package.loaded["shelfsync/lib/common/ui/update_double_spin_widget"] =
   package.loaded["shelfsync/lib/common/ui/update_double_spin_widget"] or {}
-local HardcoverMenu = require("shelfsync/lib/hardcover/menu")
+local UpdateStatusMenu = require("shelfsync/lib/common/update_status_menu")
 local HARDCOVER_CONST = require("shelfsync/lib/hardcover/constants")
 local GoodreadsProvider = require("shelfsync/lib/goodreads/provider")
 local GoodreadsSettings = require("shelfsync/lib/goodreads/settings")
@@ -190,26 +190,49 @@ describe("SyncEngine pending updates", function()
       UIManager:_runUntilIdle()
     end
 
-    -- Chooses the status menu item named `name` (after its icon), and confirms it.
-    local function chooseFromMenu(name, menu_instance)
-      local menu = HardcoverMenu:new {
-        api = api, cache = engine.cache, state = engine.state, ui = ui, settings = engine.settings,
-        dialog_manager = {
-          maybeConfirm = function(_, options) options.ok_callback() end,
-          showError = function(_, text) table.insert(shown, text) end,
-        },
+    local function sharedStatusMenu()
+      engine.dialog_manager = {
+        maybeConfirm = function(_, options) options.ok_callback() end,
+        showError = function(_, text) table.insert(shown, text) end,
       }
-      for _, item in ipairs(menu:getStatusSubMenuItems()) do
-        if item.text and item.text:match("^%S+ (.*)$") == name then
-          item.callback(menu_instance or { updateItems = function() end })
+      return UpdateStatusMenu:new {
+        providers = {
+          { key = "hardcover", label = "Hardcover", constants = HARDCOVER_CONST },
+        },
+        engines = { hardcover = engine },
+        ui = ui,
+      }
+    end
+
+    -- Chooses the shared status menu item `name` and confirms it.
+    local function chooseFromMenu(name, menu_instance)
+      local menu_items = sharedStatusMenu():getSubMenuItems()
+      local status_order = { STATUS.TO_READ, STATUS.READING, STATUS.FINISHED, STATUS.PAUSED, STATUS.DNF }
+      for index, status_id in ipairs(status_order) do
+        if HARDCOVER_CONST.STATUS_NAME[status_id] == name then
+          menu_items[index].callback(menu_instance or { updateItems = function() end })
           return
         end
       end
       error(name .. " menu item not found")
     end
 
-    local function removeBook()
-      chooseFromMenu("Remove")
+    local function removeBook(menu_instance)
+      local menu = sharedStatusMenu()
+      local remove_item
+      for _, item in ipairs(menu:getSubMenuItems()) do
+        if item.text and item.text:find("Remove from providers", 1, true) then
+          remove_item = item
+          break
+        end
+      end
+      local checklist = remove_item.sub_item_table_func()
+      menu_instance = menu_instance or { updateItems = function() end }
+      if not menu_instance.item_table then menu_instance.item_table = checklist end
+      for index = 1, #checklist - 1 do
+        checklist[index].callback(menu_instance)
+      end
+      checklist[#checklist].callback(menu_instance)
     end
 
     local function pagesSent()
@@ -1335,7 +1358,10 @@ describe("SyncEngine pending updates", function()
 
       assert.are.same({}, calls.removeRead)
       assert.are.equal(STATUS.READING, engine.state.book_status.status_id)
-      assert.are.same({ "Book status could not be removed" }, shown)
+      assert.are.same({
+        "Removing this book from Hardcover...",
+        "Could not remove from: Hardcover",
+      }, shown)
       assert.is_nil(pending(settings))
 
       goOnline()
@@ -1373,7 +1399,10 @@ describe("SyncEngine pending updates", function()
       UIManager:_runUntilIdle()
 
       assert.are.same({ STATUS.FINISHED }, calls.updateUserBook)
-      assert.are.same({ "Book status could not be updated" }, shown)
+      assert.are.same({
+        "Updating status on Hardcover...",
+        "Could not update Read on: Hardcover",
+      }, shown)
       assert.is_nil(pending(settings))
     end)
 
@@ -1383,12 +1412,17 @@ describe("SyncEngine pending updates", function()
       engine.settings:updateSetting(SETTING.SHARED.ENABLE_WIFI, true)
       goOffline()
       local status_items = {}
-      local menu_instance = { item_table = status_items, updateItems = function() end }
+      local refreshed = 0
+      local menu_instance = {
+        item_table = status_items,
+        updateItems = function() refreshed = refreshed + 1 end,
+      }
 
       chooseFromMenu(HARDCOVER_CONST.STATUS_NAME[STATUS.FINISHED], menu_instance)
       UIManager:_runUntilIdle()
       assert.are.equal(STATUS.FINISHED, remote.status_id)
-      assert.are_not.equal(status_items, menu_instance.item_table)
+      assert.are.equal(status_items, menu_instance.item_table)
+      assert.are.equal(1, refreshed)
 
       -- e.g. back up to the parent menu while Wi-Fi is being restored
       goOffline()
@@ -1398,10 +1432,11 @@ describe("SyncEngine pending updates", function()
       UIManager:_runUntilIdle()
       assert.are.equal(STATUS.READING, remote.status_id)
       assert.are.equal(other_items, menu_instance.item_table)
+      assert.are.equal(1, refreshed)
 
       goOffline()
       menu_instance.item_table = status_items
-      chooseFromMenu("Remove", menu_instance)
+      removeBook(menu_instance)
       menu_instance.item_table = other_items
       UIManager:_runUntilIdle()
       assert.is_nil(remote.status_id)

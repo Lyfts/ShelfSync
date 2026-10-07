@@ -3,6 +3,9 @@
 <!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
 
 ## Unreleased
+- (feat) Replace separate provider menus with unified **Provider settings** and **Accounts** menus, and apply shared reading-status and progress actions across active linked providers. **Update status** shows each provider's status and link method under **Link Status**, offers a shared checklist to remove the book from selected providers, and groups provider journal/forum actions under **Add note**.
+- (feat) Open one tabbed book search from **Provider settings > Link or relink book** to link, relink, or unlink the open document across all providers.
+- (feat) Show a checkmark beside providers with saved credentials in **Accounts**.
 
 ## 1.7.0
 - (feat) 🌟 Keep progress and finished status from KOReader that can't be sent (e.g. with Wi-Fi off) for up to 4 weeks, and send them once the network is back, even after the book is closed or from the file browser. On Goodreads and Fable, progress is only sent within a day. 🌟
