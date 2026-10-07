@@ -22,7 +22,8 @@ Fable.__index = Fable
 function Fable:linkBook(book, link_method)
   local filename = self.ui.document.file
 
-  local status = self.api:findUserBook(book.book_id) or {}
+  local status, lookup_error = self.api:findUserBook(book.book_id)
+  status = status or {}
 
   -- Only worth an extra editions/ fetch here at link time -- see
   -- api.lua's findEditionPageCount for why findUserBook itself doesn't
@@ -47,7 +48,15 @@ function Fable:linkBook(book, link_method)
   self.settings:updateBookSetting(filename, new_settings)
   self.state.book_status = status
 
-  if not self.state.book_status.status_id then
+  -- A failed lookup isn't proof the book has no status, and adding it could
+  -- replace one it already has (e.g. Finished).
+  if lookup_error then
+    logger.warn("Fable: Couldn't check the book's status, not adding it to Currently Reading: " .. tostring(lookup_error))
+    UIManager:show(InfoMessage:new {
+      text = _("Linked, but couldn't check the book's status on Fable, so it wasn't marked as Currently Reading automatically. Use \"Update status\" to set it manually."),
+      icon = "notice-warning",
+    })
+  elseif not self.state.book_status.status_id then
     logger.info("Fable: Book has no status, adding to Currently Reading automatically")
     local added = self.api:updateUserBook(book.book_id, FABLE.STATUS.READING)
     if added and added.status_id then

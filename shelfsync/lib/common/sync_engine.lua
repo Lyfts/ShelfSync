@@ -388,8 +388,12 @@ function SyncEngine:warnStatusMismatch(filename)
   self.state.status_mismatch_warned = true
 
   local status_id = self.state.book_status.status_id
+  -- `shelf` without a status_id: still shelved, just not on a shelf that maps
+  -- to a status (e.g. a custom Goodreads shelf).
+  local shelf = self.state.book_status.shelf
   local status_clause = status_id
     and ("This book is marked \"%s\" on " .. self.label):format(self.constants.STATUS_NAME[status_id])
+    or shelf and ("This book is on the \"%s\" shelf on " .. self.label .. ", which ShelfSync doesn't track"):format(shelf)
     or ("This book has no status on " .. self.label .. " (it may have been removed from your shelves)")
 
   self.dialog_manager:confirm({
@@ -912,8 +916,9 @@ function SyncEngine:startReadCache()
               -- fetch failure to retry indefinitely. But a single miss can also be
               -- a one-off render/parse blip on an otherwise normal "Currently
               -- Reading" book, so give it a couple of retries before accepting it
-              -- as final.
-              if not self.state.book_status.status_id then
+              -- as final. A book that findUserBook reports as still `shelved`,
+              -- just on a shelf with no matching status, is left where it is.
+              if not self.state.book_status.status_id and not self.state.book_status.shelved then
                 if nil_status_attempts < max_nil_status_attempts then
                   nil_status_attempts = nil_status_attempts + 1
                   self.state.book_status = {}

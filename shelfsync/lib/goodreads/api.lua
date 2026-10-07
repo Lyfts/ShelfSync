@@ -32,6 +32,7 @@ local NetworkManager = require("ui/network/manager")
 local socketutil = require("socketutil")
 
 local SETTING = require("shelfsync/lib/common/constants/settings")
+local _t = require("shelfsync/lib/common/table_util")
 
 local base_url = "https://www.goodreads.com"
 
@@ -1233,6 +1234,15 @@ function GoodreadsApi:findBooks(title, author, _userId)
   return results
 end
 
+local function find_book_cache(data, book_query)
+  if type(data) ~= "table" then return nil end
+  if _t.dig(data, "ROOT_QUERY", book_query, "__ref") then return data end
+  for _, value in pairs(data) do
+    local cache = find_book_cache(value, book_query)
+    if cache then return cache end
+  end
+end
+
 function GoodreadsApi:findUserBook(book_id, _user_id)
   if not book_id then return {} end
   local book_url = base_url .. "/book/show/" .. book_id
@@ -1242,25 +1252,35 @@ function GoodreadsApi:findUserBook(book_id, _user_id)
     return {}, "Failed to fetch book"
   end
 
+  -- Decode complete script payloads so fields cannot leak between books or
+  -- shelving objects. The Apollo cache may be nested in the page's data.
+  local book_query = ('getBookByLegacyId({"legacyId":"%s"})'):format(book_id)
+  local cache
+  for script in html:gmatch("<script[^>]*>(.-)</script>") do
+    if script:find("getBookByLegacyId", 1, true) then
+      local ok, data = pcall(json.decode, script)
+      if ok then cache = find_book_cache(data, book_query) end
+      if cache then break end
+    end
+  end
+  local book_ref = _t.dig(cache, "ROOT_QUERY", book_query, "__ref")
+  local book = book_ref and cache[book_ref]
+  local shelving = _t.dig(book, "viewerShelving")
+
+  -- Keep JSON null distinct from a missing field: only null confirms that
+  -- it is safe to add the book to Currently Reading automatically.
+  if shelving == nil then
+    return {}, "Failed to read shelf from book page"
+  end
+
+  local shelved = shelving ~= json.util.null
   local shelf_name = nil
 
-  if not html:find('"viewerShelving":null', 1, true) then
-    -- The book page's embedded Apollo cache only stores the viewer's shelf
-    -- assignment as a "__ref" pointer next to other users' shelvings -- the
-    -- actual dereferenced Shelving object (with shelf.name) lives elsewhere
-    -- in the same cache dump, keyed by that exact same ref string, so find
-    -- the ref, then plain-text search for its dereferenced object using it
-    -- as a dict key (the ref string contains literal escaped quotes, so a
-    -- second pattern-match would need those re-escaped -- a plain substring
-    -- search sidesteps that entirely).
-    local ref = html:match('"viewerShelving":{"__ref":"(Shelving:.-}})"}')
-    if ref then
-      local ref_pos = html:find(ref, 1, true)
-      local key_pos = ref_pos and html:find(ref, ref_pos + #ref, true)
-      if key_pos then
-        local window = html:sub(key_pos, key_pos + 4000)
-        shelf_name = window:match('"shelf":{"__typename":"Shelf","name":"([%w%-]+)"')
-      end
+  if shelved then
+    local ref = _t.dig(shelving, "__ref")
+    shelf_name = ref and _t.dig(cache, ref, "shelf", "name")
+    if type(shelf_name) ~= "string" or shelf_name == "" then
+      return {}, "Failed to read shelf from book page"
     end
   end
 
@@ -1268,18 +1288,22 @@ function GoodreadsApi:findUserBook(book_id, _user_id)
   -- exclusive shelves; Paused/Did Not Finish are tracked as non-exclusive
   -- "taggings" whose shape isn't confirmed from available data, so read-back
   -- for those two statuses isn't supported (write-only, via updateUserBook).
+  -- Any other shelf comes back as `shelved` (with its name in `shelf`) but no
+  -- status_id, so callers leave the book where it is.
   local status_id = nil
   if shelf_name == "to-read" then status_id = 1
   elseif shelf_name == "currently-reading" then status_id = 2
   elseif shelf_name == "read" then status_id = 3
   end
 
-  local book_num_of_pages = tonumber(html:match('"details":{"__typename":"BookDetails".-"numPages":(%d+)')) or 0
+  local book_num_of_pages = tonumber(_t.dig(book, "details", "numPages")) or 0
 
   return {
     id = book_id,
     book_id = book_id,
     status_id = status_id,
+    shelved = shelved,
+    shelf = shelf_name,
     book_num_of_pages = book_num_of_pages,
     page_count = book_num_of_pages,
   }
