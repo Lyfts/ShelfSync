@@ -3,6 +3,8 @@
 <!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
 
 ## Unreleased
+
+## 1.7.0
 - (feat) 🌟 Keep progress and finished status from KOReader that can't be sent (e.g. with Wi-Fi off) for up to 4 weeks, and send them once the network is back, even after the book is closed or from the file browser. On Goodreads and Fable, progress is only sent within a day. 🌟
 - (fix) Run ShelfSync's handling when a book is closed, which never ran. Closing a book now sends or queues progress that hadn't been sent yet.
 - (fix) Send each provider's updates one at a time, so a late response can't undo a newer status or progress change.
