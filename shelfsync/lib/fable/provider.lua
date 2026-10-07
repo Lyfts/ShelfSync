@@ -19,7 +19,7 @@ local Fable = setmetatable({
 }, { __index = BaseProvider })
 Fable.__index = Fable
 
-function Fable:linkBook(book)
+function Fable:linkBook(book, link_method)
   local filename = self.ui.document.file
 
   local status, lookup_error = self.api:findUserBook(book.book_id)
@@ -36,7 +36,7 @@ function Fable:linkBook(book)
     pages = self.api:findEditionPageCount(book.book_id, isbn)
   end
 
-  local new_settings = { book_id = book.book_id, title = book.title }
+  local new_settings = { book_id = book.book_id, title = book.title, link_method = link_method }
   local delete = {}
   if pages and pages > 0 then
     new_settings.pages = pages
@@ -114,10 +114,24 @@ function Fable:pushProgress(_current_read, value, update_type, filename)
     local finished_result = self.api:updateUserBook(book_id, FABLE.STATUS.FINISHED)
     if finished_result then
       result = finished_result
+      self:onMarkedFinished(book_id, filename)
     end
   end
 
   return result
+end
+
+-- ReviewMenu entry point. Fable accepts fractional ratings, so the
+-- quarter-star value is passed through unrounded.
+function Fable:submitReview(filename, rating, text)
+  local book_id = self.settings:readBookSetting(filename, "book_id")
+  if not book_id then
+    return false, "No linked book found on Fable"
+  end
+
+  local review_rating = rating and rating > 0 and rating or nil
+  local ok, err = self.api:setReview(book_id, review_rating, text)
+  return ok == true, err
 end
 
 return Fable

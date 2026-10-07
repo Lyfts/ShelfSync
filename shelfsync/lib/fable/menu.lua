@@ -60,11 +60,7 @@ function FableMenu:getSubMenuItems(book_view)
     book_view and {
       text_func = function()
         if self.settings:bookLinked() then
-          local title = self.settings:getLinkedTitle()
-          if not title then
-            title = self.settings:getLinkedBookId()
-          end
-          return _("Linked book: " .. title)
+          return self.fable:getLinkedBookLabel()
         else
           return _("Link book")
         end
@@ -77,7 +73,7 @@ function FableMenu:getSubMenuItems(book_view)
           self.settings:updateBookSetting(
             self.ui.document.file,
             {
-              _delete = { 'book_id', 'pages', 'title' }
+              _delete = { 'book_id', 'pages', 'title', 'link_method' }
             }
           )
 
@@ -161,9 +157,11 @@ function FableMenu:_statusMenuItem(icon, status_id)
       self.dialog_manager:maybeConfirm({
         text = ("Mark book as %s?"):format(FABLE.STATUS_NAME[status_id]),
         ok_callback = function()
-          self.cache:updateBookStatus(self.ui.document.file, status_id)
-          menu_instance.item_table = self:getStatusSubMenuItems()
-          menu_instance:updateItems()
+          Trapper:wrap(function()
+            self.cache:updateBookStatus(self.ui.document.file, status_id)
+            menu_instance.item_table = self:getStatusSubMenuItems()
+            menu_instance:updateItems()
+          end)
         end,
         no_confirm_callback = function()
           menu_instance:updateItems()
@@ -189,12 +187,14 @@ function FableMenu:getStatusSubMenuItems()
         self.dialog_manager:maybeConfirm({
           text = "Remove current book status?",
           ok_callback = function()
-            local result = self.api:removeRead(self.state.book_status.id)
-            if result then
-              self.state.book_status = {}
-              menu_instance.item_table = self:getStatusSubMenuItems()
-              menu_instance:updateItems()
-            end
+            Trapper:wrap(function()
+              local result = self.api:removeRead(self.state.book_status.id)
+              if result then
+                self.state.book_status = {}
+                menu_instance.item_table = self:getStatusSubMenuItems()
+                menu_instance:updateItems()
+              end
+            end)
           end
         })
       end,

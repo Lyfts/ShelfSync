@@ -17,7 +17,7 @@ local Goodreads = setmetatable({
 }, { __index = BaseProvider })
 Goodreads.__index = Goodreads
 
-function Goodreads:linkBook(book)
+function Goodreads:linkBook(book, link_method)
   local filename = self.ui.document.file
 
   local status, lookup_error = self.api:findUserBook(book.book_id)
@@ -29,6 +29,7 @@ function Goodreads:linkBook(book)
     book_id = book.book_id,
     pages = book.pages or status.book_num_of_pages,
     title = book.title,
+    link_method = link_method,
     _delete = delete
   }
 
@@ -112,10 +113,42 @@ function Goodreads:pushProgress(_current_read, value, update_type, filename)
     local finished_result = self.api:updateUserBook(book_id, GOODREADS.STATUS.FINISHED)
     if finished_result and finished_result.id then
       result = finished_result
+      self:onMarkedFinished(book_id, filename)
     end
   end
 
   return result
+end
+
+-- Stamps today as the Goodreads "date read" -- called by Cache:updateBookStatus
+-- for Finished transitions that go through the shared status menu/SyncEngine,
+-- and directly above for the auto-track-to-100% finished path (which
+-- bypasses Cache since it needs updateUserBook's return value inline).
+function Goodreads:onMarkedFinished(book_id, filename)
+  self:notifyBookFinished(filename)
+  self.api:setDateFinished(book_id)
+end
+
+-- ReviewMenu entry point: submits a star rating and/or free-text review from
+-- the unified Review menu. Goodreads only accepts whole-star ratings, so a
+-- quarter/half-star value is rounded down to a whole number here.
+function Goodreads:submitReview(filename, rating, text)
+  local book_id = self.settings:readBookSetting(filename, "book_id")
+  if not book_id then
+    return false, "No linked book found on Goodreads"
+  end
+
+  -- Save text first so a text failure does not create a rating-only review.
+  if text and text ~= "" then
+    local ok, err = self.api:setReviewText(book_id, text)
+    if not ok then return false, err or "Goodreads could not save the review text" end
+  end
+  if rating and rating > 0 then
+    if not self.api:setRating(book_id, math.floor(rating)) then
+      return false, "Goodreads could not save the rating"
+    end
+  end
+  return true
 end
 
 return Goodreads

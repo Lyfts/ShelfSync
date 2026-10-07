@@ -11,9 +11,11 @@
 -- (e.g. "StoryGraph") must be set on the instance -- it's used to prefix the
 -- debug log lines below, same as menu.lua/auto_wifi.lua's `label`.
 local _ = require("gettext")
+local T = require("ffi/util").template
 local logger = require("shelfsync/lib/common/safe_logger")
 local util = require("util")
 
+local Event = require("ui/event")
 local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
 local Notification = require("ui/widget/notification")
@@ -23,6 +25,20 @@ local SETTING = require("shelfsync/lib/common/constants/settings")
 
 local BaseProvider = {}
 BaseProvider.__index = BaseProvider
+
+local LINK_METHOD = {
+  IDENTIFIER = "identifier",
+  ISBN = "isbn",
+  TITLE_AUTHOR = "title_author",
+  MANUAL = "manual",
+}
+
+local LINK_METHOD_LABELS = {
+  [LINK_METHOD.IDENTIFIER] = _("ID"),
+  [LINK_METHOD.ISBN] = _("ISBN"),
+  [LINK_METHOD.TITLE_AUTHOR] = _("Title"),
+  [LINK_METHOD.MANUAL] = _("Manual"),
+}
 
 -- Fuzzy titles need author agreement; without usable authors, require an almost exact title.
 local MIN_TITLE_SIMILARITY = 0.8
@@ -120,11 +136,28 @@ local function appendAuthorNames(value, names)
   end
 end
 
+local function appendHardcoverAuthorNames(contributions, names)
+  for _, contribution in ipairs(contributions or {}) do
+    local role = type(contribution.contribution) == "string"
+      and contribution.contribution:lower():match("^%s*(.-)%s*$")
+    -- Hardcover's cached contributor list can include narrators, translators,
+    -- and other non-author credits. Only use actual author credits for match
+    -- confidence, while the full cached list remains available to the picker.
+    if not role or role == "" or role == "author" then
+      appendAuthorNames(contribution.author or contribution, names)
+    end
+  end
+end
+
 local function getCandidateAuthors(book)
   local names = {}
   appendAuthorNames(book.author, names)
   appendAuthorNames(book.authors, names)
-  appendAuthorNames(book.contributions, names)
+  if type(book.author_contributions) == "table" and #book.author_contributions > 0 then
+    appendHardcoverAuthorNames(book.author_contributions, names)
+  else
+    appendAuthorNames(book.contributions, names)
+  end
 
   local combined = table.concat(names, " ")
   local tokens = matchTokens(combined)
@@ -165,6 +198,26 @@ function BaseProvider:new(o)
   return setmetatable(o, self)
 end
 
+function BaseProvider:linkBookWithMethod(book, method)
+  return self:linkBook(book, method or LINK_METHOD.MANUAL)
+end
+
+function BaseProvider:linkBookManually(book)
+  return self:linkBookWithMethod(book, LINK_METHOD.MANUAL)
+end
+
+function BaseProvider:getLinkedBookLabel()
+  local filename = self.ui and self.ui.document and self.ui.document.file
+  local title = filename and self.settings:getLinkedTitle()
+  if not title and filename then
+    title = self.settings:getLinkedBookId()
+  end
+
+  local method = filename and self.settings:readBookSetting(filename, "link_method")
+  local method_label = LINK_METHOD_LABELS[method] or _("Unknown")
+  return T(_("Linked book (%1): %2"), method_label, tostring(title or ""))
+end
+
 -- Keys of `book` that should be deleted (rather than written as nil) from
 -- the sidecar when linking, e.g. a search result that carries no page count.
 function BaseProvider:_deletedKeys(book, keys)
@@ -193,7 +246,7 @@ function BaseProvider:showLinkBookDialog(force_search, link_callback)
         book_id = self.settings:getLinkedBookId()
       },
       function(book)
-        self:linkBook(book)
+        self:linkBookManually(book)
         if link_callback then
           link_callback()
         end
@@ -231,12 +284,12 @@ function BaseProvider:findBookOptions(force_search)
   return title, result, err
 end
 
-function BaseProvider:autolinkBook(book)
+function BaseProvider:autolinkBook(book, method)
   if not book then
     return
   end
 
-  local linked = self:linkBook(book)
+  local linked = self:linkBookWithMethod(book, method)
   if linked then
     UIManager:show(Notification:new {
       text = _("Linked to: " .. book.title),
@@ -264,7 +317,7 @@ function BaseProvider:linkBookByIdentifier(identifiers)
       user_id
     )
     if book_lookup then
-      self:autolinkBook(book_lookup)
+      self:autolinkBook(book_lookup, LINK_METHOD.IDENTIFIER)
       return true
     end
   end
@@ -280,7 +333,7 @@ function BaseProvider:linkBookByIsbn(identifiers)
       user_id
     )
     if book_lookup then
-      self:autolinkBook(book_lookup)
+      self:autolinkBook(book_lookup, LINK_METHOD.ISBN)
       return true
     end
   end
@@ -302,7 +355,7 @@ function BaseProvider:linkBookByTitle()
   end
 
   if best_match then
-    self:autolinkBook(best_match)
+    self:autolinkBook(best_match, LINK_METHOD.TITLE_AUTHOR)
     return true
   end
 end
@@ -358,6 +411,35 @@ function BaseProvider:tryAutolink(done)
   elseif done then
     done()
   end
+end
+
+-- Called by Cache:updateBookStatus (and, for Goodreads/StoryGraph/Fable,
+-- their own pushProgress) whenever a book is successfully marked Finished,
+-- from any of the ways that can happen (auto-track completion, EndOfBook,
+-- KOReader's own Book Status dialog, or the "Update status" menu). Default
+-- behavior is just the notifyBookFinished broadcast below; only Goodreads
+-- overrides this, to also stamp its date-finished field.
+function BaseProvider:onMarkedFinished(_book_id, filename)
+  self:notifyBookFinished(filename)
+end
+
+-- Broadcasts a plugin-wide "book finished" signal, picked up by
+-- ShelfSyncApp:onShelfSyncBookFinished (main.lua) to (once per book, across
+-- however many of the 4 provider engines independently reach Finished) offer
+-- to open the Review menu. This is the only place a KOReader Book Status
+-- rating gets pushed to a provider now -- via the Review menu that popup
+-- leads to, pre-filled from getKoreaderRating -- rather than an automatic,
+-- silent sync on Finished.
+function BaseProvider:notifyBookFinished(filename)
+  UIManager:broadcastEvent(Event:new("ShelfSyncBookFinished", filename))
+end
+
+-- Submits a rating/review to this provider. Providers that don't support one
+-- of `rating`/`text` should just ignore that argument. Returns true/false
+-- (or a message on failure) rather than raising, so ReviewMenu can report
+-- per-provider results without partial submissions killing the others.
+function BaseProvider:submitReview(_filename, _rating, _text)
+  return false, "Not supported for this provider"
 end
 
 function BaseProvider:_runAutolink(identifiers)

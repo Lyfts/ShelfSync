@@ -29,7 +29,7 @@ function StoryGraph:showChangeEditionDialog(callback)
           return
         end
       end
-      self:linkBook(book)
+      self:linkBookManually(book)
       if callback then
         callback(book)
       end
@@ -37,7 +37,7 @@ function StoryGraph:showChangeEditionDialog(callback)
   )
 end
 
-function StoryGraph:linkBook(book)
+function StoryGraph:linkBook(book, link_method)
   local filename = self.ui.document.file
 
   -- 1. Fetch remote status (API handles redirection and audio filtering internally)
@@ -67,6 +67,7 @@ function StoryGraph:linkBook(book)
     edition_format = status.edition_format or Book:editionFormatName(book.edition_format, book.reading_format_id),
     pages = book.pages,
     title = book.title,
+    link_method = link_method,
     _delete = delete
   }
 
@@ -140,11 +141,44 @@ function StoryGraph:pushProgress(current_read, value, update_type, filename)
       local finished = self.api:updateUserBook(book_id, STORYGRAPH.STATUS.FINISHED)
       if finished then
         result = finished
+        self:onMarkedFinished(book_id, filename)
       end
     end
   end
 
   return result
+end
+
+-- ReviewMenu entry point. StoryGraph has no standalone rating/text fields --
+-- both are always part of a full review object -- so this round-trips
+-- whatever review already exists (same pattern as onMarkedFinished above)
+-- and only overwrites the fields the user actually set. Accepts the full
+-- quarter-star value unrounded.
+---@diagnostic disable-next-line: duplicate-set-field
+function StoryGraph:submitReview(_filename, rating, text)
+  local cache_error = self.cache and self.cache:cacheUserBook()
+  if cache_error then
+    return false, cache_error
+  end
+
+  local book_id = self.state.book_status and self.state.book_status.id
+  if not book_id then
+    return false, "No linked book found on StoryGraph"
+  end
+
+  local review_url = self.state.book_status.review_url
+  local review = (review_url and self.api:getReview(review_url)) or {
+    pace = "", driven = "", development = "", loveable = "",
+    diverse = "", flaws = "", themes = "", thoughts = "", mood_ids = {}
+  }
+  if rating and rating > 0 then
+    review.stars = rating
+  end
+  if text and text ~= "" then
+    review.thoughts = text
+  end
+
+  return self.api:saveReview(book_id, review, review_url) == true
 end
 
 return StoryGraph

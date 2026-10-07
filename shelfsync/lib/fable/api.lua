@@ -319,7 +319,11 @@ function FableApi:request(path, method, body)
     if ok then data = decoded end
   end
 
-  if self.settings and code_num and (code_num < 200 or code_num >= 300) then
+  local missing_review_lookup = code_num == 404 and method == "GET"
+    and path:match("^/api/users/[^/]+/reviews/[^/]+$") ~= nil
+  if self.settings and missing_review_lookup then
+    self.settings:debugLog("Fable: no existing review found; review submission will create one")
+  elseif self.settings and code_num and (code_num < 200 or code_num >= 300) then
     self.settings:debugWarn("Fable: " .. (method or "GET") .. " " .. path .. " returned "
       .. tostring(code_num) .. " body=" .. tostring(response_body))
   end
@@ -503,6 +507,78 @@ function FableApi:_systemListIds(user_id)
   return by_type
 end
 
+-- The book-detail endpoint normally carries the user's shelf as
+-- response.status, but a successful multiselect write can race that read
+-- (and a repeated add can return HTTP 409). The per-list books endpoints
+-- are the authoritative source for resolving that ambiguous state. This is
+-- intentionally used only after a status write, so ordinary status reads
+-- stay as cheap as the single book-detail request.
+function FableApi:_findUserBookInSystemLists(book_id, user_id)
+  local by_type = self:_systemListIds(user_id)
+  if not by_type then
+    return nil, "Could not load Fable system lists"
+  end
+
+  for status_id, system_type in pairs(FABLE.SYSTEM_TYPE) do
+    local list_id = by_type[system_type]
+    if not list_id then
+      return nil, "Fable system list missing: " .. system_type
+    end
+
+    local offset = 0
+    local limit = 100
+    while true do
+      local code, data = self:request(
+        "/api/v2/users/" .. user_id .. "/book_lists/" .. list_id
+          .. "/books?limit=" .. limit .. "&offset=" .. offset,
+        "GET"
+      )
+      if code ~= 200 or type(data) ~= "table" then
+        return nil, "Could not read Fable system list: " .. system_type
+      end
+
+      local books = data.results
+      if not books then
+        if #data > 0 or next(data) == nil then
+          books = data
+        else
+          return nil, "Unexpected Fable system-list response"
+        end
+      end
+      if type(books) ~= "table" then
+        return nil, "Unexpected Fable system-list response"
+      end
+
+      for _, entry in ipairs(books) do
+        if type(entry) == "table" then
+          local listed_book = type(entry.book) == "table" and entry.book or entry
+          local listed_id = listed_book.id or listed_book.book_id or entry.book_id
+          if listed_id ~= nil and tostring(listed_id) == tostring(book_id) then
+            if self.settings then
+              self.settings:debugLog("Fable: status reconciled from system-list membership")
+            end
+            return {
+              id = book_id,
+              book_id = book_id,
+              status_id = status_id,
+            }
+          end
+        end
+      end
+
+      if #books < limit then
+        break
+      end
+      offset = offset + limit
+    end
+  end
+
+  if self.settings then
+    self.settings:debugLog("Fable: no system-list membership found while reconciling status")
+  end
+  return nil
+end
+
 -- Shelves a book on exactly one of Fable's 4 system lists (see
 -- fable/constants.lua's SYSTEM_TYPE -- there is no "paused" list to worry
 -- about), excluding it from the other 3 in the same call. Confirmed via
@@ -517,6 +593,14 @@ function FableApi:updateUserBook(book_id, status_id)
         .. tostring(user_id) .. " target_type=" .. tostring(target_type))
     end
     return nil
+  end
+
+  -- Fable rejects an add to a system list the book is already on with HTTP
+  -- 409. Read the current shelf before writing so selecting the same status
+  -- again is an idempotent success instead of a redundant add request.
+  local current_status = self:findUserBook(book_id, user_id)
+  if current_status and current_status.status_id == status_id then
+    return current_status
   end
 
   local by_type = self:_systemListIds(user_id)
@@ -547,8 +631,30 @@ function FableApi:updateUserBook(book_id, status_id)
     }
   )
 
-  if code and code >= 200 and code < 300 then
-    return self:findUserBook(book_id, user_id)
+  if code and ((code >= 200 and code < 300) or code == 409) then
+    local status = self:findUserBook(book_id, user_id)
+    if status and status.status_id then
+      return status
+    end
+
+    -- Fable can accept the write before its book-detail status catches up;
+    -- it can also return 409 when that list membership already exists. In
+    -- both cases, read the system lists before reporting an empty status to
+    -- SyncEngine and triggering the mismatch dialog again.
+    local listed_status, reconcile_error = self:_findUserBookInSystemLists(book_id, user_id)
+    if listed_status then
+      return listed_status
+    end
+
+    if code == 409 then
+      if self.settings then
+        self.settings:debugWarn("Fable: status write returned HTTP 409 and no system-list membership was confirmed"
+          .. (reconcile_error and (" (" .. reconcile_error .. ")") or ""))
+      end
+      return nil
+    end
+
+    return status
   end
   return nil
 end
@@ -608,6 +714,67 @@ function FableApi:updateProgress(book_id, value, update_type, page_count)
   end
 
   return self:findUserBook(book_id)
+end
+
+-- The viewer's own review of a book, or nil if they haven't reviewed it yet
+-- (confirmed via HAR: 404 before a review exists, 200 with the full review
+-- object after). Used by setRating to echo back review/labels/spoilers/DNF
+-- unchanged rather than blanking them out when only the rating changes.
+function FableApi:getReview(book_id)
+  local user_id = self.settings and self.settings:readSetting(SETTING.USER_ID)
+  if not user_id then
+    return nil
+  end
+
+  local code, data = self:request("/api/users/" .. user_id .. "/reviews/" .. book_id, "GET")
+  if code == 200 and data then
+    return data, code
+  end
+  return nil, code
+end
+
+-- Pushes a rating and/or review text to Fable. Fable accepts fractional
+-- ratings (no known granularity floor), so `rating` is passed through as-is
+-- with no rounding. Confirmed via HAR: POST /api/books/{id}/reviews with a
+-- full review body ({rating, labels, review, contains_spoilers,
+-- did_not_finish}) creates a review when none exists yet; only a create was
+-- captured, so reusing the same endpoint for an update is inferred by
+-- symmetry (same assumption updateProgress makes about page-based
+-- tracking), not independently confirmed against a capture. Any field left
+-- nil (rating or review_text) is filled in from the existing review so
+-- calling this to set only one of them doesn't blank out the other.
+function FableApi:setReview(book_id, rating, review_text)
+  local existing, lookup_code = self:getReview(book_id)
+  if not existing and lookup_code ~= 404 then
+    return false, "Could not load the existing Fable review (HTTP " .. tostring(lookup_code) .. ")"
+  end
+
+  local labels = existing and existing.labels
+  if not labels or #labels == 0 then
+    -- An empty Lua table is ambiguous to the JSON encoder (could mean `{}`
+    -- or `[]`) -- same issue updateProgress's social_accounts hits.
+    labels = json.util.InitArray({})
+  end
+
+  local body = {
+    rating = rating ~= nil and tonumber(rating) or (existing and existing.rating),
+    labels = labels,
+    review = review_text ~= nil and review_text or ((existing and existing.review) or ""),
+    contains_spoilers = (existing and existing.contains_spoilers) or false,
+    did_not_finish = (existing and existing.did_not_finish) or false,
+  }
+
+  local code = self:request("/api/books/" .. book_id .. "/reviews", "POST", body)
+  if code and code >= 200 and code < 300 then
+    if self.settings then self.settings:debugLog("Fable: review POST accepted (HTTP " .. tostring(code) .. ")") end
+    return true
+  end
+  if self.settings then self.settings:debugWarn("Fable: review POST failed (HTTP " .. tostring(code) .. ")") end
+  return false, "Fable review submission failed (HTTP " .. tostring(code) .. ")"
+end
+
+function FableApi:setRating(book_id, rating)
+  return self:setReview(book_id, rating, nil)
 end
 
 -- Fable's reading_progress endpoint (unlike Goodreads' /user_status.json)

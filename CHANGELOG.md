@@ -1,10 +1,29 @@
 # Changelog
 
+<!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
+
 ## Unreleased
+
+## 1.6.1
+- (feat) Add a Goodreads account connection check that verifies the cookie and uses the configured cookie refresher when the cookie is missing or expired.
+- (fix) Allow Goodreads syncing when only Cookie Auto-Refresh URL is configured, and refresh rejected cookies after HTTP 403 responses.
+- (fix) Goodreads shelf changes now send the cookies that came with their CSRF token. Without them, they could get a 404 "Page not found" page.
+
+## 1.6.0
+- (feat) 🌟 Add a unified review composer to write a rating and/or review once and submit it to selected linked providers. 🌟
+- (feat) Show the link method at the start of linked-book labels in provider menus.
+- (feat) Turn on "Confirm changes to book read status" by default, so choosing a status or Remove from a provider's Update status menu asks first, and so do Hardcover OAuth sign-out and Fable and Pagebound log out. If you never changed this setting, turn it off under ShelfSync > Settings to keep single-tap changes.  
+- (fix) Keep a Hardcover book's own privacy when its status changes, instead of resetting it to the account default. If ShelfSync can't read your Hardcover account or the book's current privacy, the status change is skipped instead of being sent as Public. Journal entries fall back to Private when the account default can't be read.
+- (fix) Retry Goodreads automatic Currently Reading updates when a status read or CSRF bootstrap temporarily fails, instead of stopping after the book page is found.
+- (fix) Allow Hardcover automatic linking to accept matching books even when extra contributor credits (such as narrators or translators) lower the author match score.
+- (fix) Reconcile Fable status writes against system-list membership when book-detail status is missing or a write returns HTTP 409.
+- (fix) Skip redundant Fable status writes when the selected status is already active, and run status-menu requests through KOReader's Trapper coroutine.
+- (fix) Save the selected version check frequency correctly and allow intervals of 1–30 days.
 
 ## 1.5.0
 - Guard StoryGraph page parsing against invalid or out-of-range numeric values.
 - Add Hardcover OAuth device-code sign-in, based on [hardcoverapp.koplugin PR #70](https://github.com/Billiam/hardcoverapp.koplugin/pull/70). OAuth is used when signed in; the configured API token remains available as a fallback.
+- Prompt Hardcover OAuth users to sign in again after a requested-scope revision.
 - Confirm Hardcover journal writes using the mutation ID, without requiring journal-read access.
 - Redact credentials, search terms, and personal content from logs while retaining safe request and error diagnostics.
 - Prevent Goodreads session cookies from being sent if a request redirects to another host or an unencrypted URL.

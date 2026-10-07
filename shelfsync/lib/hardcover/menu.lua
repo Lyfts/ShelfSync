@@ -78,11 +78,7 @@ function HardcoverMenu:getSubMenuItems(book_view)
     book_view and {
       text_func = function()
         if self.settings:bookLinked() then
-          local title = self.settings:getLinkedTitle()
-          if not title then
-            title = self.settings:getLinkedBookId()
-          end
-          return _("Linked book: " .. title)
+          return self.hardcover:getLinkedBookLabel()
         else
           return _("Link book")
         end
@@ -96,7 +92,7 @@ function HardcoverMenu:getSubMenuItems(book_view)
           self.settings:updateBookSetting(
             self.ui.document.file,
             {
-              _delete = { 'book_id', 'edition_id', 'edition_format', 'pages', 'title' }
+              _delete = { 'book_id', 'edition_id', 'edition_format', 'pages', 'title', 'link_method' }
             }
           )
 
@@ -142,7 +138,7 @@ function HardcoverMenu:getSubMenuItems(book_view)
             edition_id = self.settings:getLinkedEditionId()
           },
           function(book)
-            self.hardcover:linkBook(book)
+            self.hardcover:linkBookManually(book)
             menu_instance:updateItems()
           end
         )
@@ -481,6 +477,8 @@ function HardcoverMenu:getAuthSubMenuItems()
         UIManager:show(InfoMessage:new {
           text = _([[Sign in with Hardcover using the device code shown by ShelfSync.
 OAuth is used whenever you are signed in. The API token below is used as a fallback when OAuth is signed out.
+
+After adding an OAuth permission, sign in again here so this device receives an updated grant.
 
 To use an API token instead, create one at hardcover.app/account/api and paste it below. The token remains on this device and can be regenerated from the same page.]]),
         })

@@ -266,22 +266,23 @@ function CommonMenu:getUpdateSubMenuItems()
       callback = function(menu_instance)
         local current = self.settings:readSetting(SETTING.VERSION_CHECK_INTERVAL) or 1
         if type(current) == "table" then current = 1 end
-        local spinner
-        spinner = SpinWidget:new {
+        local spinner = SpinWidget:new {
           value = current,
-          min = 1,
-          max = 30,
-          unit = " day(s)",
-          title = "Check for updates every X days",
-          callback = function(v1, v2)
-            local value = type(v1) == "number" and v1 or v2
-            self.settings:updateSetting(SETTING.VERSION_CHECK_INTERVAL, value)
-            UIManager:close(spinner)
+          value_min = 1,
+          value_max = 30,
+          value_step = 1,
+          value_hold_step = 7,
+          unit = _("day(s)"),
+          ok_text = _("Save"),
+          title_text = _("Set version check frequency"),
+          callback = function(spin)
+            self.settings:updateSetting(SETTING.VERSION_CHECK_INTERVAL, spin.value)
             menu_instance:updateItems()
           end,
         }
         UIManager:show(spinner)
       end,
+      keep_menu_open = true,
       text_func = function()
         local current = self.settings:readSetting(SETTING.VERSION_CHECK_INTERVAL) or 1
         if type(current) == "table" then current = 1 end

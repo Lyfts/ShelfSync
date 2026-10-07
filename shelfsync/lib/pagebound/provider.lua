@@ -13,7 +13,7 @@ local Pagebound = setmetatable({
 }, { __index = BaseProvider })
 Pagebound.__index = Pagebound
 
-function Pagebound:linkBook(book)
+function Pagebound:linkBook(book, link_method)
   local filename = self.ui.document.file
   local book_uuid = book.book_uuid or book.uuid
   local status, lookup_error = self.api:findUserBook(book.book_id, nil, book_uuid)
@@ -27,6 +27,7 @@ function Pagebound:linkBook(book)
     book_uuid = book_uuid,
     pages = pages,
     title = book.title,
+    link_method = link_method,
     _delete = delete,
   }
 
@@ -147,6 +148,34 @@ function Pagebound:pushProgress(current_read, value, update_type, filename)
   end
 
   return result
+end
+
+-- Pagebound accepts half-star ratings. Round the composer's quarter-stars
+-- down and submit the rating and optional text through its native review API.
+function Pagebound:submitReview(filename, rating, text)
+  local book_id = self.settings:readBookSetting(filename, "book_id")
+  if not book_id then
+    return false, "No linked book found on Pagebound"
+  end
+
+  local cache_error = self.cache and self.cache:cacheUserBook()
+  if cache_error then
+    return false, cache_error
+  end
+
+  local user_book_id = self.state.book_status and self.state.book_status.user_book_id
+  if not user_book_id then
+    return false, "No Pagebound reading-list entry found for this book"
+  end
+
+  local review_rating = rating and rating > 0 and (math.floor(rating * 2) / 2) or nil
+  local review_text = (text and text:match("%S")) and text or nil
+  if not review_rating and not review_text then
+    return false, "No rating or review text supplied"
+  end
+
+  local ok, err = self.api:setReview(book_id, user_book_id, review_rating, review_text)
+  return ok == true, err
 end
 
 return Pagebound

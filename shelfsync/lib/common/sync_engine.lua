@@ -857,7 +857,7 @@ function SyncEngine:startReadCache()
   local nil_status_attempts = 0
   local max_nil_status_attempts = 2
   local auto_add_attempts = 0
-  local max_auto_add_attempts = 2
+  local max_auto_add_retries = 3
 
   local restart = function(delay)
     delay = delay or 60
@@ -877,7 +877,11 @@ function SyncEngine:startReadCache()
         local filename = document.file
         local book_settings = self.settings:readBookSettings(filename) or {}
         if book_settings.book_id then
-          if self.state.book_status.id then
+          -- A cached book id only proves that the book page was found. Keep
+          -- retrying when its shelf status is missing so transient readback
+          -- and CSRF failures can recover without asking the user to update
+          -- the status manually.
+          if self.state.book_status.id and self.state.book_status.status_id then
             return success()
           else
             self.wifi:withWifi(function(_wifi_enabled, wifi_error)
@@ -918,7 +922,11 @@ function SyncEngine:startReadCache()
                 if nil_status_attempts < max_nil_status_attempts then
                   nil_status_attempts = nil_status_attempts + 1
                   self.state.book_status = {}
-                  return fail("No read status found for book, retrying")
+                  -- The page loaded successfully, so a short retry can
+                  -- distinguish a temporary parse/readback miss from a
+                  -- stable no-status result. Network errors keep the normal
+                  -- exponential backoff below.
+                  return fail(2)
                 end
 
                 -- Still genuinely no status after retrying: mirror linkBook()'s
@@ -929,14 +937,14 @@ function SyncEngine:startReadCache()
                 local added = self.api:updateUserBook(book_settings.book_id, self.constants.STATUS.READING)
                 if added and added.status_id then
                   self.state.book_status = added
-                elseif auto_add_attempts < max_auto_add_attempts then
+                elseif auto_add_attempts < max_auto_add_retries then
                   -- The write itself can fail transiently (e.g. a momentary
                   -- network hiccup) just as easily as the read above did --
-                  -- give it the same kind of retry instead of giving up after
-                  -- a single attempt.
+                  -- retry a few times with a short exponential delay instead
+                  -- of waiting for the generic network-error backoff.
                   auto_add_attempts = auto_add_attempts + 1
                   self.state.book_status = {}
-                  return fail("Failed to auto-mark book as Currently Reading, retrying")
+                  return fail(2 ^ auto_add_attempts)
                 end
                 -- Still no status after retrying the write too: fall through
                 -- to success() with an empty book_status. warnStatusMismatch

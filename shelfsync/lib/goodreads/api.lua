@@ -1,17 +1,18 @@
 -- Goodreads has no official public API, so this mirrors StoryGraph's
--- approach of replaying a real browser session against the classic (Rails)
--- pages, avoiding the modern Next.js/GraphQL surface entirely (it's gated
--- behind an AWS WAF bot-challenge on writes, and reads no real benefit from
--- it either). Two quirks specific to Goodreads, relative to StoryGraph:
+-- approach of replaying browser requests. Most Goodreads operations still
+-- use Rails/AJAX endpoints, but review text is now saved through a Next.js
+-- Server Action discovered from the current editor page's client chunks.
+-- Two quirks specific to Goodreads, relative to StoryGraph:
 --
 -- 1. Goodreads accounts are linked through Amazon, so a valid session is a
 --    bundle of ~13 cookies across goodreads.com and Amazon's own domains,
 --    not a couple of named values. Rather than trying to parse/merge that
 --    bundle, the whole raw `Cookie` header is stored and replayed verbatim
---    as one opaque blob (SETTING.GOODREADS.SESSION_COOKIE), with no attempt to track
---    Set-Cookie refreshes -- confirmed via HAR captures that write endpoints
---    only ever refresh `_session_id2`, and there's no evidence that matters
---    for auth validity.
+--    as one opaque blob (SETTING.GOODREADS.SESSION_COOKIE). Cookies set by
+--    responses aren't saved back to it, but request() keeps them in memory
+--    for later requests to Goodreads, so a write sends the cookies that came
+--    with its CSRF token. Without them, shelf changes could get Goodreads'
+--    generic 404 page (#28).
 -- 2. The book page (/book/show/{id}) and search page are server-rendered
 --    Next.js/Apollo, not classic Rails forms, so there's no HTML form to
 --    scrape a CSRF token from directly -- but the plain homepage (`/`) still
@@ -21,6 +22,8 @@
 local config_ok, shelfsync_config = pcall(require, "shelfsync_config")
 local config = (config_ok and shelfsync_config.goodreads) or {}
 local logger = require("shelfsync/lib/common/safe_logger")
+local math = require("math")
+local os = require("os")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
 local json = require("json")
@@ -74,6 +77,21 @@ local function resolve_redirect(current_url, location)
   return origin .. directory .. location
 end
 
+local function is_sign_in_url(url)
+  if type(url) ~= "string" then return false end
+  local lower_url = url:lower()
+  return lower_url:find("/user/sign_in", 1, true) ~= nil
+    or lower_url:find("signin", 1, true) ~= nil
+end
+
+local function is_sign_in_page(body)
+  if type(body) ~= "string" then return false end
+  local lower_body = body:lower()
+  return lower_body:find("something wrong with your goodreads cookie", 1, true) ~= nil
+    or (lower_body:find("/user/sign_in", 1, true) ~= nil
+      and lower_body:find('name="email"', 1, true) ~= nil)
+end
+
 local GoodreadsApi = {
   enabled = true,
   settings = nil, -- Injected by main.lua
@@ -91,14 +109,33 @@ local function request_field_names(data)
   return table.concat(names, ",")
 end
 
--- Private helper to build headers with cookies
-local function get_headers(self, custom_headers)
+-- The stored session cookie, or the legacy config fallback
+local function saved_cookie(self)
   local cookie = ""
 
   if self.settings then
     cookie = self.settings:readSetting(SETTING.GOODREADS.SESSION_COOKIE)
   end
   if not cookie or cookie == "" then cookie = config.cookie or "" end
+  return cookie
+end
+
+-- Drops the cookies kept from responses (see the top of this file). A
+-- request already out doesn't keep those from its response either.
+local function forget_session(self)
+  self.session_cookie = nil
+  self.session_generation = (self.session_generation or 0) + 1
+end
+
+-- Private helper to build headers with cookies
+local function get_headers(self, custom_headers)
+  local cookie = saved_cookie(self)
+  -- With what Goodreads has set since (see the top of this file), unless the
+  -- saved cookie was changed or removed in the meantime.
+  local session = self.session_cookie
+  if session and cookie ~= "" and session.saved == cookie then
+    cookie = session.cookie
+  end
 
   if cookie == "" then
     logger.warn("Goodreads: No session cookie found!")
@@ -135,16 +172,17 @@ local function get_headers(self, custom_headers)
   return headers
 end
 
--- Mirrors get_headers()'s cookie resolution (setting, then legacy config
--- fallback) so callers can check for a usable credential without triggering
--- a network request or the "no session cookie" warning log.
+-- Check for a stored cookie or configured refresher without triggering a
+-- network request or the "no session cookie" warning log.
 function GoodreadsApi:hasCredential()
   local cookie = ""
   if self.settings then
     cookie = self.settings:readSetting(SETTING.GOODREADS.SESSION_COOKIE)
   end
   if not cookie or cookie == "" then cookie = config.cookie or "" end
-  return cookie ~= ""
+  local refresh_url = self.settings
+    and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_URL)
+  return cookie ~= "" or (refresh_url ~= nil and refresh_url ~= "")
 end
 
 -- Helper to decode HTML entities
@@ -213,8 +251,8 @@ local function refresher_failure_hint(code)
   return "still logged out? see its noVNC view"
 end
 
--- Escape hatch for the WAF-challenge dead end below: hits the refresher's
--- /refresh endpoint to force a freshly browser-solved cookie.
+-- Hits the refresher's /refresh endpoint to force a freshly browser-solved
+-- cookie when Goodreads rejects the current session.
 local function fetch_refreshed_cookie(refresh_url, auth_token, timeout)
   return fetch_from_refresher(refresh_url, "POST", auth_token, timeout)
 end
@@ -291,23 +329,422 @@ local function parse_ldjson_book(html)
   }
 end
 
--- Helper to extract authenticity token from HTML. Only the classic homepage
--- carries this meta tag -- the book/search pages don't -- so this is always
--- called against a homepage fetch (see refreshSession below).
-function GoodreadsApi:extract_csrf(html)
-  if not html then return self.last_csrf end
+-- The classic "Edit review" page (/review/edit/{id}) is a full Rails form,
+-- unlike the Next.js book page -- setDateFinished scrapes two things off it:
+-- whether a finished reading session already exists (so it can skip adding
+-- a duplicate one), and the review/notes text already on it, since the
+-- date-finished POST below re-submits the whole review form and would wipe
+-- both fields if they weren't echoed back unchanged.
+local function parse_review_edit(html)
+  if not html or html == "" then return nil end
+  local session_count = html:match("data%-count=['\"](%d+)['\"][^>]-id=['\"]readingSessionsCount['\"]")
+    or html:match("id=['\"]readingSessionsCount['\"][^>]-data%-count=['\"](%d+)['\"]")
+  local review_text = html:match("name=['\"]review%[review%]['\"][^>]*>(.-)</textarea>")
+  local notes = html:match("name=['\"]review%[notes%]['\"][^>]*>(.-)</textarea>")
+  return {
+    session_count = tonumber(session_count) or 0,
+    review_text = review_text or "",
+    notes = decode_entities(notes or ""),
+  }
+end
+
+local function html_attribute(tag, name)
+  local _, value_start = tag:lower():find("%s" .. name:lower() .. "%s*=%s*")
+  if not value_start then return nil end
+
+  local rest = tag:sub(value_start + 1)
+  local quote = rest:sub(1, 1)
+  if quote == "\"" or quote == "'" then
+    local value_end = rest:find(quote, 2, true)
+    return value_end and rest:sub(2, value_end - 1) or nil
+  end
+  return rest:match("^([^%s>]+)")
+end
+
+local function has_review_field(body)
+  for tag in body:gmatch("<[^>]+>") do
+    local name = html_attribute(tag, "name")
+    if name and name:lower() == "review[review]" then
+      return true
+    end
+  end
+  return false
+end
+
+local function parse_review_update_target(html, edit_url)
+  local stats = { form_count = 0, review_form = false, missing_action = false, rejected_action = false }
+  if not html or html == "" then return nil, nil, stats end
+
+  local lower_html = html:lower()
+  local pos = 1
+  while true do
+    local form_start = lower_html:find("<form[%s>]", pos)
+    if not form_start then break end
+    local tag_end = lower_html:find(">", form_start, true)
+    if not tag_end then break end
+    local close_start, close_end = lower_html:find("</form%s*>", tag_end + 1)
+    if not close_start then break end
+
+    stats.form_count = stats.form_count + 1
+    local opening_tag = html:sub(form_start, tag_end)
+    local body = html:sub(tag_end + 1, close_start - 1)
+    if has_review_field(body) then
+      stats.review_form = true
+      local action = html_attribute(opening_tag, "action")
+      if action == "" then action = nil end
+      if action then action = decode_entities(action) end
+
+      local method = nil
+      for tag in body:gmatch("<[^>]+>") do
+        if tag:lower():match("^<input[%s>]")
+            and (html_attribute(tag, "name") or ""):lower() == "_method" then
+          method = html_attribute(tag, "value")
+          break
+        end
+      end
+
+      if action and (action:match("^/review[/?.]") or action == "/review"
+          or action:match("^https://www%.goodreads%.com/review[/?.]")) then
+        return action, method, stats
+      elseif not action then
+        stats.missing_action = true
+        -- An HTML form with no action submits to its current page. Use that
+        -- browser-defined target only when the form explicitly posts.
+        if (html_attribute(opening_tag, "method") or ""):lower() == "post" then
+          return edit_url, method, stats
+        end
+      elseif action then
+        stats.rejected_action = true
+      end
+    end
+    pos = close_end + 1
+  end
+
+  local review_id = html:match("edit_review_(%d+)")
+  if review_id then return "/review/" .. review_id, "put", stats end
+  return nil, nil, stats
+end
+
+-- The current Goodreads review editor is a Next.js app. Its mutation IDs are
+-- compiled into the client chunks and can rotate between builds, so discover
+-- the actions from the script URLs on the editor page instead of pinning IDs
+-- copied from one HAR. The editor loads its page chunk last; walking scripts
+-- backwards finds its action chunks before downloading unrelated site code.
+local REVIEW_SERVER_ACTIONS = { "submitReviewFormAction" }
+
+local function balanced_json_end(text, start)
+  local stack = {}
+  local quoted, escaped = false, false
+  for pos = start, #text do
+    local char = text:sub(pos, pos)
+    if quoted then
+      if escaped then
+        escaped = false
+      elseif char == "\\" then
+        escaped = true
+      elseif char == '"' then
+        quoted = false
+      end
+    elseif char == '"' then
+      quoted = true
+    elseif char == "{" then
+      stack[#stack + 1] = "}"
+    elseif char == "[" then
+      stack[#stack + 1] = "]"
+    elseif char == "}" or char == "]" then
+      if stack[#stack] ~= char then return nil end
+      stack[#stack] = nil
+      if #stack == 0 then return pos end
+    end
+  end
+  return nil
+end
+
+local function decode_json_value_at(text, start)
+  while start <= #text and text:sub(start, start):match("%s") do
+    start = start + 1
+  end
+  local first = text:sub(start, start)
+  local finish
+  if first == '"' then
+    local escaped = false
+    for pos = start + 1, #text do
+      local char = text:sub(pos, pos)
+      if escaped then
+        escaped = false
+      elseif char == "\\" then
+        escaped = true
+      elseif char == '"' then
+        finish = pos
+        break
+      end
+    end
+  elseif first == "{" or first == "[" then
+    finish = balanced_json_end(text, start)
+  else
+    finish = start
+    while finish <= #text do
+      local char = text:sub(finish, finish)
+      if char == "," or char == "}" or char == "]" or char:match("%s") then break end
+      finish = finish + 1
+    end
+    finish = finish - 1
+  end
+  if not finish or finish < start then return nil end
+  local ok, value = pcall(json.decode, text:sub(start, finish), json.decode.simple)
+  if ok then return value, finish end
+  return nil
+end
+
+local function extract_json_property(text, name, expected_type)
+  local needle = '"' .. name .. '":'
+  local pos = 1
+  while true do
+    local key_start = text:find(needle, pos, true)
+    if not key_start then return nil end
+    local value, value_end = decode_json_value_at(text, key_start + #needle)
+    if value_end and (not expected_type or type(value) == expected_type) then
+      return value
+    end
+    pos = key_start + #needle
+  end
+end
+
+local function parse_next_flight(html)
+  local rows = {}
+  for script in html:gmatch("<script[^>]*>(.-)</script%s*>") do
+    local search_from = 1
+    while true do
+      local push_at = script:find("self.__next_f.push", search_from, true)
+      if not push_at then break end
+      local array_start = script:find("[", push_at + #"self.__next_f.push", true)
+      local array_end = array_start and balanced_json_end(script, array_start)
+      if not array_end then break end
+      local ok, payload = pcall(json.decode, script:sub(array_start, array_end), json.decode.simple)
+      if ok and type(payload) == "table" and payload[1] == 1 and type(payload[2]) == "string" then
+        rows[#rows + 1] = payload[2]
+      end
+      search_from = array_end + 1
+    end
+  end
+  if #rows == 0 then return nil end
+  return table.concat(rows, "\n")
+end
+
+local function parse_next_chunk_paths(html)
+  local paths, seen = {}, {}
+  for tag in html:gmatch("<script[^>]*>") do
+    local src = html_attribute(tag, "src")
+    if src then
+      src = decode_entities(src)
+      local path = src:match("^https://www%.goodreads%.com(/_next/static/chunks/[^?#]+)$") or src
+      local unrelated_chunk = path:find("/polyfills-", 1, true)
+        or path:find("/webpack-", 1, true)
+        or path:find("/app/not-found-", 1, true)
+        or path:find("/app/review/edit/", 1, true) and path:find("/error-", 1, true)
+      if path:sub(1, #"/_next/static/chunks/") == "/_next/static/chunks/"
+          and path:sub(-3) == ".js" and not path:find("..", 1, true)
+          and not unrelated_chunk and not seen[path] then
+        paths[#paths + 1] = path
+        seen[path] = true
+      end
+    end
+  end
+  return paths
+end
+
+local function find_server_action_id(source, action_name)
+  local label = '"' .. action_name .. '"'
+  local from = 1
+  while true do
+    local label_at = source:find(label, from, true)
+    if not label_at then return nil end
+    local prefix_start = math.max(1, label_at - 220)
+    local prefix = source:sub(prefix_start, label_at - 1)
+    local marker = prefix:match(".*()createServerReference")
+    if marker then
+      local call = prefix:sub(marker) .. source:sub(label_at, label_at + #label - 1)
+      local action_id = call:match("createServerReference[^%(]*%(%s*[\"']([%x]+)[\"']")
+      if action_id and #action_id >= 32 then return action_id end
+    end
+    from = label_at + #label
+  end
+end
+
+local function get_next_review_action_id(self, html, referer)
+  local paths = parse_next_chunk_paths(html)
+  if #paths == 0 then return nil end
+  local cache_key = table.concat(paths, "\n")
+  local cache = self.goodreads_review_action_cache
+  if not cache or cache.key ~= cache_key then
+    cache = { key = cache_key, ids = {}, checked = {} }
+    self.goodreads_review_action_cache = cache
+  end
+  if cache.ids.submitReviewFormAction then return cache.ids.submitReviewFormAction end
+
+  for index = #paths, 1, -1 do
+    local path = paths[index]
+    if not cache.checked[path] then
+      local code, source = self:request(base_url .. path, "GET", nil, {
+        ["Accept"] = "*/*",
+        ["Referer"] = referer,
+        ["Sec-Fetch-Site"] = "same-origin",
+        ["Sec-Fetch-Mode"] = "no-cors",
+        ["Sec-Fetch-Dest"] = "script",
+      })
+      if code == 200 and type(source) == "string" then
+        cache.checked[path] = true
+        for _, known_action in ipairs(REVIEW_SERVER_ACTIONS) do
+          local id = find_server_action_id(source, known_action)
+          if id then cache.ids[known_action] = id end
+        end
+      elseif code == 202 then
+        -- A WAF challenge affects every asset fetch; stop instead of retrying
+        -- the same blocked request across the rest of the page's chunks.
+        return nil
+      end
+    end
+    if cache.ids.submitReviewFormAction then return cache.ids.submitReviewFormAction end
+  end
+  return nil
+end
+
+local function parse_next_review_state(html)
+  local flight = parse_next_flight(html)
+  if not flight then return nil end
+
+  local sessions = extract_json_property(flight, "readingSessions", "table")
+  if not sessions then
+    local ok, empty = pcall(json.decode, "[]", json.decode.simple)
+    sessions = ok and empty or {}
+  end
+  local book_id = (sessions[1] and sessions[1].bookId)
+    or flight:match('"bookId":"(kca://book/.-)"')
+    or flight:match('"id":"(kca://book/.-)"')
+  if not book_id then return nil end
+
+  local private_notes = extract_json_property(flight, "initialPrivateNotes", "string")
+    or extract_json_property(flight, "privateNotes", "string") or ""
+  local post_to_blog = extract_json_property(flight, "initialPostToBlog", "boolean")
+  local add_to_feed = extract_json_property(flight, "initialAddToUpdateFeed", "boolean")
+  local spoiler_status = extract_json_property(flight, "spoilerStatus", "boolean")
+  local is_already_owned = extract_json_property(flight, "isAlreadyOwned", "boolean")
+
+  return {
+    book_id = book_id,
+    reading_sessions = sessions,
+    private_notes = private_notes,
+    post_to_blog = post_to_blog == true,
+    add_to_feed = add_to_feed ~= false,
+    spoiler_status = spoiler_status == true,
+    is_owned_edition = is_already_owned == true,
+  }
+end
+
+local function next_review_action_headers(action_id, book_id, edit_url)
+  -- This is Next.js' serialized App Router tree for /review/edit/[id].
+  -- The dynamic route segment is the Goodreads legacy book ID.
+  local router_tree = '["",{"children":["review",{"children":["edit",{"children":[["id","'
+    .. tostring(book_id) .. '","d"],{"children":["__PAGE__",{},null,null]},null,null]}]},null,null]},null,null,true]'
+  return {
+    ["Accept"] = "text/x-component",
+    ["Content-Type"] = "text/plain;charset=UTF-8",
+    ["Next-Action"] = action_id,
+    ["Next-Router-State-Tree"] = urlencode(router_tree),
+    ["Referer"] = edit_url,
+    ["Origin"] = base_url,
+    ["Sec-Fetch-Site"] = "same-origin",
+    ["Sec-Fetch-Mode"] = "cors",
+    ["Sec-Fetch-Dest"] = "empty",
+  }
+end
+
+local function next_action_has_no_errors(response)
+  local error_ref = response:match('"errors":"%$Q([%w]+)"')
+  if not error_ref then return true end
+  local error_row = response:match("[\r\n]" .. error_ref .. ":([^\r\n]+)")
+  if not error_row then return false end
+  local ok, errors = pcall(json.decode, error_row, json.decode.simple)
+  return ok and type(errors) == "table" and #errors == 0
+end
+
+local function submit_next_review_text(self, book_id, text, edit_url, edit_html, state)
+  if not state then
+    return nil, "Could not read the Goodreads review editor state; review text was not saved"
+  end
+
+  local action_id = get_next_review_action_id(self, edit_html, edit_url)
+  if not action_id then
+    if self.settings then
+      self.settings:debugWarn("Goodreads: could not find submitReviewFormAction in the review page assets")
+    end
+    return nil, "Could not identify Goodreads' current review-save action; review text was not saved"
+  end
+
+  local payload = {
+    bookId = state.book_id,
+    reviewText = text,
+    spoilerStatus = state.spoiler_status,
+    isOwnedEdition = state.is_owned_edition,
+    privateNotes = state.private_notes,
+    postToBlog = state.post_to_blog,
+    addToUpdateFeed = state.add_to_feed,
+    readingSessions = state.reading_sessions,
+    initialReadingSessions = "$0:0:readingSessions",
+  }
+  local body = json.encode({ payload, "/review/edit/[id]" })
+  if #state.reading_sessions == 0 then
+    -- Some Lua JSON encoders serialize an unmarked empty table as an object;
+    -- the Server Action expects the browser's empty readingSessions array.
+    body = body:gsub('("readingSessions":)%s*{}', "%1[]")
+  end
+  local code, response = self:request(edit_url, "POST", body,
+    next_review_action_headers(action_id, book_id, edit_url))
+  self.settings:debugLog("Goodreads: Next.js review submit response code=" .. tostring(code)
+    .. " response_length=" .. tostring(type(response) == "string" and #response or 0))
+
+  local has_saved_review = type(response) == "string"
+    and response:match('"legacyId":"%d+"') ~= nil
+  if code == 200 and has_saved_review and next_action_has_no_errors(response) then
+    return true
+  end
+
+  self.settings:debugWarn("Goodreads: Next.js review submit did not confirm a saved review (HTTP "
+    .. tostring(code) .. ")")
+  return nil, "Goodreads did not confirm saving the review (HTTP " .. tostring(code) .. ")"
+end
+
+-- Row id from GET /reading_sessions/new?book_id= (an HTML table row
+-- fragment), needed to name the date-picker fields in the follow-up POST.
+local function parse_new_session_rowid(html)
+  if not html or html == "" then return nil end
+  return html:match("data%-rowid=['\"]([^'\"]+)['\"]")
+end
+
+-- Extracts the authenticity token from a classic Goodreads HTML page. Normal
+-- callers may reuse the cached value if parsing fails; connection checks pass
+-- fresh_only so an old token cannot make a stale cookie look valid.
+function GoodreadsApi:extract_csrf(html, fresh_only)
+  if not html then
+    if fresh_only then return nil end
+    return self.last_csrf
+  end
 
   local csrf = html:match('<meta%s+[^>]*name=["\']csrf%-token["\']%s+[^>]*content=["\']([^"\']+)["\']')
             or html:match('<meta%s+[^>]*content=["\']([^"\']+)["\']%s+[^>]*name=["\']csrf%-token["\']')
+            -- /review/edit doesn't carry the layout meta tag the homepage does,
+            -- only the classic Rails form's own hidden input.
+            or html:match('name=["\']authenticity_token["\']%s+value=["\']([^"\']+)["\']')
 
   if csrf then
     self.last_csrf = csrf
   end
 
+  if fresh_only and not csrf then return nil end
   return csrf or self.last_csrf
 end
 
-function GoodreadsApi:request(url, method, data, custom_headers)
+function GoodreadsApi:request(url, method, data, custom_headers, request_options)
   if not NetworkManager:isConnected() or not self.enabled then
     if self.settings then
       self.settings:debugWarn("Goodreads: request() aborted before sending - NetworkManager connected="
@@ -316,6 +753,7 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     return nil, "Network not connected"
   end
 
+  local completed, content, sent_saved, sent_generation
   local subprocess_fn = function()
     local maxtime = 15
     local timeout = 10
@@ -381,7 +819,10 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     local current_method = method or "GET"
     local max_hops = 5
     local code, _headers, response_body
-    local waf_retried = false
+    local cookie_refresh_attempted = false
+    -- Only those Goodreads set, so the parent can add them to whatever it has
+    -- kept by the time this is back.
+    local set_cookies = ""
 
     for hop = 0, max_hops do
       -- The request may be initiated by an internal caller with a URL other
@@ -421,6 +862,7 @@ function GoodreadsApi:request(url, method, data, custom_headers)
       local set_cookie = _headers and _headers["set-cookie"]
       if set_cookie then
         headers["Cookie"] = merge_set_cookie(headers["Cookie"], set_cookie)
+        set_cookies = merge_set_cookie(set_cookies, set_cookie)
       end
 
       local location = _headers and _headers["location"]
@@ -440,35 +882,48 @@ function GoodreadsApi:request(url, method, data, custom_headers)
         .. " location=" .. tostring(location) .. " set_cookie=" .. tostring(set_cookie ~= nil)
         .. " waf_action=" .. tostring(waf_action) .. " content_type=" .. tostring(content_type)
         .. " response_length=" .. #response_body)
-      local waf_retry_now = false
-      if waf_action and is_goodreads_origin(current_url) then
+      local cookie_retry_now = false
+      local expired_session = code == 401 or code == 403
+        or is_sign_in_url(location) or is_sign_in_url(current_url)
+        or is_sign_in_page(response_body)
+      local refresh_reason = (waf_action or code == 202) and "WAF challenge"
+        or (expired_session and "expired session")
+      local session_replaced_while_request_was_in_flight = self.session_generation ~= sent_generation
+        or saved_cookie(self) ~= sent_saved
+      if refresh_reason and is_goodreads_origin(current_url) and session_replaced_while_request_was_in_flight then
+        logger.info("Goodreads: rejected response belongs to a replaced session; keeping the newer session")
+      elseif refresh_reason and is_goodreads_origin(current_url) then
         -- Stored setting is just the refresher's base URL (e.g.
         -- http://192.168.1.50:5080) -- the /refresh path is always the
         -- same, so there's no reason to make the user type it.
         local refresh_base = self.settings and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_URL)
         local refresh_url = refresh_base and refresh_base ~= "" and (refresh_base:gsub("/+$", "") .. "/refresh")
         local refresh_token = self.settings and self.settings:readSetting(SETTING.GOODREADS.COOKIE_REFRESH_TOKEN)
-        if refresh_url and not waf_retried then
-          waf_retried = true
-          logger.info("Goodreads: WAF challenge hit, trying local cookie-refresher at " .. refresh_url)
+        if refresh_url and not cookie_refresh_attempted then
+          cookie_refresh_attempted = true
+          logger.info("Goodreads: " .. refresh_reason .. ", trying local cookie-refresher at " .. refresh_url)
           local fresh_cookie, refresher_code = fetch_refreshed_cookie(refresh_url, refresh_token, timeout)
           if fresh_cookie and fresh_cookie ~= headers["Cookie"] then
             headers["Cookie"] = fresh_cookie
             refreshed_cookie = fresh_cookie
-            waf_retry_now = true
+            set_cookies = ""
+            cookie_retry_now = true
             logger.info("Goodreads: got a refreshed cookie, retrying")
           else
             logger.warn("Goodreads: cookie-refresher at " .. refresh_url .. " didn't return a usable cookie (HTTP "
               .. tostring(refresher_code) .. " -- " .. refresher_failure_hint(refresher_code) .. ")")
           end
+        elseif not cookie_refresh_attempted then
+          logger.warn("Goodreads: " .. refresh_reason .. " but no Cookie Auto-Refresh URL is configured")
         else
-          logger.warn("Goodreads: request blocked by AWS WAF bot-challenge (not a code bug -- "
-            .. "the saved session cookie's challenge token is stale/rejected; needs a fresh "
-            .. "browser-solved cookie capture, retrying won't help)")
+          logger.warn("Goodreads: " .. refresh_reason .. " persisted after retrying with a refreshed cookie")
         end
       end
 
-      if is_redirect and location and hop < max_hops
+      if cookie_retry_now and hop < max_hops then
+        -- Retry the same page with the refresher's cookie before following a
+        -- sign-in redirect from the rejected session.
+      elseif is_redirect and location and hop < max_hops
           and (current_method == "GET" or current_method == "HEAD") then
         local next_url = resolve_redirect(current_url, location)
         if is_goodreads_origin(next_url) then
@@ -477,8 +932,6 @@ function GoodreadsApi:request(url, method, data, custom_headers)
           logger.warn("Goodreads: refusing redirect outside https://www.goodreads.com")
           break
         end
-      elseif waf_retry_now and hop < max_hops then
-        -- current_url/current_method unchanged: same request, fresh cookie
       else
         break
       end
@@ -500,6 +953,11 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     if refreshed_cookie then
       header_str = header_str .. "x-refreshed-cookie=" .. refreshed_cookie .. "\n"
     end
+    -- And the cookies Goodreads set along the way, for the parent to send
+    -- with the requests that follow. Always written, if only empty, so a
+    -- response header of the same name can't stand in for it.
+    local session_cookie = is_goodreads_origin(url) and set_cookies or ""
+    header_str = header_str .. "x-session-cookie=" .. session_cookie .. "\n"
     -- header_str's length is prefixed (rather than relying on a "|"
     -- delimiter to find where it ends) because it can itself contain "|" --
     -- e.g. the refreshed-cookie value above, which per RFC 6265 is legally
@@ -510,8 +968,16 @@ function GoodreadsApi:request(url, method, data, custom_headers)
 
   -- One retry recovers most transient subprocess-fork failures, mirroring
   -- StoryGraph's request().
-  local completed, content
   for attempt = 1, 2 do
+    -- Cookies kept from earlier responses go with the saved cookie they were
+    -- set for, so they're dropped once that's changed or removed. This
+    -- attempt's are only kept if that's still the one it went out with, and
+    -- they weren't forgotten (see forget_session), by the time it's back.
+    sent_saved = saved_cookie(self)
+    if self.session_cookie and self.session_cookie.saved ~= sent_saved then
+      forget_session(self)
+    end
+    sent_generation = self.session_generation
     completed, content = Trapper:dismissableRunInSubprocess(subprocess_fn, true, true)
     if completed then break end
     if self.settings and attempt == 1 then
@@ -536,10 +1002,18 @@ function GoodreadsApi:request(url, method, data, custom_headers)
       end
     end
     local code_num = tonumber(code)
+    local session_cookie = headers["x-session-cookie"]
+    headers["x-session-cookie"] = nil
 
     local redirect = headers["location"] or ""
-    if code_num == 401 or redirect:match("signin") or redirect:match("sign_in") then
-      self:notifyAuthFailure()
+    if code_num == 401 or is_sign_in_url(redirect) then
+      -- Unless the cookie it went out with has been replaced since.
+      if self.session_generation == sent_generation and saved_cookie(self) == sent_saved then
+        forget_session(self)
+      end
+      if not (request_options and request_options.suppress_auth_error) then
+        self:notifyAuthFailure()
+      end
       return code_num, response, headers, "Unauthorized"
     end
 
@@ -550,6 +1024,23 @@ function GoodreadsApi:request(url, method, data, custom_headers)
     if headers["x-refreshed-cookie"] and self.settings then
       logger.info("Goodreads: saving refreshed cookie from local cookie-refresher")
       self.settings:updateSetting(SETTING.GOODREADS.SESSION_COOKIE, headers["x-refreshed-cookie"])
+      -- CSRF tokens may be tied to the cookie session that fetched them.
+      self.last_csrf = nil
+    end
+
+    -- Kept for the saved cookie the request went out with, or the refresher's
+    -- replacement, which also replaces any kept before. Added to those kept
+    -- since it went out, which may have come from requests sent after it.
+    local refreshed = headers["x-refreshed-cookie"]
+    if refreshed then
+      forget_session(self)
+      sent_saved, sent_generation = refreshed, self.session_generation
+    end
+    if session_cookie and session_cookie ~= "" and self.session_generation == sent_generation
+        and saved_cookie(self) == sent_saved then
+      local kept = self.session_cookie
+      local cookie = kept and kept.saved == sent_saved and kept.cookie or sent_saved
+      self.session_cookie = { saved = sent_saved, cookie = merge_set_cookie(cookie, session_cookie) }
     end
 
     return code_num, response, headers
@@ -559,6 +1050,60 @@ function GoodreadsApi:request(url, method, data, custom_headers)
       .. tostring(completed) .. " content_present=" .. tostring(content ~= nil) .. " url=" .. url)
   end
   return nil, "Request failed"
+end
+
+-- Read-only account check, mirroring the separate Goodreads plugin's GET
+-- /review/list probe. request() bootstraps a missing cookie from /cookie and
+-- retries an expired/WAF-blocked session through the configured refresher.
+function GoodreadsApi:testConnection()
+  if not self:hasCredential() then
+    return { ok = false, error = "no_cookies" }
+  end
+  if not NetworkManager:isConnected() then
+    return { ok = false, error = "no_network" }
+  end
+
+  local html_headers = {
+    ["Accept"] = "text/html,application/xhtml+xml",
+    ["X-Requested-With"] = nil,
+  }
+  local code, body, headers, request_error = self:request(
+    base_url .. "/review/list",
+    "GET",
+    nil,
+    html_headers,
+    { suppress_auth_error = true }
+  )
+
+  headers = headers or {}
+  if code == 202 or headers["x-amzn-waf-action"] then
+    return { ok = false, error = "waf_challenge" }
+  end
+
+  local final_url = headers["x-final-url"] or ""
+  local location = headers.location or ""
+  if code == 401 or code == 403 or request_error == "Unauthorized"
+      or is_sign_in_url(final_url) or is_sign_in_url(location) or is_sign_in_page(body) then
+    return { ok = false, error = "session_expired" }
+  end
+
+  if code == 200 and body and self:extract_csrf(body, true) then
+    local user_id = body:match("/user/show/(%d+)")
+    if user_id then self.last_user_id = user_id end
+    return {
+      ok = true,
+      user_id = user_id,
+      cookie_refreshed = headers["x-refreshed-cookie"] ~= nil,
+    }
+  end
+
+  if not code then
+    return { ok = false, error = request_error or "connection_failed" }
+  end
+  if code == 200 then
+    return { ok = false, error = "unexpected_response" }
+  end
+  return { ok = false, error = "HTTP " .. tostring(code) }
 end
 
 -- Warn (once per cooldown) that the stored session cookie is dead
@@ -577,6 +1122,7 @@ end
 -- both a Rails CSRF meta tag and a plain nav link to the viewer's own legacy
 -- profile id (the book/search pages are Next.js-rendered and expose
 -- neither), caching both on self so every write only needs one extra GET.
+-- request() keeps any cookies this GET sets for the requests that follow.
 function GoodreadsApi:refreshSession()
   local code, html = self:request(base_url .. "/", "GET")
   if code == 200 and html then
@@ -827,11 +1373,26 @@ function GoodreadsApi:updateUserBook(book_id, status_id)
     ["Sec-Fetch-Dest"] = "empty",
   }
 
-  local code, resp = self:request(base_url .. "/shelf/add_to_shelf", "POST", {
-    book_id = book_id,
-    name = shelf,
-    a = "",
-  }, custom_headers)
+  local function send_update()
+    return self:request(base_url .. "/shelf/add_to_shelf", "POST", {
+      book_id = book_id,
+      name = shelf,
+      a = "",
+    }, custom_headers)
+  end
+
+  local code, resp, response_headers = send_update()
+  if code == 403 and response_headers and response_headers["x-refreshed-cookie"] then
+    -- request() already retried with the refreshed cookie. If Goodreads still
+    -- rejected that POST, fetch a CSRF token from the refreshed session before
+    -- the final shelf-update attempt.
+    local refreshed_csrf = self:refreshSession()
+    if refreshed_csrf then
+      custom_headers["X-CSRF-Token"] = refreshed_csrf
+      logger.info("Goodreads: retrying shelf update with refreshed session CSRF token")
+      code, resp = send_update()
+    end
+  end
   self.settings:debugLog("Goodreads: updateUserBook POST response code=" .. tostring(code))
 
   if code and code >= 200 and code < 300 then
@@ -911,6 +1472,202 @@ function GoodreadsApi:updateProgress(book_id, value, update_type, note)
   end
   self.settings:debugWarn("Goodreads: updateProgress failed - code=" .. tostring(code)
     .. " response_length=" .. tostring(type(resp) == "string" and #resp or 0))
+  return nil
+end
+
+-- Pushes KOReader's Book Status star rating (1-5, same scale as Goodreads,
+-- no conversion needed). Goodreads still accepts this through its Rails AJAX
+-- endpoint even though the review editor itself has moved to Next.js.
+function GoodreadsApi:setRating(book_id, rating)
+  local stars = math.floor(tonumber(rating) or 0)
+  if stars < 1 or stars > 5 then
+    self.settings:debugWarn("Goodreads: setRating - rating out of range: " .. tostring(rating))
+    return nil
+  end
+
+  local csrf = self:refreshSession()
+  if not csrf then
+    logger.warn("Goodreads: Could not extract CSRF token for rating")
+    return nil
+  end
+
+  local custom_headers = {
+    ["X-CSRF-Token"] = csrf,
+    ["X-Requested-With"] = "XMLHttpRequest",
+    ["Accept"] = "*/*",
+    ["Referer"] = base_url .. "/review/edit/" .. book_id,
+    ["Origin"] = base_url,
+  }
+
+  local url = base_url .. "/review/rate/" .. book_id
+    .. "?no_lightbox=true&queue=false&stars_click=true&rating=" .. stars .. "&ref=undefined"
+
+  local code, resp = self:request(url, "POST", "", custom_headers)
+  self.settings:debugLog("Goodreads: setRating POST response code=" .. tostring(code))
+
+  if code and code >= 200 and code < 300 then
+    return true
+  end
+  self.settings:debugWarn("Goodreads: setRating failed - code=" .. tostring(code) .. " resp=" .. tostring(resp))
+  return nil
+end
+
+-- Sets the review body text. Older pages still use the Rails review form;
+-- the current Next.js editor uses a Server Action and requires its existing
+-- private fields and reading sessions to be echoed unchanged.
+function GoodreadsApi:setReviewText(book_id, text)
+  local csrf = self:refreshSession()
+
+  local edit_url = base_url .. "/review/edit/" .. book_id
+  local edit_code, edit_html = self:request(edit_url, "GET")
+  if edit_code ~= 200 or not edit_html then
+    self.settings:debugWarn("Goodreads: setReviewText - GET /review/edit failed, code=" .. tostring(edit_code))
+    return nil
+  end
+  csrf = self:extract_csrf(edit_html) or csrf
+
+  local update_path, update_method, form_stats = parse_review_update_target(edit_html, edit_url)
+  if not update_path then
+    local state = parse_next_review_state(edit_html)
+    if state then
+      return submit_next_review_text(self, book_id, text, edit_url, edit_html, state)
+    end
+    self.settings:debugWarn("Goodreads: setReviewText could not identify a review editor"
+      .. " (forms=" .. tostring(form_stats.form_count)
+      .. ", field_match=" .. tostring(form_stats.review_form)
+      .. ", missing_action=" .. tostring(form_stats.missing_action)
+      .. ", rejected_action=" .. tostring(form_stats.rejected_action) .. ")")
+    return nil, "Could not locate the Goodreads review editor; review text was not saved"
+  end
+
+  if not csrf then
+    logger.warn("Goodreads: Could not extract CSRF token for classic review text")
+    return nil
+  end
+  local review = parse_review_edit(edit_html)
+  if not review then
+    self.settings:debugWarn("Goodreads: setReviewText - review edit page was empty")
+    return nil, "Could not read the existing Goodreads review; review text was not saved"
+  end
+
+  local custom_headers = {
+    ["Content-Type"] = "application/x-www-form-urlencoded",
+    ["Referer"] = edit_url,
+    ["Origin"] = base_url,
+  }
+  local update_url = update_path:match("^https?://") and update_path or (base_url .. update_path)
+  self.settings:debugLog("Goodreads: setReviewText POST target=" .. update_url
+    .. " (from-page=" .. tostring(update_path ~= nil) .. ")")
+
+  local code, resp = self:request(update_url, "POST", {
+    _method = update_method,
+    authenticity_token = csrf,
+    ["review[review]"] = text,
+    ["review[notes]"] = review.notes,
+  }, custom_headers)
+  self.settings:debugLog("Goodreads: setReviewText POST /review/update response code=" .. tostring(code))
+
+  if code == 200 or code == 302 then
+    return true
+  end
+  self.settings:debugWarn("Goodreads: setReviewText failed - code=" .. tostring(code) .. " resp=" .. tostring(resp))
+  return nil, "Review text was not saved (HTTP " .. tostring(code) .. ")"
+end
+
+-- Stamps today as the book's "date read" via Goodreads' Reading Challenge
+-- session mechanism -- there's no dedicated field to PATCH, a finished date
+-- is really just a reading session whose start/end date are both today.
+-- Three requests, mirroring what the "Update progress" -> "Finished" flow
+-- does in the browser:
+--   1. GET  /review/edit/{id}          -- scrape existing session count and
+--                                          review/notes text (echoed back
+--                                          unchanged in step 3 so this POST
+--                                          doesn't blank them out)
+--   2. GET  /reading_sessions/new      -- allocate a new session row id
+--   3. POST /review/update/{id}        -- submit the review form with the
+--                                          new session's start/end date set
+--                                          to today
+function GoodreadsApi:setDateFinished(book_id)
+  local csrf = self:refreshSession()
+  if not csrf then
+    logger.warn("Goodreads: Could not extract CSRF token for date-finished")
+    return nil
+  end
+
+  local edit_url = base_url .. "/review/edit/" .. book_id
+  local edit_code, edit_html = self:request(edit_url, "GET")
+  if edit_code ~= 200 or not edit_html then
+    self.settings:debugWarn("Goodreads: setDateFinished - GET /review/edit failed, code=" .. tostring(edit_code))
+    return nil
+  end
+  csrf = self:extract_csrf(edit_html) or csrf
+
+  local review = parse_review_edit(edit_html)
+  if not review then
+    if self.settings then
+      self.settings:debugWarn("Goodreads: setDateFinished - review edit page was empty")
+    end
+    return nil, "Could not read the existing Goodreads review; finish date was not saved"
+  end
+
+  if review.session_count and review.session_count > 0 then
+    self.settings:debugLog("Goodreads: setDateFinished - a reading session already exists, skipping")
+    return true
+  end
+
+  local session_url = base_url .. "/reading_sessions/new?book_id=" .. book_id
+  local session_code, session_html = self:request(session_url, "GET", nil, {
+    ["X-Requested-With"] = "XMLHttpRequest",
+    ["Accept"] = "*/*",
+    ["Referer"] = edit_url,
+  })
+  if session_code ~= 200 or not session_html then
+    self.settings:debugWarn("Goodreads: setDateFinished - GET /reading_sessions/new failed, code="
+      .. tostring(session_code))
+    return nil
+  end
+
+  local rowid = parse_new_session_rowid(session_html)
+  if not rowid then
+    self.settings:debugWarn("Goodreads: setDateFinished - could not find new session rowid")
+    return nil
+  end
+
+  local today = os.date("*t")
+  local field_prefix = "review[user_reading_sessions_attributes][" .. rowid .. "]"
+
+  local custom_headers = {
+    ["Content-Type"] = "application/x-www-form-urlencoded",
+    ["Referer"] = edit_url,
+    ["Origin"] = base_url,
+  }
+
+  local update_path, update_method = parse_review_update_target(edit_html)
+  if not update_path then return nil end
+  local update_url = update_path:match("^https?://") and update_path or (base_url .. update_path)
+  self.settings:debugLog("Goodreads: setDateFinished POST target=" .. update_url
+    .. " (from-page=" .. tostring(update_path ~= nil) .. ")")
+
+  local update_code, update_resp = self:request(update_url, "POST", {
+    _method = update_method,
+    authenticity_token = csrf,
+    ["review[review]"] = review.review_text,
+    ["review[notes]"] = review.notes,
+    [field_prefix .. "[progress_type]"] = "percent",
+    [field_prefix .. "[start][day]"] = today.day,
+    [field_prefix .. "[start][month]"] = today.month,
+    [field_prefix .. "[start][year]"] = today.year,
+    [field_prefix .. "[end][day]"] = today.day,
+    [field_prefix .. "[end][month]"] = today.month,
+    [field_prefix .. "[end][year]"] = today.year,
+  }, custom_headers)
+  self.settings:debugLog("Goodreads: setDateFinished POST /review/update response code=" .. tostring(update_code))
+
+  if update_code == 200 or update_code == 302 then
+    return true
+  end
+  self.settings:debugWarn("Goodreads: setDateFinished failed - code=" .. tostring(update_code)
+    .. " resp=" .. tostring(update_resp))
   return nil
 end
 
