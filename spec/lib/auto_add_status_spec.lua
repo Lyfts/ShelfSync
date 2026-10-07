@@ -395,6 +395,7 @@ describe("Automatic Currently Reading after a status lookup", function()
       api = goodreadsApi(settings)
       local provider = buildProvider(GoodreadsProvider, settings, api)
       provider.wifi = AutoWifi:new { settings = settings, label = "Goodreads" }
+      provider.cache.wifi = provider.wifi
 
       engine = SyncEngine:new {
         label = "Goodreads",
