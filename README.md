@@ -65,7 +65,7 @@ Without that setup, grab a cookie by hand instead. Rather than copying each one 
 4. Right-click it -> Copy Value, and paste the whole thing into the `cookie` field of the `goodreads` section in `shelfsync_config.lua`.
    - Alternatively, you can paste it directly into the **Goodreads** menu's **Settings > Account (Cookie)** field from within KOReader instead of editing the config file.
 
-This cookie will go stale again periodically unless you set up the Docker refresher above — when that happens, syncing pauses until you repeat the steps above.
+Without the Docker refresher, this cookie will go stale again periodically — when that happens, syncing pauses until you repeat the steps above.
 
 ### Fable authentication
 Unlike the other services, Fable has a real login API, so the plugin logs in directly with your Fable email and password rather than a cookie/token you have to fetch by hand.
@@ -125,7 +125,7 @@ Each service has its own **Settings** submenu for linking and account options:
 Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Settings**, since it applies to the whole plugin rather than one service:
 - **Include location info in regular notes**: Automatically append Chapter, Page, and % info to your regular notes.
 - **Enable wifi on demand**: Briefly enable wifi for background syncs to preserve battery life.
-- **Confirm changes to book read status**: Prompt for confirmation before changing a book's status (e.g., Want to Read -> Read).
+- **Confirm changes to book read status**: Prompt for confirmation before changing or removing a book's status from a service's **Update status** menu (e.g., Want to Read -> Read). Enabled by default; turn it off to apply status changes with a single tap.
 
 ## Versioning & Mandatory Updates
 

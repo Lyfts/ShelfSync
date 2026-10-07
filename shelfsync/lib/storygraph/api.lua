@@ -629,7 +629,12 @@ function StoryGraphApi:findUserBook(book_id, user_id, is_recursion)
 
     if other_id and other_id ~= book_id then
       logger.info("StoryGraph: Checking another edition for status: " .. other_id)
-      local other_res = self:findUserBook(other_id, user_id, true)
+      local other_res, other_err = self:findUserBook(other_id, user_id, true)
+      -- The user does have a status on that edition, so a failed lookup of it
+      -- can't be treated as "no status".
+      if other_err then
+        return {}, other_err
+      end
       -- ONLY redirect if the other edition has a status AND is not an audio edition
       if other_res and other_res.status_id and not other_res.is_audio then
         logger.info("StoryGraph: Found valid text edition status for redirection: " .. other_id)
