@@ -5,15 +5,17 @@ local ltn12 = require("ltn12")
 local socketutil = require("socketutil")
 local Trapper = require("ui/trapper")
 local NetworkManager = require("ui/network/manager")
+local UIManager = require("ui/uimanager")
 
 describe("GoodreadsApi session cookies", function()
-  local api, requests, responses, settings_data, sent_cookies
+  local api, requests, responses, settings_data, sent_cookies, timeouts
 
   before_each(function()
     mocks.reset()
     requests = {}
     responses = {}
     sent_cookies = {}
+    timeouts = {}
     settings_data = { session_cookie = "goodreads-session=secret" }
     api = setmetatable({
       settings = {
@@ -26,7 +28,9 @@ describe("GoodreadsApi session cookies", function()
 
     stub(NetworkManager, "isConnected", function() return true end)
     stub(Trapper, "dismissableRunInSubprocess", function(_, fn) return true, fn() end)
-    stub(socketutil, "set_timeout", function() end)
+    stub(socketutil, "set_timeout", function(_, timeout, maxtime)
+      timeouts[#timeouts + 1] = { timeout, maxtime }
+    end)
     stub(socketutil, "reset_timeout", function() end)
     ltn12.source = ltn12.source or {}
     stub(ltn12.source, "string", function(s) return s end)
@@ -53,6 +57,7 @@ describe("GoodreadsApi session cookies", function()
     mock.revert(socketutil)
     mock.revert(ltn12.source)
     mock.revert(http)
+    mock.revert(UIManager)
   end)
 
   local function set_session(code)
@@ -159,6 +164,41 @@ describe("GoodreadsApi session cookies", function()
     assert.equals("goodreads-session=new; _session_id2=fresh", sent_cookies[2])
   end)
 
+  it("lets the UI process a dismissed request before retrying it", function()
+    Trapper.dismissableRunInSubprocess:revert()
+    local attempts = 0
+    stub(Trapper, "dismissableRunInSubprocess", function(_, fn)
+      attempts = attempts + 1
+      if attempts == 1 then return false end
+      return true, fn()
+    end)
+
+    local retry_callback, retry_delay
+    stub(UIManager, "scheduleIn", function(_, delay, callback)
+      retry_delay = delay
+      retry_callback = callback
+    end)
+    responses[1] = { code = 200, body = "page", headers = {} }
+
+    local result
+    local request = coroutine.create(function()
+      result = api:request("https://www.goodreads.com/review/edit/42")
+    end)
+    local resumed, err = coroutine.resume(request)
+
+    assert.is_true(resumed, err)
+    assert.equals(1, attempts)
+    assert.equals("suspended", coroutine.status(request))
+    assert.equals(0.1, retry_delay)
+    assert.is_function(retry_callback)
+
+    retry_callback()
+
+    assert.equals("dead", coroutine.status(request))
+    assert.equals(2, attempts)
+    assert.equals(200, result)
+  end)
+
   it("doesn't keep cookies from a request out while the cookie-refresher replaced the cookie", function()
     settings_data.cookie_refresh_url = "http://127.0.0.1:5080"
     settings_data.cookie_refresh_token = "refresh-token"
@@ -178,6 +218,33 @@ describe("GoodreadsApi session cookies", function()
     assert.equals("http://127.0.0.1:5080/refresh", requests[4].url)
     assert.equals("goodreads-session=secret", sent_cookies[5])
     assert.equals("goodreads-session=secret", sent_cookies[6])
+  end)
+
+  it("waits for the browser refresh before removing a book after a WAF challenge", function()
+    settings_data.cookie_refresh_url = "https://refresher.example/accounts/jose"
+    settings_data.cookie_refresh_token = "refresh-token"
+    responses[1] = {
+      code = 202,
+      body = "challenge",
+      headers = { ["x-amzn-waf-action"] = "challenge" },
+    }
+    responses[2] = { code = 200, body = "goodreads-session=refreshed; aws-waf-token=solved" }
+    responses[3] = {
+      code = 200,
+      body = '<meta name="csrf-token" content="fresh-csrf"><a href="/user/show/123">',
+    }
+    responses[4] = { code = 302, headers = { location = "/review/list" } }
+
+    local result = api:removeRead("42")
+
+    assert.same({ id = "42" }, result)
+    assert.equals("https://refresher.example/accounts/jose/refresh", requests[2].url)
+    assert.equals("refresh-token", requests[2].headers["X-Auth-Token"])
+    assert.is_true(timeouts[2][1] > 60)
+    assert.is_true(timeouts[2][2] > 60)
+    assert.equals("https://www.goodreads.com/", requests[3].url)
+    assert.equals("https://www.goodreads.com/review/destroy/42", requests[4].url)
+    assert.equals("goodreads-session=refreshed; aws-waf-token=solved", sent_cookies[4])
   end)
 
   it("drops them when the cookie-refresher replaces the cookie, even with the same one", function()

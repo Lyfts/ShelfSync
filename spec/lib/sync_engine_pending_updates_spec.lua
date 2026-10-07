@@ -2269,6 +2269,30 @@ describe("SyncEngine pending updates", function()
       assert.is_nil(pending(settings))
     end)
 
+    it("queues a finish date when the Goodreads shelf saves but the date request fails", function()
+      goOnline()
+      fails.date = true
+      local engine = goodreadsEngine(newUi(nil))
+
+      engine:onDocSettingsItemsChanged(FILE, { summary = { status = "complete" } })
+      UIManager:_runUntilIdle()
+
+      local queued = pending(settings)
+      assert.are.same({ GOODREADS_CONST.STATUS.FINISHED }, calls.updateUserBook)
+      assert.are.equal(1, #calls.setDateFinished)
+      assert.is_number(queued.finished_at)
+      assert.are.equal(calls.setDateFinished[1][2], queued.finished_at)
+
+      -- A later sync sees the shelf is already Finished and retries only the
+      -- date, then clears the queue after confirmation.
+      fails = {}
+      flushFromFileBrowser()
+
+      assert.are.equal(1, #calls.updateUserBook)
+      assert.are.same({ { "42", queued.finished_at }, { "42", queued.finished_at } }, calls.setDateFinished)
+      assert.is_nil(pending(settings))
+    end)
+
     it("gives up on the date after 3 tries an hour apart, without looking the book up in between", function()
       queue(settings, FILE, nil, true)
       local finished_at = pending(settings).finished_at

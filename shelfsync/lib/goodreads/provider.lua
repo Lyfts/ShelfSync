@@ -129,7 +129,18 @@ end
 -- A queued "finished" is dated `finished_at`, when the book was finished.
 function Goodreads:onMarkedFinished(book_id, filename, finished_at)
   self:notifyBookFinished(filename)
-  return self:setDateFinished(book_id, finished_at)
+  finished_at = tonumber(finished_at) or os.time()
+  local dated = self:setDateFinished(book_id, finished_at)
+  if not dated then
+    -- The shelf write may have succeeded even when Goodreads' separate
+    -- finished-date editor request was interrupted or failed. Keep the
+    -- original finish time so the pending-update flow can retry just the date.
+    local book = self.settings and self.settings:readBookSettings(filename)
+    if book and tostring(book.book_id) == tostring(book_id) and self.settings.pending_updates then
+      self.settings.pending_updates:addFinished(filename, book, finished_at)
+    end
+  end
+  return dated
 end
 
 function Goodreads:setDateFinished(book_id, finished_at)

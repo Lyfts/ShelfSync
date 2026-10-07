@@ -1,7 +1,7 @@
 -- Goodreads has no official public API, so this mirrors StoryGraph's
 -- approach of replaying browser requests. Most Goodreads operations still
--- use Rails/AJAX endpoints, but review text is now saved through a Next.js
--- Server Action discovered from the current editor page's client chunks.
+-- use Rails/AJAX endpoints, but review text and reading sessions are saved
+-- through Server Actions discovered from the current Next.js editor chunks.
 -- Two quirks specific to Goodreads, relative to StoryGraph:
 --
 -- 1. Goodreads accounts are linked through Amazon, so a valid session is a
@@ -29,12 +29,31 @@ local ltn12 = require("ltn12")
 local json = require("json")
 local Trapper = require("ui/trapper")
 local NetworkManager = require("ui/network/manager")
+local UIManager = require("ui/uimanager")
 local socketutil = require("socketutil")
 
 local SETTING = require("shelfsync/lib/common/constants/settings")
 local _t = require("shelfsync/lib/common/table_util")
 
 local base_url = "https://www.goodreads.com"
+-- A forced refresh waits for the Selenium browser to navigate Goodreads;
+-- unlike a cached /cookie read, it can take longer than the normal HTTP
+-- request timeout (the refresher allows up to 60 seconds for page loading).
+local REFRESHER_TIMEOUT = 75
+local SUBPROCESS_RETRY_UI_DELAY = 0.1
+
+-- Trapper resends the tap that dismissed a subprocess. Let the UI handle it
+-- before opening another dismissable subprocess, or that same tap may dismiss
+-- the immediate retry as well.
+local function yieldBeforeSubprocessRetry()
+  local co, is_main_thread = coroutine.running()
+  if not co or is_main_thread then return end
+
+  UIManager:scheduleIn(SUBPROCESS_RETRY_UI_DELAY, function()
+    coroutine.resume(co)
+  end)
+  coroutine.yield()
+end
 
 -- Goodreads cookies are stored as one opaque header, so their original
 -- per-cookie domain and path scopes are unavailable. Keep that header on the
@@ -240,15 +259,27 @@ local function fetch_from_refresher(url, method, auth_token, timeout)
   return nil, code
 end
 
--- Turns a cookie-refresher failure's HTTP status into an actionable log
--- hint -- 401 (auth token mismatch) and "no cookie captured yet" used to
--- both just say "still logged out?", which sent past debugging in circles
--- cross-referencing docker logs to tell them apart.
+-- Turns a cookie-refresher response code or transport error into an
+-- actionable log hint. A nonnumeric value such as "wantread" is a socket
+-- error, not an HTTP status, so don't label it as evidence of a logged-out
+-- browser session.
 local function refresher_failure_hint(code)
   if code == 401 then
     return "check Cookie Auto-Refresh Token matches REFRESHER_AUTH_TOKEN in the refresher's .env"
   end
-  return "still logged out? see its noVNC view"
+  if code == 404 then
+    return "check Cookie Auto-Refresh URL includes the correct account path"
+  end
+  if code == 503 then
+    return "the refresher has no cookie; check that its browser is logged in via noVNC"
+  end
+  if type(code) == "string" or code == nil then
+    return "no HTTP response (network, TLS, or timeout); check the refresher logs"
+  end
+  if type(code) == "number" and code >= 500 then
+    return "the refresher returned a server error; check its logs and noVNC view"
+  end
+  return "check the refresher endpoint and its noVNC browser session"
 end
 
 -- Hits the refresher's /refresh endpoint to force a freshly browser-solved
@@ -329,25 +360,6 @@ local function parse_ldjson_book(html)
   }
 end
 
--- The classic "Edit review" page (/review/edit/{id}) is a full Rails form,
--- unlike the Next.js book page -- setDateFinished scrapes two things off it:
--- whether a finished reading session already exists (so it can skip adding
--- a duplicate one), and the review/notes text already on it, since the
--- date-finished POST below re-submits the whole review form and would wipe
--- both fields if they weren't echoed back unchanged.
-local function parse_review_edit(html)
-  if not html or html == "" then return nil end
-  local session_count = html:match("data%-count=['\"](%d+)['\"][^>]-id=['\"]readingSessionsCount['\"]")
-    or html:match("id=['\"]readingSessionsCount['\"][^>]-data%-count=['\"](%d+)['\"]")
-  local review_text = html:match("name=['\"]review%[review%]['\"][^>]*>(.-)</textarea>")
-  local notes = html:match("name=['\"]review%[notes%]['\"][^>]*>(.-)</textarea>")
-  return {
-    session_count = tonumber(session_count) or 0,
-    review_text = review_text or "",
-    notes = decode_entities(notes or ""),
-  }
-end
-
 local function html_attribute(tag, name)
   local _, value_start = tag:lower():find("%s" .. name:lower() .. "%s*=%s*")
   if not value_start then return nil end
@@ -359,70 +371,6 @@ local function html_attribute(tag, name)
     return value_end and rest:sub(2, value_end - 1) or nil
   end
   return rest:match("^([^%s>]+)")
-end
-
-local function has_review_field(body)
-  for tag in body:gmatch("<[^>]+>") do
-    local name = html_attribute(tag, "name")
-    if name and name:lower() == "review[review]" then
-      return true
-    end
-  end
-  return false
-end
-
-local function parse_review_update_target(html, edit_url)
-  local stats = { form_count = 0, review_form = false, missing_action = false, rejected_action = false }
-  if not html or html == "" then return nil, nil, stats end
-
-  local lower_html = html:lower()
-  local pos = 1
-  while true do
-    local form_start = lower_html:find("<form[%s>]", pos)
-    if not form_start then break end
-    local tag_end = lower_html:find(">", form_start, true)
-    if not tag_end then break end
-    local close_start, close_end = lower_html:find("</form%s*>", tag_end + 1)
-    if not close_start then break end
-
-    stats.form_count = stats.form_count + 1
-    local opening_tag = html:sub(form_start, tag_end)
-    local body = html:sub(tag_end + 1, close_start - 1)
-    if has_review_field(body) then
-      stats.review_form = true
-      local action = html_attribute(opening_tag, "action")
-      if action == "" then action = nil end
-      if action then action = decode_entities(action) end
-
-      local method = nil
-      for tag in body:gmatch("<[^>]+>") do
-        if tag:lower():match("^<input[%s>]")
-            and (html_attribute(tag, "name") or ""):lower() == "_method" then
-          method = html_attribute(tag, "value")
-          break
-        end
-      end
-
-      if action and (action:match("^/review[/?.]") or action == "/review"
-          or action:match("^https://www%.goodreads%.com/review[/?.]")) then
-        return action, method, stats
-      elseif not action then
-        stats.missing_action = true
-        -- An HTML form with no action submits to its current page. Use that
-        -- browser-defined target only when the form explicitly posts.
-        if (html_attribute(opening_tag, "method") or ""):lower() == "post" then
-          return edit_url, method, stats
-        end
-      elseif action then
-        stats.rejected_action = true
-      end
-    end
-    pos = close_end + 1
-  end
-
-  local review_id = html:match("edit_review_(%d+)")
-  if review_id then return "/review/" .. review_id, "put", stats end
-  return nil, nil, stats
 end
 
 -- The current Goodreads review editor is a Next.js app. Its mutation IDs are
@@ -625,6 +573,8 @@ local function parse_next_review_state(html)
 
   local private_notes = extract_json_property(flight, "initialPrivateNotes", "string")
     or extract_json_property(flight, "privateNotes", "string") or ""
+  local review_text = extract_json_property(flight, "userFormattedText", "string")
+    or extract_json_property(flight, "reviewText", "string") or ""
   local post_to_blog = extract_json_property(flight, "initialPostToBlog", "boolean")
   local add_to_feed = extract_json_property(flight, "initialAddToUpdateFeed", "boolean")
   local spoiler_status = extract_json_property(flight, "spoilerStatus", "boolean")
@@ -633,6 +583,7 @@ local function parse_next_review_state(html)
   return {
     book_id = book_id,
     reading_sessions = sessions,
+    review_text = review_text,
     private_notes = private_notes,
     post_to_blog = post_to_blog == true,
     add_to_feed = add_to_feed ~= false,
@@ -714,11 +665,136 @@ local function submit_next_review_text(self, book_id, text, edit_url, edit_html,
   return nil, "Goodreads did not confirm saving the review (HTTP " .. tostring(code) .. ")"
 end
 
--- Row id from GET /reading_sessions/new?book_id= (an HTML table row
--- fragment), needed to name the date-picker fields in the follow-up POST.
-local function parse_new_session_rowid(html)
-  if not html or html == "" then return nil end
-  return html:match("data%-rowid=['\"]([^'\"]+)['\"]")
+local function next_date_parts(value)
+  if type(value) ~= "table" then return nil end
+  local year, month, day = tonumber(value.year), tonumber(value.month), tonumber(value.day)
+  if not year or not month or not day or year < 1 or month < 1 or month > 12 or day < 1 or day > 31 then
+    return nil
+  end
+  return { year = year, month = month, day = day }
+end
+
+local function same_date(left, right)
+  local left_parts, right_parts = next_date_parts(left), next_date_parts(right)
+  return left_parts and right_parts
+    and left_parts.year == right_parts.year
+    and left_parts.month == right_parts.month
+    and left_parts.day == right_parts.day
+end
+
+local function date_is_after(left, right)
+  local left_parts, right_parts = next_date_parts(left), next_date_parts(right)
+  if not left_parts or not right_parts then return false end
+  if left_parts.year ~= right_parts.year then return left_parts.year > right_parts.year end
+  if left_parts.month ~= right_parts.month then return left_parts.month > right_parts.month end
+  return left_parts.day > right_parts.day
+end
+
+local function prepare_next_finished_sessions(sessions, book_id, finished_date, finished_at)
+  local updated_sessions = {}
+  for index, session in ipairs(sessions or {}) do
+    updated_sessions[index] = session
+    if type(session) == "table" and same_date(session.endedDate, finished_date) then
+      return updated_sessions, true
+    end
+  end
+
+  local active_index
+  for index, session in ipairs(sessions or {}) do
+    if type(session) == "table" and session.bookId == book_id and session.state == "READING"
+        and not next_date_parts(session.endedDate) and not date_is_after(session.startedDate, finished_date) then
+      active_index = index
+      break
+    end
+  end
+
+  if active_index then
+    local active_session = {}
+    for key, value in pairs(sessions[active_index]) do active_session[key] = value end
+    active_session.endedDate = finished_date
+    updated_sessions[active_index] = active_session
+    return updated_sessions, false
+  end
+
+  if #(sessions or {}) >= 25 then
+    return nil, false, "Goodreads already has the maximum number of reading sessions"
+  end
+
+  updated_sessions[#updated_sessions + 1] = {
+    __typename = "ReadingSession",
+    id = "new-" .. tostring(math.floor(finished_at * 1000)),
+    bookId = book_id,
+    state = "COMPLETED",
+    startedDate = finished_date,
+    endedDate = finished_date,
+  }
+  return updated_sessions, false
+end
+
+local function submit_next_finished_date(self, book_id, finished_at, edit_url, edit_html, state)
+  local finished = os.date("*t", finished_at)
+  local finished_date = {
+    __typename = "NullableDate",
+    year = finished.year,
+    month = finished.month,
+    day = finished.day,
+  }
+  local sessions, already_finished, prepare_error = prepare_next_finished_sessions(
+    state.reading_sessions, state.book_id, finished_date, finished_at)
+  if prepare_error then
+    self.settings:debugWarn("Goodreads: setDateFinished - " .. prepare_error)
+    return nil, prepare_error
+  end
+  if already_finished then
+    self.settings:debugLog("Goodreads: setDateFinished - requested date already exists, skipping")
+    return true
+  end
+
+  local action_id = get_next_review_action_id(self, edit_html, edit_url)
+  if not action_id then
+    self.settings:debugWarn("Goodreads: could not find submitReviewFormAction for date-finished")
+    return nil, "Could not identify Goodreads' current review-save action; finish date was not saved"
+  end
+
+  local payload = {
+    bookId = state.book_id,
+    reviewText = state.review_text,
+    spoilerStatus = state.spoiler_status,
+    isOwnedEdition = state.is_owned_edition,
+    privateNotes = state.private_notes,
+    postToBlog = state.post_to_blog,
+    addToUpdateFeed = state.add_to_feed,
+    readingSessions = sessions,
+    initialReadingSessions = state.reading_sessions,
+  }
+  local body = json.encode({ payload, "/review/edit/[id]" })
+  if #(state.reading_sessions or {}) == 0 then
+    body = body:gsub('("initialReadingSessions":)%s*{}', "%1[]")
+  end
+  local code, response = self:request(edit_url, "POST", body,
+    next_review_action_headers(action_id, book_id, edit_url))
+  self.settings:debugLog("Goodreads: setDateFinished Next.js submit response code=" .. tostring(code)
+    .. " response_length=" .. tostring(type(response) == "string" and #response or 0))
+  if code ~= 200 or type(response) ~= "string" or not next_action_has_no_errors(response) then
+    self.settings:debugWarn("Goodreads: setDateFinished Next.js submit failed (HTTP " .. tostring(code) .. ")")
+    return nil, "Goodreads did not confirm saving the finish date (HTTP " .. tostring(code) .. ")"
+  end
+
+  local verify_code, verify_html = self:request(edit_url, "GET")
+  if verify_code ~= 200 or not verify_html then
+    self.settings:debugWarn("Goodreads: setDateFinished could not reload the review editor to verify the date")
+    return nil, "Could not verify that Goodreads saved the finish date"
+  end
+  local verify_state = parse_next_review_state(verify_html)
+  for _, session in ipairs((verify_state and verify_state.reading_sessions) or {}) do
+    if type(session) == "table" and same_date(session.endedDate, finished_date) then
+      self.settings:debugLog("Goodreads: setDateFinished verified the finish date")
+      return true
+    end
+  end
+
+  self.settings:debugWarn("Goodreads: setDateFinished did not find the requested date after saving")
+  return nil, "Goodreads did not confirm saving the finish date"
 end
 
 -- Extracts the authenticity token from a classic Goodreads HTML page. Normal
@@ -732,8 +808,7 @@ function GoodreadsApi:extract_csrf(html, fresh_only)
 
   local csrf = html:match('<meta%s+[^>]*name=["\']csrf%-token["\']%s+[^>]*content=["\']([^"\']+)["\']')
             or html:match('<meta%s+[^>]*content=["\']([^"\']+)["\']%s+[^>]*name=["\']csrf%-token["\']')
-            -- /review/edit doesn't carry the layout meta tag the homepage does,
-            -- only the classic Rails form's own hidden input.
+            -- Some classic pages expose the token only in a hidden form field.
             or html:match('name=["\']authenticity_token["\']%s+value=["\']([^"\']+)["\']')
 
   if csrf then
@@ -790,7 +865,7 @@ function GoodreadsApi:request(url, method, data, custom_headers, request_options
           refreshed_cookie = cookie
           logger.info("Goodreads: bootstrapped session cookie from local cookie-refresher")
         else
-          logger.warn("Goodreads: cookie-refresher at " .. cookie_url .. " didn't return a cookie (HTTP "
+          logger.warn("Goodreads: cookie-refresher at " .. cookie_url .. " didn't return a cookie (response/error "
             .. tostring(refresher_code) .. " -- " .. refresher_failure_hint(refresher_code) .. ")")
         end
       end
@@ -902,7 +977,8 @@ function GoodreadsApi:request(url, method, data, custom_headers, request_options
         if refresh_url and not cookie_refresh_attempted then
           cookie_refresh_attempted = true
           logger.info("Goodreads: " .. refresh_reason .. ", trying local cookie-refresher at " .. refresh_url)
-          local fresh_cookie, refresher_code = fetch_refreshed_cookie(refresh_url, refresh_token, timeout)
+          local fresh_cookie, refresher_code = fetch_refreshed_cookie(
+            refresh_url, refresh_token, REFRESHER_TIMEOUT)
           if fresh_cookie and fresh_cookie ~= headers["Cookie"] then
             headers["Cookie"] = fresh_cookie
             refreshed_cookie = fresh_cookie
@@ -910,7 +986,7 @@ function GoodreadsApi:request(url, method, data, custom_headers, request_options
             cookie_retry_now = true
             logger.info("Goodreads: got a refreshed cookie, retrying")
           else
-            logger.warn("Goodreads: cookie-refresher at " .. refresh_url .. " didn't return a usable cookie (HTTP "
+            logger.warn("Goodreads: cookie-refresher at " .. refresh_url .. " didn't return a usable cookie (response/error "
               .. tostring(refresher_code) .. " -- " .. refresher_failure_hint(refresher_code) .. ")")
           end
         elseif not cookie_refresh_attempted then
@@ -966,8 +1042,9 @@ function GoodreadsApi:request(url, method, data, custom_headers, request_options
     return (code or "error") .. "|" .. #header_str .. "|" .. header_str .. response_body
   end
 
-  -- One retry recovers most transient subprocess-fork failures, mirroring
-  -- StoryGraph's request().
+  -- One retry recovers a transient interruption. Defer it by one UI cycle:
+  -- Trapper can resend the tap that dismissed the first subprocess, and an
+  -- immediate retry can mistake that same tap for a second dismissal.
   for attempt = 1, 2 do
     -- Cookies kept from earlier responses go with the saved cookie they were
     -- set for, so they're dropped once that's changed or removed. This
@@ -982,7 +1059,10 @@ function GoodreadsApi:request(url, method, data, custom_headers, request_options
     if completed then break end
     if self.settings and attempt == 1 then
       self.settings:debugWarn("Goodreads: request() subprocess did not complete on first attempt for "
-        .. url .. ", retrying once")
+        .. url .. ", yielding to the UI before retrying once")
+    end
+    if attempt == 1 then
+      yieldBeforeSubprocessRetry()
     end
   end
 
@@ -1047,7 +1127,8 @@ function GoodreadsApi:request(url, method, data, custom_headers, request_options
   end
   if self.settings then
     self.settings:debugWarn("Goodreads: request() subprocess did not complete - completed="
-      .. tostring(completed) .. " content_present=" .. tostring(content ~= nil) .. " url=" .. url)
+      .. tostring(completed) .. " content_present=" .. tostring(content ~= nil)
+      .. " (no HTTP response was received) url=" .. url)
   end
   return nil, "Request failed"
 end
@@ -1512,11 +1593,9 @@ function GoodreadsApi:setRating(book_id, rating)
   return nil
 end
 
--- Sets the review body text. Older pages still use the Rails review form;
--- the current Next.js editor uses a Server Action and requires its existing
--- private fields and reading sessions to be echoed unchanged.
+-- Sets the review body text through the current Next.js editor's Server Action.
 function GoodreadsApi:setReviewText(book_id, text)
-  local csrf = self:refreshSession()
+  self:refreshSession()
 
   local edit_url = base_url .. "/review/edit/" .. book_id
   local edit_code, edit_html = self:request(edit_url, "GET")
@@ -1524,75 +1603,25 @@ function GoodreadsApi:setReviewText(book_id, text)
     self.settings:debugWarn("Goodreads: setReviewText - GET /review/edit failed, code=" .. tostring(edit_code))
     return nil
   end
-  csrf = self:extract_csrf(edit_html) or csrf
-
-  local update_path, update_method, form_stats = parse_review_update_target(edit_html, edit_url)
-  if not update_path then
-    local state = parse_next_review_state(edit_html)
-    if state then
-      return submit_next_review_text(self, book_id, text, edit_url, edit_html, state)
-    end
-    self.settings:debugWarn("Goodreads: setReviewText could not identify a review editor"
-      .. " (forms=" .. tostring(form_stats.form_count)
-      .. ", field_match=" .. tostring(form_stats.review_form)
-      .. ", missing_action=" .. tostring(form_stats.missing_action)
-      .. ", rejected_action=" .. tostring(form_stats.rejected_action) .. ")")
-    return nil, "Could not locate the Goodreads review editor; review text was not saved"
+  local state = parse_next_review_state(edit_html)
+  if not state then
+    self.settings:debugWarn("Goodreads: setReviewText - could not parse the Next.js review editor state")
+    return nil, "Could not read the Goodreads review editor state; review text was not saved"
   end
-
-  if not csrf then
-    logger.warn("Goodreads: Could not extract CSRF token for classic review text")
-    return nil
-  end
-  local review = parse_review_edit(edit_html)
-  if not review then
-    self.settings:debugWarn("Goodreads: setReviewText - review edit page was empty")
-    return nil, "Could not read the existing Goodreads review; review text was not saved"
-  end
-
-  local custom_headers = {
-    ["Content-Type"] = "application/x-www-form-urlencoded",
-    ["Referer"] = edit_url,
-    ["Origin"] = base_url,
-  }
-  local update_url = update_path:match("^https?://") and update_path or (base_url .. update_path)
-  self.settings:debugLog("Goodreads: setReviewText POST target=" .. update_url
-    .. " (from-page=" .. tostring(update_path ~= nil) .. ")")
-
-  local code, resp = self:request(update_url, "POST", {
-    _method = update_method,
-    authenticity_token = csrf,
-    ["review[review]"] = text,
-    ["review[notes]"] = review.notes,
-  }, custom_headers)
-  self.settings:debugLog("Goodreads: setReviewText POST /review/update response code=" .. tostring(code))
-
-  if code == 200 or code == 302 then
-    return true
-  end
-  self.settings:debugWarn("Goodreads: setReviewText failed - code=" .. tostring(code) .. " resp=" .. tostring(resp))
-  return nil, "Review text was not saved (HTTP " .. tostring(code) .. ")"
+  return submit_next_review_text(self, book_id, text, edit_url, edit_html, state)
 end
 
--- Stamps today as the book's "date read" via Goodreads' Reading Challenge
--- session mechanism -- there's no dedicated field to PATCH, a finished date
--- is really just a reading session whose start/end date are both today.
--- Three requests, mirroring what the "Update progress" -> "Finished" flow
--- does in the browser:
---   1. GET  /review/edit/{id}          -- scrape existing session count and
---                                          review/notes text (echoed back
---                                          unchanged in step 3 so this POST
---                                          doesn't blank them out)
---   2. GET  /reading_sessions/new      -- allocate a new session row id
---   3. POST /review/update/{id}        -- submit the review form with the
---                                          new session's start/end date set
---                                          to today
+-- Sets Goodreads' "date read" to the supplied finish time (or today for an
+-- immediate finish). The current Next.js editor saves reading sessions with
+-- its review Server Action.
 function GoodreadsApi:setDateFinished(book_id, finished_at)
-  local csrf = self:refreshSession()
-  if not csrf then
-    logger.warn("Goodreads: Could not extract CSRF token for date-finished")
-    return nil
+  if finished_at ~= nil then finished_at = tonumber(finished_at) else finished_at = os.time() end
+  if not finished_at then
+    self.settings:debugWarn("Goodreads: setDateFinished - missing finished timestamp")
+    return nil, "The finish date is unavailable"
   end
+
+  self:refreshSession()
 
   local edit_url = base_url .. "/review/edit/" .. book_id
   local edit_code, edit_html = self:request(edit_url, "GET")
@@ -1600,76 +1629,13 @@ function GoodreadsApi:setDateFinished(book_id, finished_at)
     self.settings:debugWarn("Goodreads: setDateFinished - GET /review/edit failed, code=" .. tostring(edit_code))
     return nil
   end
-  csrf = self:extract_csrf(edit_html) or csrf
 
-  local review = parse_review_edit(edit_html)
-  if not review then
-    if self.settings then
-      self.settings:debugWarn("Goodreads: setDateFinished - review edit page was empty")
-    end
-    return nil, "Could not read the existing Goodreads review; finish date was not saved"
+  local next_state = parse_next_review_state(edit_html)
+  if next_state then
+    return submit_next_finished_date(self, book_id, finished_at, edit_url, edit_html, next_state)
   end
-
-  if review.session_count and review.session_count > 0 then
-    self.settings:debugLog("Goodreads: setDateFinished - a reading session already exists, skipping")
-    return true
-  end
-
-  local session_url = base_url .. "/reading_sessions/new?book_id=" .. book_id
-  local session_code, session_html = self:request(session_url, "GET", nil, {
-    ["X-Requested-With"] = "XMLHttpRequest",
-    ["Accept"] = "*/*",
-    ["Referer"] = edit_url,
-  })
-  if session_code ~= 200 or not session_html then
-    self.settings:debugWarn("Goodreads: setDateFinished - GET /reading_sessions/new failed, code="
-      .. tostring(session_code))
-    return nil
-  end
-
-  local rowid = parse_new_session_rowid(session_html)
-  if not rowid then
-    self.settings:debugWarn("Goodreads: setDateFinished - could not find new session rowid")
-    return nil
-  end
-
-  -- A "finished" queued while offline keeps the day it was finished.
-  local today = os.date("*t", finished_at)
-  local field_prefix = "review[user_reading_sessions_attributes][" .. rowid .. "]"
-
-  local custom_headers = {
-    ["Content-Type"] = "application/x-www-form-urlencoded",
-    ["Referer"] = edit_url,
-    ["Origin"] = base_url,
-  }
-
-  local update_path, update_method = parse_review_update_target(edit_html)
-  if not update_path then return nil end
-  local update_url = update_path:match("^https?://") and update_path or (base_url .. update_path)
-  self.settings:debugLog("Goodreads: setDateFinished POST target=" .. update_url
-    .. " (from-page=" .. tostring(update_path ~= nil) .. ")")
-
-  local update_code, update_resp = self:request(update_url, "POST", {
-    _method = update_method,
-    authenticity_token = csrf,
-    ["review[review]"] = review.review_text,
-    ["review[notes]"] = review.notes,
-    [field_prefix .. "[progress_type]"] = "percent",
-    [field_prefix .. "[start][day]"] = today.day,
-    [field_prefix .. "[start][month]"] = today.month,
-    [field_prefix .. "[start][year]"] = today.year,
-    [field_prefix .. "[end][day]"] = today.day,
-    [field_prefix .. "[end][month]"] = today.month,
-    [field_prefix .. "[end][year]"] = today.year,
-  }, custom_headers)
-  self.settings:debugLog("Goodreads: setDateFinished POST /review/update response code=" .. tostring(update_code))
-
-  if update_code == 200 or update_code == 302 then
-    return true
-  end
-  self.settings:debugWarn("Goodreads: setDateFinished failed - code=" .. tostring(update_code)
-    .. " resp=" .. tostring(update_resp))
-  return nil
+  self.settings:debugWarn("Goodreads: setDateFinished - could not parse the Next.js review editor state")
+  return nil, "Could not read the Goodreads review editor state; finish date was not saved"
 end
 
 -- Goodreads' "status update" (/user_status.json's `body` field) is a short
