@@ -45,6 +45,8 @@ function Cache:updateBookStatus(filename, status, ...)
   local linked = tostring(self.settings:readBookSetting(filename, "book_id")) == tostring(book_id)
   if linked then
     self.state.book_status = result or {}
+    self.state.locally_finished_book_id = result and status == STATUS.FINISHED
+      and result.status_id == STATUS.FINISHED and tostring(book_id) or nil
   end
 
   if result and status == STATUS.FINISHED then
@@ -100,6 +102,7 @@ function Cache:queueBookRemoval(filename, callback)
       if not err and status and status.id and self.settings:providerEnabled() and linked() then
         if self.api:removeRead(status.id) and linked() then
           self.state.book_status = {}
+          self.state.locally_finished_book_id = nil
           -- Known to have no status there until another is read or set, so
           -- closing the book doesn't queue its position.
           self.state.removed_status = self.state.book_status
@@ -123,12 +126,14 @@ function Cache:cacheUserBook(filename)
     end
     local status, errors = self.provider:findUserBookFor(book)
     self.state.book_status = status or {}
+    self.state.locally_finished_book_id = nil
     return errors
   end
 
   filename = document.file
   local status, errors = self.api:findUserBook(self.settings:getLinkedBookId(), self.user:getId())
   self.state.book_status = status or {}
+  self.state.locally_finished_book_id = nil
   if status and status.page_count and status.page_count > 0 then
     local current_pages = self.settings:readBookSetting(filename, "pages")
     if not current_pages or current_pages == 0 then

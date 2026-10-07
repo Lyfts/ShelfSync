@@ -153,6 +153,7 @@ function SyncEngine:onPullPosition()
       ok_callback = function()
         self.ui:handleEvent(Event:new("GotoPage", target_page))
         self.state.book_status = status
+        self.state.locally_finished_book_id = nil
       end,
     })
   end)
@@ -282,6 +283,7 @@ function SyncEngine:onNote(note_params)
       if latest_percent then
         remote_percent = latest_percent
         self.state.book_status = latest_status
+        self.state.locally_finished_book_id = nil
       end
 
       self.dialog_manager:journalEntryForm(
@@ -389,12 +391,19 @@ end
 -- progress silently going unsynced doesn't go unnoticed.
 -- Returns true if the dialog was shown, false if already shown this session.
 function SyncEngine:warnStatusMismatch(filename)
+  local book_id = self.settings:readBookSetting(filename, "book_id")
+  if book_id and self.state.locally_finished_book_id
+      and tostring(self.state.locally_finished_book_id) == tostring(book_id)
+      and self.state.book_status.status_id == self.constants.STATUS.FINISHED then
+    self.settings:debugLog(self.label .. ": warnStatusMismatch - finished status was set locally, skipping")
+    return false
+  end
+
   if self.state.status_mismatch_warned then
     self.settings:debugLog(self.label .. ": warnStatusMismatch - already warned this session, skipping")
     return false
   end
 
-  local book_id = self.settings:readBookSetting(filename, "book_id")
   if not book_id then
     self.settings:debugLog(self.label .. ": warnStatusMismatch - no book_id for filename, skipping")
     return false
@@ -546,6 +555,8 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
       end
       if currentBook() then
         self.state.book_status = result
+        self.state.locally_finished_book_id = result.status_id == self.constants.STATUS.FINISHED
+          and tostring(book_id) or nil
         self:registerHighlight()
       end
       if pending then
@@ -702,6 +713,7 @@ function SyncEngine:onReaderReady()
     self.state.process_page_turns = false
     self.state.book_status = {}
     self.state.status_mismatch_warned = false
+    self.state.locally_finished_book_id = nil
     self.state.page = nil
     self.state.page_map = nil
     self.state.last_page = nil
@@ -713,6 +725,7 @@ function SyncEngine:onReaderReady()
   self:registerHighlight()
   self.state.page = self.ui:getCurrentPage()
   self.state.opened_page = self.state.page
+  self.state.locally_finished_book_id = nil
 
   if self.ui.document and (self.settings:bookLinked() or self.settings:autolinkEnabled()) then
     UIManager:scheduleIn(1, self.startReadCache, self)
@@ -734,6 +747,7 @@ function SyncEngine:onDocumentClose()
   self:cancelPendingUpdates()
   self.state.read_cache_started = false
   self.state.status_mismatch_warned = false
+  self.state.locally_finished_book_id = nil
 
   local ok, err = pcall(self._queueClosingProgress, self)
   if not ok then
@@ -971,6 +985,8 @@ function SyncEngine:_sendPendingUpdate(filename)
       local linked = self:_syncedBook(filename)
       if filename == self.settings:getFilePath() and linked and tostring(linked.book_id) == tostring(book_id) then
         self.state.book_status = result
+        self.state.locally_finished_book_id = result.status_id == STATUS.FINISHED
+          and tostring(book_id) or nil
         self:registerHighlight()
       end
       -- As Cache:updateBookStatus does: dated when it was finished, and kept
@@ -1322,6 +1338,7 @@ function SyncEngine:startReadCache()
                 local added = self.api:updateUserBook(book_settings.book_id, self.constants.STATUS.READING)
                 if added and added.status_id then
                   self.state.book_status = added
+                  self.state.locally_finished_book_id = nil
                 elseif auto_add_attempts < max_auto_add_retries then
                   -- The write itself can fail transiently (e.g. a momentary
                   -- network hiccup) just as easily as the read above did --

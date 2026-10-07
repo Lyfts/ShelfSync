@@ -409,6 +409,35 @@ describe("Automatic Currently Reading after a status lookup", function()
       }
     end)
 
+    it("doesn't warn about a mismatch after ShelfSync marks the book as Read", function()
+      local warnings = 0
+      engine.dialog_manager = { confirm = function() warnings = warnings + 1 end }
+      engine.state.book_status = { id = "1", book_id = "1", status_id = GOODREADS.STATUS.READING }
+      engine.cache.provider = engine.provider
+      api.setDateFinished = function() return true end
+
+      assert.is_true(engine.cache:updateBookStatus(FILE, GOODREADS.STATUS.FINISHED))
+      assert.are.equal("1", engine.state.locally_finished_book_id)
+
+      engine:_handlePageUpdate(FILE, 29, false, nil, "pages")
+
+      assert.are.equal(0, warnings)
+    end)
+
+    it("still warns when a Finished status comes from Goodreads", function()
+      local dialog
+      engine.dialog_manager = { confirm = function(_, options) dialog = options end }
+      engine.state.locally_finished_book_id = "1"
+      response = { 200, shelvedPage("read") }
+
+      engine.cache:cacheUserBook(FILE)
+      engine:_handlePageUpdate(FILE, 29, false, nil, "pages")
+
+      assert.is_nil(engine.state.locally_finished_book_id)
+      assert.is_table(dialog)
+      assert.matches('marked "Read" on Goodreads', dialog.text, 1, true)
+    end)
+
     it("adds a book confirmed to be on no shelf to Currently Reading", function()
       engine:startReadCache()
       UIManager:_runUntilIdle()

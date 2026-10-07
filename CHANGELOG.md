@@ -6,6 +6,7 @@
 - (fix) Keep Goodreads finished dates accurate while preserving existing reviews and retrying date saves that fail.
 - (fix) Wait for the Goodreads browser cookie refresher to return before retrying requests after WAF challenges.
 - (fix) Let interrupted Goodreads requests retry after the reader handles the touch that interrupted them.
+- (fix) Don't show a progress mismatch warning just after ShelfSync marks a book as Read.
 
 ## 1.6.1
 - (feat) Add a Goodreads account connection check that verifies the cookie and uses the configured cookie refresher when the cookie is missing or expired.
