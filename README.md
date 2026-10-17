@@ -121,7 +121,7 @@ Before updates can be sent, a document needs to be linked to a book on each serv
 ### Reviews
 With a book open, choose **ShelfSync > Review** to open the review composer. Add a rating, review text, or both, then choose which providers should receive it. Enabled providers where you are signed in and the book is linked are selected by default; unavailable providers show why they cannot receive the review. If submission fails for a provider, the draft stays available so you can retry it.
 
-Ratings range from 0 to 5 in quarter-star steps. Goodreads rounds down to whole stars; Hardcover, LibraryThing, and Pagebound round down to half stars; StoryGraph and Fable preserve quarter-star ratings. When ShelfSync detects that you finished a book, it offers to open the composer if at least one provider is eligible.
+Ratings range from 0 to 5 in quarter-star steps. Hardcover, LibraryThing, and Pagebound round down to half stars; StoryGraph, Fable, and Goodreads preserve quarter-star ratings. When ShelfSync detects that you finished a book, it offers to open the composer if at least one provider is eligible.
 
 ### Automatically Track Progress
 When enabled (per service), the plugin will periodically sync your progress:

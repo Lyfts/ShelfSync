@@ -475,7 +475,12 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
 
   if self.state.book_status.status_id ~= self.constants.STATUS.READING then
     logger.info(self.label .. ": Skipping page update - status_id is " .. tostring(self.state.book_status.status_id) .. ", not READING")
-    self:warnStatusMismatch(filename)
+    -- Without reading progress (LibraryThing), the end of a book is all
+    -- that's sent, and a book that isn't being read there (e.g. one already
+    -- Read, opened again at its end) has no progress going unsynced.
+    if self.provider.tracks_progress ~= false then
+      self:warnStatusMismatch(filename)
+    end
     return bail(_("Book is not currently marked as reading on " .. self.label))
   end
 

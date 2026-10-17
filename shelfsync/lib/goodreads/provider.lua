@@ -148,8 +148,7 @@ function Goodreads:setDateFinished(book_id, finished_at)
 end
 
 -- ReviewMenu entry point: submits a star rating and/or free-text review from
--- the unified Review menu. Goodreads only accepts whole-star ratings, so a
--- quarter/half-star value is rounded down to a whole number here.
+-- the unified Review menu. Goodreads takes the quarter-star rating as is.
 function Goodreads:submitReview(filename, rating, text)
   local book_id = self.settings:readBookSetting(filename, "book_id")
   if not book_id then
@@ -162,7 +161,7 @@ function Goodreads:submitReview(filename, rating, text)
     if not ok then return false, err or "Goodreads could not save the review text" end
   end
   if rating and rating > 0 then
-    if not self.api:setRating(book_id, math.floor(rating)) then
+    if not self.api:setRating(book_id, rating) then
       return false, "Goodreads could not save the rating"
     end
   end

@@ -9,9 +9,9 @@ local StoryGraph = require("shelfsync/lib/storygraph/provider")
 describe("Review rating precision", function()
   -- Include values below one star, ties, and the upper boundary.
   local cases = {
-    { 0.25, 0, 0, 0 }, { 0.75, 0, 0.5, 0.5 },
-    { 1, 1, 1, 1 }, { 3.5, 3, 3.5, 3.5 },
-    { 4.25, 4, 4, 4 }, { 4.75, 4, 4.5, 4.5 }, { 5, 5, 5, 5 },
+    { 0.25, 0.25, 0, 0 }, { 0.75, 0.75, 0.5, 0.5 },
+    { 1, 1, 1, 1 }, { 3.5, 3.5, 3.5, 3.5 },
+    { 4.25, 4.25, 4, 4 }, { 4.75, 4.75, 4.5, 4.5 }, { 5, 5, 5, 5 },
   }
   for _, case in ipairs(cases) do
     it("rounds " .. case[1] .. " down only where required", function()

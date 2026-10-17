@@ -19,12 +19,13 @@ local STATUS = LIBRARYTHING.STATUS
 local FILE = "/books/test.epub"
 
 describe("SyncEngine with LibraryThing", function()
-  local engine, settings, calls, wifi_uses, current_page
+  local engine, settings, calls, wifi_uses, current_page, confirms
 
   before_each(function()
     mocks.reset()
     NetworkMgr._wifi_on, NetworkMgr._connected = true, true
     current_page = 1
+    confirms = {}
 
     local document = {
       file = FILE,
@@ -69,7 +70,8 @@ describe("SyncEngine with LibraryThing", function()
     }
     engine = SyncEngine:new {
       label = "LibraryThing", constants = LIBRARYTHING, highlight_menu_name = "hl_lt",
-      api = api, user = user, cache = cache, page_mapper = page_mapper, wifi = wifi, dialog_manager = {},
+      api = api, user = user, cache = cache, page_mapper = page_mapper, wifi = wifi,
+      dialog_manager = { confirm = function(_, options) table.insert(confirms, options.text) end },
       provider = LibraryThing:new {
         label = "LibraryThing", api = api, user = user, cache = cache, dialog_manager = {},
         page_mapper = page_mapper, settings = settings, state = state, ui = ui, wifi = wifi,
@@ -105,6 +107,18 @@ describe("SyncEngine with LibraryThing", function()
     assert.same({ STATUS.FINISHED }, calls.updateUserBook)
     assert.equals(STATUS.FINISHED, result.status_id)
     assert.equals(STATUS.FINISHED, engine.state.book_status.status_id)
+  end)
+
+  it("doesn't ask to mark a book that's already Read as reading when it's opened at its end", function()
+    engine.state.book_status.status_id = STATUS.FINISHED
+    local result, reason
+    engine:_handlePageUpdate(FILE, 100, true, function(r, why) result, reason = r, why end, "percentage")
+    UIManager:_runUntilIdle()
+
+    assert.is_nil(result)
+    assert.matches("not currently marked as reading", reason, 1, true)
+    assert.same({}, confirms)
+    assert.same({}, calls.updateUserBook)
   end)
 
   it("doesn't queue the position a book is closed at short of the end", function()

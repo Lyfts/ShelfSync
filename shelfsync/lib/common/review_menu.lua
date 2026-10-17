@@ -163,11 +163,10 @@ function ReviewMenu:_ratingHelp()
     text = _([[Set a star rating from 0 to 5 in quarter-star steps.
 
 When submitted, each provider handles the rating as follows:
-- Goodreads: round down to a whole star
 - Hardcover: round down to a half star
 - LibraryThing: round down to a half star
 - Pagebound: round down to a half star
-- StoryGraph and Fable: exact value (quarter-star precision)]]),
+- StoryGraph, Fable and Goodreads: exact value (quarter-star precision)]]),
   })
 end
 

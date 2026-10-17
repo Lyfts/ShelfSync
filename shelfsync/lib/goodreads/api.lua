@@ -1559,9 +1559,10 @@ end
 -- Pushes KOReader's Book Status star rating (1-5, same scale as Goodreads,
 -- no conversion needed). Goodreads still accepts this through its Rails AJAX
 -- endpoint even though the review editor itself has moved to Next.js.
+-- Quarter stars, 0.25-5, as Goodreads has taken since October 2026.
 function GoodreadsApi:setRating(book_id, rating)
-  local stars = math.floor(tonumber(rating) or 0)
-  if stars < 1 or stars > 5 then
+  local stars = math.floor((tonumber(rating) or 0) * 4 + 1e-9) / 4
+  if stars < 0.25 or stars > 5 then
     self.settings:debugWarn("Goodreads: setRating - rating out of range: " .. tostring(rating))
     return nil
   end
@@ -1581,7 +1582,7 @@ function GoodreadsApi:setRating(book_id, rating)
   }
 
   local url = base_url .. "/review/rate/" .. book_id
-    .. "?no_lightbox=true&queue=false&stars_click=true&rating=" .. stars .. "&ref=undefined"
+    .. "?no_lightbox=true&queue=false&stars_click=true&rating=" .. string.format("%g", stars) .. "&ref=undefined"
 
   local code, resp = self:request(url, "POST", "", custom_headers)
   self.settings:debugLog("Goodreads: setRating POST response code=" .. tostring(code))
