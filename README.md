@@ -140,6 +140,7 @@ KOReader's gesture manager includes a **ShelfSync: Update progress for all linke
 
 Each service has its own **Settings** submenu for linking and account options:
 - **Automatically link by provider identifier/ISBN/Title**: Attempt to find matching books automatically when opening a new document, in that priority order — a provider identifier embedded in the book's metadata first, then ISBN, then title+author. Each method can be toggled independently, and all are enabled by default; disable any of them here if you'd rather link books manually. Identifier-based linking is supported for Goodreads (`goodreads:` tag), Hardcover (`hardcover:`/`hardcover-slug:`/`hardcover-edition:` tags), StoryGraph (`storygraph:`/`storygraph-edition:` tags), and LibraryThing (`librarything:` tag with a work id). Fable and Pagebound currently don't expose matching identifier schemes.
+- **Never link automatically**: File types (e.g. `cbz, cbr` for manga and comics) that are never linked automatically, by any of the methods above. They can still be linked by hand with "Link book".
 - **Account**: Cookies/tokens/login for that service.
 
 Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Settings**, since it applies to the whole plugin rather than one service:

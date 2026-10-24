@@ -34,6 +34,9 @@ Settings.SHARED = {
   LINK_BY_IDENTIFIER = "link_by_identifier",
   LINK_BY_ISBN = "link_by_isbn",
   LINK_BY_TITLE = "link_by_title",
+  -- File extensions (e.g. { "cbz", "cbr" }) whose books are never linked
+  -- automatically, e.g. manga or comics that no provider would match well.
+  AUTOLINK_SKIP_TYPES = "autolink_skip_types",
 }
 
 -- Order here doubles as the priority BaseProvider:_runAutolink tries each

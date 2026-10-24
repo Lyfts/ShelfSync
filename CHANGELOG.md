@@ -3,6 +3,7 @@
 <!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
 
 ## Unreleased
+- (feat) Choose file types (e.g. cbz for manga) that are never linked automatically, under Settings > Auto Book Link.
 
 ## 1.8.1
 - (feat) Send Goodreads ratings in quarter stars, now that Goodreads takes them, instead of rounding down to whole stars.

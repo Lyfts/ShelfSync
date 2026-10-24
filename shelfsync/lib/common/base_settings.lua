@@ -240,6 +240,36 @@ function BaseSettings:getKoreaderRating(filename)
   return nil
 end
 
+-- The file extensions set to never be linked automatically, lowercased
+-- and without dots.
+function BaseSettings:autolinkSkipTypes()
+  local types = self:readSetting(SETTING.SHARED.AUTOLINK_SKIP_TYPES)
+  return type(types) == "table" and types or {}
+end
+
+-- Takes a list like "cbz, .CBR cb7" as typed in the menu.
+function BaseSettings:setAutolinkSkipTypes(text)
+  local types, seen = {}, {}
+  for ext in (text or ""):lower():gmatch("[%w]+") do
+    if not seen[ext] then
+      seen[ext] = true
+      table.insert(types, ext)
+    end
+  end
+  self:updateSetting(SETTING.SHARED.AUTOLINK_SKIP_TYPES, types)
+end
+
+-- Whether `filename`'s type is one that's never linked automatically.
+function BaseSettings:autolinkSkipsFile(filename)
+  local ext = type(filename) == "string" and filename:match("%.([^%./\\]+)$")
+  if not ext then return false end
+  ext = ext:lower()
+  for _, skipped in ipairs(self:autolinkSkipTypes()) do
+    if skipped == ext then return true end
+  end
+  return false
+end
+
 function BaseSettings:autolinkEnabled()
   for _, setting in ipairs(SETTING.AUTOLINK_OPTIONS) do
     -- Must go through self:readSetting (not self.settings:readSetting)
