@@ -207,7 +207,48 @@ function CommonMenu:getAutoLinkSubMenuItems()
       callback = function()
         local setting = self.settings:readSetting(SETTING.SHARED.LINK_BY_TITLE) ~= false
         self.settings:updateSetting(SETTING.SHARED.LINK_BY_TITLE, not setting)
-      end
+      end,
+      separator = true,
+    },
+    {
+      text_func = function()
+        local types = self.settings:autolinkSkipTypes()
+        return _("Never link automatically: ") .. (#types > 0 and table.concat(types, ", ") or _("none"))
+      end,
+      help_text = _("File types (e.g. cbz, cbr for manga and comics) that are never linked automatically, by any method. They can still be linked by hand with \"Link book\"."),
+      keep_menu_open = true,
+      callback = function(menu_instance)
+        local InputDialog = require("ui/widget/inputdialog")
+        local dialog
+        dialog = InputDialog:new {
+          title = _("Never link these file types automatically"),
+          input = table.concat(self.settings:autolinkSkipTypes(), ", "),
+          input_hint = "cbz, cbr, cb7",
+          description = _("File extensions, separated by commas. Leave empty to link every file type."),
+          buttons = {
+            {
+              {
+                text = _("Cancel"),
+                id = "close",
+                callback = function()
+                  UIManager:close(dialog)
+                end,
+              },
+              {
+                text = _("Save"),
+                is_enter_default = true,
+                callback = function()
+                  self.settings:setAutolinkSkipTypes(dialog:getInputText())
+                  UIManager:close(dialog)
+                  menu_instance:updateItems()
+                end,
+              },
+            },
+          },
+        }
+        UIManager:show(dialog)
+        dialog:onShowKeyboard()
+      end,
     },
   }
 end

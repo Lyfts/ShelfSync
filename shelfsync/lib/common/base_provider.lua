@@ -425,6 +425,14 @@ function BaseProvider:tryAutolink(done)
     return
   end
 
+  -- File types set to never be linked automatically (e.g. cbz for manga),
+  -- which can still be linked by hand.
+  if self.settings:autolinkSkipsFile(document.file) then
+    self.settings:debugLog(self.label .. ": tryAutolink - skipping this file type")
+    if done then done() end
+    return
+  end
+
   local identifiers = Book:parseIdentifiers(props.identifiers)
   local should_attempt = (hasProviderIdentifier(identifiers) and self.settings:readSetting(SETTING.SHARED.LINK_BY_IDENTIFIER) ~= false)
     or ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.SHARED.LINK_BY_ISBN) ~= false)
