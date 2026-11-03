@@ -3,6 +3,8 @@
 <!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
 
 ## Unreleased
+
+## 1.8.2
 - (feat) Choose file types (e.g. cbz for manga) that are never linked automatically, under Settings > Auto Book Link.
 
 ## 1.8.1
