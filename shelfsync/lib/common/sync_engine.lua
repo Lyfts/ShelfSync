@@ -353,7 +353,7 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
       end
     else
       self:cancelPendingUpdates()
-      Scheduler:clear()
+      self:cancelReadCache()
       -- Mirrors onSuspend/onNetworkDisconnecting: without resetting this,
       -- startReadCache() on re-enable just aborts as "already started" (it
       -- was never actually torn down), so process_page_turns never gets set
@@ -718,7 +718,7 @@ end
 function SyncEngine:onReaderReady()
   if self:isWikipediaDocument() then
     self:cancelPendingUpdates()
-    Scheduler:clear()
+    self:cancelReadCache()
     self.state.read_cache_started = false
     self.state.process_page_turns = false
     self.state.book_status = {}
@@ -785,7 +785,7 @@ function SyncEngine:onSuspend()
   self.settings:debugLog(self.label .. ": onSuspend - cancelling pending updates, read_cache_started was " .. tostring(self.state.read_cache_started))
   self:cancelPendingUpdates()
 
-  Scheduler:clear()
+  self:cancelReadCache()
   self.state.read_cache_started = false
 end
 
@@ -1050,7 +1050,7 @@ function SyncEngine:onNetworkDisconnecting()
   self.settings:debugLog(self.label .. ": onNetworkDisconnecting - page_update_pending=" .. tostring(self.page_update_pending))
   self:cancelPendingUpdates()
 
-  Scheduler:clear()
+  self:cancelReadCache()
   self.state.read_cache_started = false
 
   if self.page_update_pending and self.ui.document and self.state.book_status.id and self.settings:syncEnabled() and self.settings:trackByTime() then
@@ -1263,7 +1263,7 @@ function SyncEngine:startReadCache()
     UIManager:scheduleIn(delay, self.startReadCache, self)
   end
 
-  cancel = Scheduler:withRetries(6, 3, function(success, fail)
+  cancel = Scheduler:withRetries(6, 3, function(success, fail, is_cancelled)
       Trapper:wrap(function()
         if not self.ui.document then
           -- fail, but cancel retries
@@ -1284,6 +1284,12 @@ function SyncEngine:startReadCache()
             -- the automatic Currently Reading below can't cross a queued or
             -- manual status change for the book.
             self.cache:serializeUpdate(function(wifi_error)
+              -- Cancelled while this waited its turn or for Wi-Fi, e.g. by a
+              -- suspend or the provider being turned off.
+              if is_cancelled() then
+                return
+              end
+
               -- Wi-Fi restoration can take long enough for the reader to
               -- close this book or open another one. Don't let a stale cache
               -- request act on the new document (or on no document at all).
@@ -1308,6 +1314,11 @@ function SyncEngine:startReadCache()
               -- AutoWifi wraps delayed callbacks in Trapper and holds the
               -- shared Wi-Fi lease until cacheUserBook has returned.
               local err = self.cache:cacheUserBook()
+              -- Or while the lookup ran, so it can't add the book to Currently
+              -- Reading below, or retry.
+              if is_cancelled() then
+                return
+              end
               self:registerHighlight()
               logger.info(self.label .. ": startReadCache - cacheUserBook completed, status=" .. (self.state.book_status.status_id or "nil"))
               if err then
@@ -1382,7 +1393,7 @@ function SyncEngine:startReadCache()
           -- so it's not routed through fail() -- same as the synchronous
           -- no-match case, this chain simply ends here.
           self.provider:tryAutolink(function()
-            if self.settings:bookLinked() and self.settings:syncEnabled() then
+            if not is_cancelled() and self.settings:bookLinked() and self.settings:syncEnabled() then
               restart(2)
             end
           end)
@@ -1420,6 +1431,17 @@ function SyncEngine:startReadCache()
         })
       end
     end)
+  self._cancelReadCache = cancel
+end
+
+-- Stops this engine's book lookup and its retries, including a try that's
+-- already waiting for Wi-Fi or a request. Every provider's engine shares the
+-- Scheduler, so each one cancels only its own lookup.
+function SyncEngine:cancelReadCache()
+  if self._cancelReadCache then
+    self._cancelReadCache()
+    self._cancelReadCache = nil
+  end
 end
 
 function SyncEngine:registerHighlight()
