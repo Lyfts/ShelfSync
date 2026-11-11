@@ -1,29 +1,89 @@
 name: Releases
 
 on:
-  push:
-    tags:
-      - '*'
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Tag to release'
+      version:
+        description: 'Release version (MAJOR.MINOR.PATCH)'
         required: true
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate version and select release commit
+        id: version
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Run releases from main."
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must be MAJOR.MINOR.PATCH."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          bash tools/check_release.sh
+          if git show-ref --verify --quiet "refs/tags/$VERSION"; then
+            git merge-base --is-ancestor "refs/tags/$VERSION^{commit}" origin/main || {
+              echo "::error::Existing release tag is not on main."
+              exit 1
+            }
+            git checkout --detach "refs/tags/$VERSION^{commit}"
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare release metadata
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          RETRY: ${{ steps.version.outputs.retry }}
+        run: |
+          python3 tools/prepare_release.py "$VERSION"
+          if [[ "$RETRY" == true ]] && ! git diff --quiet -- CHANGELOG.md _meta.lua; then
+            echo "::error::Existing tag does not contain prepared release metadata."
+            exit 1
+          fi
+
+      - name: Check diff formatting
+        run: git diff --check
+
+      - name: Test release preparation
+        run: python3 -m unittest discover -s tools/tests -p "test_*.py"
 
       - name: Run Busted
         uses: lunarmodules/busted@v2
+
+      - name: Commit metadata and create tag
+        if: steps.version.outputs.retry != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md _meta.lua
+          if ! git diff --cached --quiet; then
+            git commit -m "Release $VERSION"
+          fi
+          git tag "$VERSION" HEAD
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/$VERSION"
 
       - name: Zip release
         run: |
@@ -40,14 +100,10 @@ jobs:
           zip -r shelfsync-fetch-cookies.zip shelfsync-fetch-cookies
 
       - name: Extract changelog section
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          VERSION="${TAG#v}"
-          # CHANGELOG.md headings are plain version numbers (e.g. "## 1.0.3"),
-          # and GitHub's heading-anchor slugifier drops punctuation like dots,
-          # so "1.0.3" -> "#103".
           ANCHOR="$(echo "$VERSION" | sed -E 's/[^A-Za-z0-9]//g')"
-
           awk -v ver="$VERSION" '
             $0 == "## " ver { found=1; next }
             found && /^## / { exit }
@@ -62,14 +118,16 @@ jobs:
             echo
             echo "---"
             echo
-            echo "Full changelog: [CHANGELOG.md](${{ github.server_url }}/${{ github.repository }}/blob/main/CHANGELOG.md#$ANCHOR)"
+            echo "Full changelog: [CHANGELOG.md]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/main/CHANGELOG.md#$ANCHOR)"
           } >> release_notes.md
 
       - name: Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ steps.version.outputs.version }}
           body_path: release_notes.md
+          overwrite_files: false
+          fail_on_unmatched_files: true
           files: |
             ../shelfsync.koplugin.zip
             ../shelfsync-fetch-cookies.zip
