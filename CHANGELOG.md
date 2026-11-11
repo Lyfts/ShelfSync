@@ -3,6 +3,7 @@
 <!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
 
 ## Unreleased
+- (feat) Manage the current book from a full-screen ShelfSync dashboard, opened from **Tools** or a gesture. Link books across services from one screen, edit progress and status together, and manage accounts and tracking in shared menus.
 - (fix) Stop retrying a book's status lookup when the reader sleeps, Wi-Fi drops (with "Enable wifi on demand" off) or the provider is turned off. The retries kept going, so sleeping and waking while the lookup failed added more each time, and a provider that had been turned off could still look the book up and mark it as Currently Reading.
 
 ## 1.8.2

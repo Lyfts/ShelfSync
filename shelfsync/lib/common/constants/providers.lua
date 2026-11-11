@@ -18,12 +18,17 @@ local GoodreadsSettings = require("shelfsync/lib/goodreads/settings")
 local FableSettings = require("shelfsync/lib/fable/settings")
 local PageboundSettings = require("shelfsync/lib/pagebound/settings")
 local LibraryThingSettings = require("shelfsync/lib/librarything/settings")
-local StoryGraphMenu = require("shelfsync/lib/storygraph/menu")
-local HardcoverMenu = require("shelfsync/lib/hardcover/menu")
-local GoodreadsMenu = require("shelfsync/lib/goodreads/menu")
-local FableMenu = require("shelfsync/lib/fable/menu")
-local PageboundMenu = require("shelfsync/lib/pagebound/menu")
-local LibraryThingMenu = require("shelfsync/lib/librarything/menu")
+local StoryGraphAccount = require("shelfsync/lib/storygraph/account_ui")
+local StoryGraphBookActions = require("shelfsync/lib/storygraph/book_actions")
+local HardcoverAccount = require("shelfsync/lib/hardcover/account_ui")
+local HardcoverBookActions = require("shelfsync/lib/hardcover/book_actions")
+local GoodreadsAccount = require("shelfsync/lib/goodreads/account_ui")
+local GoodreadsBookActions = require("shelfsync/lib/goodreads/book_actions")
+local FableAccount = require("shelfsync/lib/fable/account_ui")
+local FableBookActions = require("shelfsync/lib/fable/book_actions")
+local PageboundAccount = require("shelfsync/lib/pagebound/account_ui")
+local PageboundBookActions = require("shelfsync/lib/pagebound/book_actions")
+local LibraryThingAccount = require("shelfsync/lib/librarything/account_ui")
 
 local STORYGRAPH = require("shelfsync/lib/storygraph/constants")
 local HARDCOVER = require("shelfsync/lib/hardcover/constants")
@@ -46,7 +51,8 @@ local PROVIDERS = {
     provider_class = StoryGraph,
     settings_class = StoryGraphSettings,
     settings_filename = "storygraphsync_settings.lua",
-    menu_class = StoryGraphMenu,
+    account_ui = StoryGraphAccount,
+    book_actions = StoryGraphBookActions,
     highlight_menu_name = "13_0_make_storygraph_highlight_item",
     auth_setting_key = SETTING.STORYGRAPH.SESSION_COOKIE,
     auth_help_text = _([[Your StoryGraph session has expired. Syncing is paused.
@@ -55,9 +61,9 @@ To fix it:
 1. Log in to app.thestorygraph.com in a browser
 2. Open dev tools (F12) > Application/Storage > Cookies > app.thestorygraph.com
 3. Copy '_storygraph_session' and 'remember_user_token' values
-4. In KOReader: StoryGraph menu > Settings > Account (Cookies & Tokens), paste each one in
+4. In KOReader: ShelfSync > Connections > Accounts and sign in > StoryGraph, paste each one in
 
-Re-enable syncing afterwards from the StoryGraph menu.]]),
+Re-enable StoryGraph under ShelfSync > Connections > Enabled services.]]),
   },
   {
     key = "hardcover",
@@ -68,7 +74,8 @@ Re-enable syncing afterwards from the StoryGraph menu.]]),
     provider_class = Hardcover,
     settings_class = HardcoverSettings,
     settings_filename = "hardcoversync_settings.lua",
-    menu_class = HardcoverMenu,
+    account_ui = HardcoverAccount,
+    book_actions = HardcoverBookActions,
     highlight_menu_name = "13_1_make_hardcover_highlight_item",
     auth_setting_key = SETTING.HARDCOVER.API_TOKEN,
     auth_setting_keys = {
@@ -77,9 +84,9 @@ Re-enable syncing afterwards from the StoryGraph menu.]]),
     },
     auth_help_text = _([[Your Hardcover OAuth session or API token is invalid or has expired. Syncing is paused.
 
-To fix it, sign in again from Hardcover > Account (OAuth / API Token), or update the API token fallback there.
+To fix it, sign in again from ShelfSync > Connections > Accounts and sign in > Hardcover, or update the API token fallback there.
 
-Re-enable syncing afterwards from the Hardcover menu.]]),
+Re-enable Hardcover under ShelfSync > Connections > Enabled services.]]),
   },
   {
     key = "goodreads",
@@ -90,7 +97,8 @@ Re-enable syncing afterwards from the Hardcover menu.]]),
     provider_class = Goodreads,
     settings_class = GoodreadsSettings,
     settings_filename = "goodreadssync_settings.lua",
-    menu_class = GoodreadsMenu,
+    account_ui = GoodreadsAccount,
+    book_actions = GoodreadsBookActions,
     highlight_menu_name = "13_2_make_goodreads_highlight_item",
     auth_setting_key = SETTING.GOODREADS.SESSION_COOKIE,
     auth_help_text = _([[Your Goodreads session has expired or is invalid. Syncing is paused.
@@ -99,9 +107,9 @@ To fix it:
 1. Log in to goodreads.com in a browser
 2. Open dev tools (F12) > Network tab, reload the page
 3. Click any request to www.goodreads.com, find "Cookie" under Request Headers
-4. Right-click it > Copy Value, and paste the whole thing into Goodreads menu > Settings > Account (Cookie)
+4. Right-click it > Copy Value, and paste the whole thing into ShelfSync > Connections > Accounts and sign in > Goodreads
 
-Re-enable syncing afterwards from the Goodreads menu.]]),
+Re-enable Goodreads under ShelfSync > Connections > Enabled services.]]),
   },
   {
     key = "fable",
@@ -112,15 +120,16 @@ Re-enable syncing afterwards from the Goodreads menu.]]),
     provider_class = Fable,
     settings_class = FableSettings,
     settings_filename = "fablesync_settings.lua",
-    menu_class = FableMenu,
+    account_ui = FableAccount,
+    book_actions = FableBookActions,
     highlight_menu_name = "13_3_make_fable_highlight_item",
     auth_setting_key = SETTING.FABLE.REFRESH_TOKEN,
     auth_help_text = _([[Your Fable session has expired or is invalid. Syncing is paused.
 
 To fix it:
-Go to Fable menu > Account, and log in again with your Fable email and password.
+Go to ShelfSync > Connections > Accounts and sign in > Fable, and log in again with your Fable email and password.
 
-Re-enable syncing afterwards from the Fable menu.]]),
+Re-enable Fable under ShelfSync > Connections > Enabled services.]]),
   },
   {
     key = "pagebound",
@@ -131,15 +140,16 @@ Re-enable syncing afterwards from the Fable menu.]]),
     provider_class = Pagebound,
     settings_class = PageboundSettings,
     settings_filename = "pageboundsync_settings.lua",
-    menu_class = PageboundMenu,
+    account_ui = PageboundAccount,
+    book_actions = PageboundBookActions,
     highlight_menu_name = "13_4_make_pagebound_highlight_item",
     auth_setting_key = SETTING.PAGEBOUND.API_TOKEN,
     auth_help_text = _([[Your Pagebound session has expired or is invalid. Syncing is paused.
 
 To fix it:
-Open ShelfSync > Providers > Pagebound > Account and log in again with your Pagebound email and password.
+Open ShelfSync > Connections > Accounts and sign in > Pagebound and log in again with your Pagebound email and password.
 
-Re-enable syncing afterwards from the Pagebound menu.]]),
+Re-enable Pagebound under ShelfSync > Connections > Enabled services.]]),
   },
   {
     key = "librarything",
@@ -150,15 +160,15 @@ Re-enable syncing afterwards from the Pagebound menu.]]),
     provider_class = LibraryThing,
     settings_class = LibraryThingSettings,
     settings_filename = "librarythingsync_settings.lua",
-    menu_class = LibraryThingMenu,
+    account_ui = LibraryThingAccount,
     highlight_menu_name = "13_5_make_librarything_highlight_item",
     auth_setting_key = SETTING.LIBRARYTHING.SESSION_COOKIE,
     auth_help_text = _([[Your LibraryThing session has expired or is invalid. Syncing is paused.
 
 To fix it:
-Use ShelfSync > Providers > LibraryThing > Account > Sign in with LibraryThing, or enter its session cookies under Account > Session cookies (or in shelfsync_config.lua).
+Use ShelfSync > Connections > Accounts and sign in > LibraryThing > Sign in with LibraryThing, or enter its session cookies under LibraryThing > Session cookies (or in shelfsync_config.lua).
 
-Re-enable syncing afterwards from the LibraryThing menu.]]),
+Re-enable LibraryThing under ShelfSync > Connections > Enabled services.]]),
   },
 }
 

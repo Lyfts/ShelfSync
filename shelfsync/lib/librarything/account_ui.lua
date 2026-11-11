@@ -7,241 +7,26 @@ local Trapper = require("ui/trapper")
 
 local InfoMessage = require("ui/widget/infomessage")
 
-local _t = require("shelfsync/lib/common/table_util")
-
 local LIBRARYTHING = require("shelfsync/lib/librarything/constants")
-local ICON = require("shelfsync/lib/common/constants/icons")
-local SETTING = require("shelfsync/lib/common/constants/settings")
 
-local LibraryThingMenu = {}
-LibraryThingMenu.__index = LibraryThingMenu
+local Account = {}
 
-function LibraryThingMenu:new(o)
-  return setmetatable(o or {
-    enabled = true
-  }, self)
-end
-
-function LibraryThingMenu:isActive()
-  return self.settings:providerEnabled()
-    and self.api:hasCredential()
-    and (self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true)
-end
-
-function LibraryThingMenu:trackingDisabledReason()
-  if not self.settings:providerEnabled() then
-    return _("enable LibraryThing first")
+-- Runs `fn` once there's a network connection, with Wi-Fi turned on first
+-- if "Enable wifi on demand" is set, and inside Trapper for the requests.
+local function withNetwork(self, fn)
+  local wifi = self.provider and self.provider.wifi
+  if wifi then
+    wifi:withWifi(function(_wifi_enabled, wifi_error)
+      fn(wifi_error)
+    end)
+  else
+    Trapper:wrap(function() fn() end)
   end
-  if not self.api:hasCredential() then
-    return _("log in first")
-  end
-  if not self.enabled and self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) ~= true then
-    return _("update ShelfSync to continue")
-  end
-  if not self.settings:bookLinked() then
-    return _("link this book first")
-  end
-  return nil
-end
-
-function LibraryThingMenu:mainMenu()
-  return {
-    enabled_func = function()
-      return true
-    end,
-    text_func = function()
-      return self.settings:bookLinked() and _("LibraryThing: " .. ICON.LINK) or _("LibraryThing")
-    end,
-    sub_item_table_func = function()
-      local has_book = self.ui.document and true or false
-      return self:getSubMenuItems(has_book)
-    end,
-  }
-end
-
-function LibraryThingMenu:getSubMenuItems(book_view)
-  local menu_items = {
-    {
-      text = _("Enabled"),
-      checked_func = function()
-        return self.settings:providerEnabled()
-      end,
-      callback = function()
-        self.settings:setProviderEnabled(not self.settings:providerEnabled())
-      end,
-      separator = true,
-    },
-    book_view and {
-      text_func = function()
-        if self.settings:bookLinked() then
-          return self.librarything:getLinkedBookLabel()
-        else
-          return _("Link book")
-        end
-      end,
-      enabled_func = function()
-        return self:isActive()
-      end,
-      hold_callback = function(menu_instance)
-        if self.settings:bookLinked() then
-          self.settings:updateBookSetting(
-            self.ui.document.file,
-            {
-              _delete = { 'book_id', 'pages', 'title', 'link_method' }
-            }
-          )
-
-          menu_instance:updateItems()
-        end
-      end,
-      keep_menu_open = true,
-      callback = function(menu_instance)
-        if not self:isActive() then
-          return
-        end
-
-        local force_search = self.settings:bookLinked()
-
-        self.librarything:showLinkBookDialog(force_search, function()
-          menu_instance:updateItems()
-        end)
-      end,
-      separator = true
-    },
-    -- LibraryThing keeps no reading progress, so "tracking" here syncs the
-    -- book's status: Read (with the date) once it's finished.
-    book_view and {
-      text_func = function()
-        local reason = self:trackingDisabledReason()
-        if reason then
-          return T(_("Automatically sync status (%1)"), reason)
-        end
-        return _("Automatically sync status")
-      end,
-      help_text = _("Marks the book as Read on LibraryThing when you finish it in KOReader: sets today's finished date and moves it to the collection chosen under \"Read books go to\". LibraryThing doesn't track reading progress, so nothing is sent while reading."),
-      checked_func = function()
-        return self.settings:syncEnabled()
-      end,
-      enabled_func = function()
-        return self:isActive() and self.settings:bookLinked()
-      end,
-      callback = function()
-        local sync = not self.settings:syncEnabled()
-        self.settings:setSync(sync)
-      end,
-    },
-    book_view and {
-      text = _("Update status"),
-      enabled_func = function()
-        return self:isActive() and self.settings:bookLinked()
-      end,
-      sub_item_table_func = function()
-        self.cache:cacheUserBook()
-
-        return self:getStatusSubMenuItems()
-      end,
-      separator = true
-    },
-    {
-      text_func = function()
-        return T(_("Read books go to: %1"), self.api:readCollection().name)
-      end,
-      help_text = _("The LibraryThing collection a book is put in when it's marked as Read, after which it's taken out of Currently reading and To read."),
-      sub_item_table_func = function()
-        return self:getReadCollectionItems()
-      end,
-    },
-    {
-      text_func = function()
-        local source = self.api:addSource()
-        return T(_("Books not on LibraryThing: %1"), source and source.name or _("don't search"))
-      end,
-      help_text = _("When \"Link book\" finds no LibraryThing work, it searches this book source instead, as LibraryThing's \"Add books\" page does. Picking a result adds that edition to your library, which puts the book on LibraryThing."),
-      sub_item_table_func = function()
-        return self:getAddSourceItems()
-      end,
-    },
-    {
-      text = _("Account"),
-      sub_item_table_func = function()
-        return self:getAuthSubMenuItems()
-      end,
-    },
-  }
-  return _t.filter(menu_items, function(v)
-    return v
-  end)
-end
-
--- A radio item marking the current book with `status_id` (after
--- confirmation). LibraryThing has no Paused or Did Not Finish.
-function LibraryThingMenu:_statusMenuItem(icon, status_id)
-  return {
-    text = _(icon .. " " .. LIBRARYTHING.STATUS_NAME[status_id]),
-    checked_func = function()
-      return self.state.book_status.status_id == status_id
-    end,
-    callback = function(menu_instance)
-      -- Only refreshed if it's still showing once the change is done.
-      local item_table = menu_instance.item_table
-      self.dialog_manager:maybeConfirm({
-        text = ("Mark book as %s?"):format(LIBRARYTHING.STATUS_NAME[status_id]),
-        ok_callback = function()
-          self.cache:queueBookStatus(self.ui.document.file, status_id, function(saved)
-            if not saved then
-              self.dialog_manager:showError("Book status could not be updated")
-            end
-            if menu_instance.item_table == item_table then
-              menu_instance.item_table = self:getStatusSubMenuItems()
-              menu_instance:updateItems()
-            end
-          end)
-        end,
-        no_confirm_callback = function()
-          menu_instance:updateItems()
-        end
-      })
-    end,
-    radio = true
-  }
-end
-
-function LibraryThingMenu:getStatusSubMenuItems()
-  return {
-    self:_statusMenuItem(ICON.BOOKMARK, LIBRARYTHING.STATUS.TO_READ),
-    self:_statusMenuItem(ICON.OPEN_BOOK, LIBRARYTHING.STATUS.READING),
-    self:_statusMenuItem(ICON.CHECKMARK, LIBRARYTHING.STATUS.FINISHED),
-    {
-      text = _(ICON.TRASH .. " Remove"),
-      help_text = _("Takes the book out of Currently reading and To read. It stays in your library, with its reading dates."),
-      enabled_func = function()
-        return self:isActive() and self.state.book_status.status_id ~= nil
-      end,
-      callback = function(menu_instance)
-        -- Only refreshed if it's still showing once the change is done.
-        local item_table = menu_instance.item_table
-        self.dialog_manager:maybeConfirm({
-          text = "Remove current book status?",
-          ok_callback = function()
-            self.cache:queueBookRemoval(self.ui.document.file, function(removed)
-              if not removed then
-                self.dialog_manager:showError("Book status could not be removed")
-              elseif menu_instance.item_table == item_table then
-                menu_instance.item_table = self:getStatusSubMenuItems()
-                menu_instance:updateItems()
-              end
-            end)
-          end
-        })
-      end,
-      keep_menu_open = true,
-    },
-  }
 end
 
 -- The book sources "Link book" can search for a book that isn't a
 -- LibraryThing work yet, or none.
-function LibraryThingMenu:getAddSourceItems()
+function Account.getAddSourceItems(self)
   local items = {}
   for _, source in ipairs(LIBRARYTHING.ADD_SOURCES) do
     table.insert(items, {
@@ -272,7 +57,7 @@ end
 
 -- The account's collections a read book can go to: any but Currently
 -- reading and To read, which are statuses of their own.
-function LibraryThingMenu:getReadCollectionItems()
+function Account.getReadCollectionItems(self)
   local reading = self.api:collectionId(LIBRARYTHING.COLLECTION.READING)
   local to_read = self.api:collectionId(LIBRARYTHING.COLLECTION.TO_READ)
   local items = {}
@@ -306,7 +91,7 @@ function LibraryThingMenu:getReadCollectionItems()
       local item_table = menu_instance.item_table
       local info = InfoMessage:new { text = _("Getting your LibraryThing collections...") }
       UIManager:show(info)
-      self:_withNetwork(function(wifi_error)
+      withNetwork(self, function(wifi_error)
         local collections, err
         if wifi_error then
           err = wifi_error
@@ -320,7 +105,7 @@ function LibraryThingMenu:getReadCollectionItems()
             icon = "notice-warning",
           })
         elseif menu_instance.item_table == item_table then
-          menu_instance.item_table = self:getReadCollectionItems()
+          menu_instance.item_table = Account.getReadCollectionItems(self)
           menu_instance:updateItems()
         end
       end)
@@ -329,20 +114,7 @@ function LibraryThingMenu:getReadCollectionItems()
   return items
 end
 
--- Runs `fn` once there's a network connection, with Wi-Fi turned on first
--- if "Enable wifi on demand" is set, and inside Trapper for the requests.
-function LibraryThingMenu:_withNetwork(fn)
-  local wifi = self.librarything and self.librarything.wifi
-  if wifi then
-    wifi:withWifi(function(_wifi_enabled, wifi_error)
-      fn(wifi_error)
-    end)
-  else
-    Trapper:wrap(function() fn() end)
-  end
-end
-
-function LibraryThingMenu:getAuthSubMenuItems()
+function Account.items(self)
   return {
     {
       text = _("Sign in with LibraryThing"),
@@ -469,7 +241,7 @@ librarything.com is protected by Cloudflare, which can ask a browser to prove it
       callback = function()
         local info = InfoMessage:new { text = _("Testing LibraryThing connection...") }
         UIManager:show(info)
-        self:_withNetwork(function(wifi_error)
+        withNetwork(self, function(wifi_error)
           local ok, err
           if wifi_error then
             err = wifi_error
@@ -516,4 +288,4 @@ librarything.com is protected by Cloudflare, which can ask a browser to prove it
   }
 end
 
-return LibraryThingMenu
+return Account

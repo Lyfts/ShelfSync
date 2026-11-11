@@ -31,7 +31,10 @@ mkdir -p "$STAGE_DIR"
 
 git ls-files --cached --others --exclude-standard -z |
   grep -zv -E "$EXCLUDE_RE" |
-  xargs -0 cp --parents --target-directory="$STAGE_DIR"
+  while IFS= read -r -d '' file; do
+    if [ -e "$file" ]; then printf '%s\0' "$file"; fi
+  done |
+  xargs -0 -r cp --parents --target-directory="$STAGE_DIR"
 
 (cd "$BUILD_DIR" && 7z a -tzip "$ZIP_PATH" "$PLUGIN_NAME" >/dev/null)
 rm -rf "$STAGE_DIR"

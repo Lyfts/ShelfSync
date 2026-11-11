@@ -67,11 +67,22 @@ local SyncEngine = require("shelfsync/lib/common/sync_engine")
 local User = require("shelfsync/lib/common/user")
 
 local DialogManager = require("shelfsync/lib/common/ui/dialog_manager")
+local Dashboard = require("shelfsync/lib/common/ui/dashboard")
+local ManualLinkDialog = require("shelfsync/lib/common/manual_link_dialog")
 local CommonMenu = require("shelfsync/lib/common/menu")
 local ReviewMenu = require("shelfsync/lib/common/review_menu")
 
 local SETTING = require("shelfsync/lib/common/constants/settings")
 local PROVIDERS = require("shelfsync/lib/common/constants/providers")
+local STATUS_CONSTANTS = require("shelfsync/lib/common/constants/status")
+
+local COMMON_STATUS_IDS = {
+  [STATUS_CONSTANTS.STATUS.TO_READ] = true,
+  [STATUS_CONSTANTS.STATUS.READING] = true,
+  [STATUS_CONSTANTS.STATUS.FINISHED] = true,
+  [STATUS_CONSTANTS.STATUS.PAUSED] = true,
+  [STATUS_CONSTANTS.STATUS.DNF] = true,
+}
 
 local MANDATORY_UPDATE_MESSAGE = _("A mandatory update is required due to StoryGraph/Goodreads API changes. Please update the plugin to continue.")
 
@@ -99,6 +110,13 @@ local ShelfSyncApp = WidgetContainer:extend {
 }
 
 function ShelfSyncApp:onDispatcherRegisterActions()
+  Dispatcher:registerAction("shelfsync_open_dashboard", {
+    category = "none",
+    event = "ShelfSyncOpenDashboard",
+    title = _("ShelfSync: Open dashboard"),
+    general = true,
+  })
+
   Dispatcher:registerAction("shelfsync_update_all_progress", {
     category = "none",
     event = "ShelfSyncUpdateAllProgress",
@@ -202,22 +220,6 @@ function ShelfSyncApp:_buildEngine(provider, settings, plugin_settings)
     state = state,
   }
 
-  local menu = provider.menu_class:new {
-    app = self,
-    enabled = true,
-    api = provider.api,
-    user = user,
-    cache = cache,
-    dialog_manager = dialog_manager,
-    [provider.key] = provider_instance,
-    page_mapper = page_mapper,
-    settings = settings,
-    plugin_settings = plugin_settings,
-    state = state,
-    ui = self.ui,
-  }
-  engine.menu = menu
-
   settings:subscribe(function(field, change, original_value)
     engine:onSettingsChanged(field, change, original_value)
   end)
@@ -283,7 +285,7 @@ function ShelfSyncApp:init()
     UIManager:nextTick(function()
       if not hardcover.settings:hasPendingOAuthScopeNotice() then return end
       UIManager:show(InfoMessage:new {
-        text = _([[Hardcover OAuth permissions changed. You have been signed out of OAuth; sign in again from Hardcover > Account (OAuth / API Token) to authorize the current permissions. Your API token fallback is unchanged.]]),
+        text = _([[Hardcover OAuth permissions changed. You have been signed out of OAuth; sign in again from ShelfSync > Connections > Accounts and sign in > Hardcover to authorize the current permissions. Your API token fallback is unchanged.]]),
         icon = "notice-warning",
       })
       hardcover.settings:clearPendingOAuthScopeNotice()
@@ -292,6 +294,14 @@ function ShelfSyncApp:init()
 
   self.common_menu = CommonMenu:new { settings = plugin_settings, app = self }
   self.review_menu = ReviewMenu:new { settings = plugin_settings, app = self }
+  self.manual_link_dialog = ManualLinkDialog:new {
+    ui = self.ui, engines = self.engines, providers = PROVIDERS,
+  }
+  for _, provider in ipairs(PROVIDERS) do
+    self.engines[provider.key].manual_link_dialog = self.manual_link_dialog
+    self.engines[provider.key].provider_key = provider.key
+  end
+  self.dashboard = Dashboard:new { app = self }
 
   self:onDispatcherRegisterActions()
   self.ui.menu:registerToMainMenu(self)
@@ -504,6 +514,104 @@ function ShelfSyncApp:onShelfSyncUpdateAllProgress()
   return true
 end
 
+function ShelfSyncApp:onShelfSyncSetCommonStatus(status_id, done_callback, selected)
+  if not COMMON_STATUS_IDS[status_id] then
+    return true
+  end
+  if not self.ui.document then
+    UIManager:show(InfoMessage:new { text = _("No book is open.") })
+    return true
+  end
+
+  local filename = self.ui.document.file
+
+  local linked, active, unsupported, book_ids = false, {}, {}, {}
+  for _, provider in ipairs(PROVIDERS) do
+    local engine = self.engines[provider.key]
+    if (not selected or selected[provider.key]) and engine.settings:bookLinked() then
+      linked = true
+      local supported = (status_id ~= STATUS_CONSTANTS.STATUS.PAUSED and status_id ~= STATUS_CONSTANTS.STATUS.DNF)
+        or (provider.key ~= "librarything" and (status_id ~= STATUS_CONSTANTS.STATUS.PAUSED or provider.key ~= "fable"))
+      if engine:isActive() and supported then
+        table.insert(active, engine)
+        book_ids[engine] = engine.settings:readBookSetting(filename, "book_id")
+      elseif engine:isActive() and not supported then
+        table.insert(unsupported, engine.label)
+      end
+    end
+  end
+
+  if #active == 0 then
+    UIManager:show(InfoMessage:new {
+      text = #unsupported > 0
+        and (_("This status is not supported on ") .. table.concat(unsupported, ", ") .. ".")
+        or linked
+        and _("No linked service is ready. Check provider enablement and sign-in.")
+        or _("Select an active linked service first."),
+      icon = "notice-warning",
+    })
+    return true
+  end
+
+  local labels = {}
+  for _, engine in ipairs(active) do
+    table.insert(labels, engine.label)
+  end
+
+  local function updateAll()
+    local updated, failed = {}, {}
+    local function updateNext(index)
+      local engine = active[index]
+      if not engine then
+        local messages = {}
+        if #updated > 0 then
+          table.insert(messages, _("Status updated to ") .. _(STATUS_CONSTANTS.STATUS_NAME[status_id])
+            .. _(" on ") .. table.concat(updated, ", ") .. ".")
+        end
+        if #failed > 0 then
+          table.insert(messages, _("Status could not be updated on ") .. table.concat(failed, ", ") .. ".")
+        end
+        if #unsupported > 0 then
+          table.insert(messages, _("Status is not supported on ") .. table.concat(unsupported, ", ") .. ".")
+        end
+        if done_callback then
+          done_callback()
+        end
+        UIManager:show(InfoMessage:new {
+          text = table.concat(messages, "\n"),
+          icon = #failed > 0 and "notice-warning" or nil,
+          timeout = #failed == 0 and 3 or nil,
+        })
+        return
+      end
+
+      if tostring(engine.settings:readBookSetting(filename, "book_id")) ~= tostring(book_ids[engine]) then
+        table.insert(failed, engine.label)
+        return updateNext(index + 1)
+      end
+      engine.cache:queueBookStatus(filename, status_id, function(saved)
+        table.insert(saved and updated or failed, engine.label)
+        updateNext(index + 1)
+      end)
+    end
+    updateNext(1)
+  end
+
+  self.engines.storygraph.dialog_manager:maybeConfirm({
+    text = _("Set status to ") .. _(STATUS_CONSTANTS.STATUS_NAME[status_id])
+      .. _(" on ") .. table.concat(labels, ", ") .. "?"
+      .. (#unsupported > 0 and ("\n" .. _("Not supported on ") .. table.concat(unsupported, ", ") .. ".") or ""),
+    ok_text = _("Set status"),
+    ok_callback = updateAll,
+  })
+  return true
+end
+
+function ShelfSyncApp:onShelfSyncOpenDashboard()
+  self.dashboard:show()
+  return true
+end
+
 -- ReaderUI sends "CloseDocument" while the document is still open.
 function ShelfSyncApp:onCloseDocument()
   for _, engine in pairs(self.engines) do
@@ -574,71 +682,13 @@ function ShelfSyncApp:onShelfSyncBookFinished(filename)
 end
 
 function ShelfSyncApp:addToMainMenu(menu_items)
-  local provider_items = {}
-  for _, provider in ipairs(PROVIDERS) do
-    table.insert(provider_items, self.engines[provider.key].menu:mainMenu())
-  end
-
-  local sub_items = {}
-  table.insert(sub_items, {
-    text = _("Providers"),
-    sub_item_table = provider_items,
-  })
-
-  if self.ui.document then
-    table.insert(sub_items, {
-      text = _("Review"),
-      keep_menu_open = true,
-      callback = function()
-        self.review_menu:show()
-      end,
-    })
-  end
-
-  table.insert(sub_items, {
-    text = _("Settings"),
-    sub_item_table_func = function()
-      return self.common_menu:getSubMenuItems()
-    end,
-  })
-
-  table.insert(sub_items, {
-    text = _("About"),
-    keep_menu_open = true,
-    callback = function()
-      local Font = require("ui/font")
-      local Github = require("shelfsync/lib/common/github")
-      local VERSION = require("shelfsync_version")
-
-      local info = Github:fetchVersionInfo()
-      local version = table.concat(VERSION, ".")
-      local new_release_str = ""
-      if info and info.plugin_version and Github:isNewer(info.plugin_version) then
-        new_release_str = " (latest v" .. info.plugin_version .. ")"
-      end
-
-      UIManager:show(InfoMessage:new {
-        text = [[
-ShelfSync plugin
-v]] .. version .. new_release_str .. [[
-
-
-Synchronizes reading progress, notes, and status to The StoryGraph, Hardcover, Goodreads, Fable, Pagebound, and/or LibraryThing.
-
-See each service's submenu under Providers for service-specific settings.
-
-Project:
-github.com/Lyfts/ShelfSync]],
-        face = Font:getFace("cfont", 18),
-        show_icon = false,
-      })
-    end,
-  })
-
-  menu_items.shelfsync = {
+  -- A new ID bypasses saved KOReader orders that placed ShelfSync under More tools.
+  menu_items.shelfsync_dashboard = {
     text = _("ShelfSync"),
-    sorting_hint = "more_tools",
-    sub_item_table = sub_items,
+    sorting_hint = "tools",
+    callback = function()
+      self.dashboard:show()
+    end,
   }
 end
 

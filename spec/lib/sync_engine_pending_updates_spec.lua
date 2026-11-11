@@ -25,7 +25,6 @@ local HardcoverApi = require("shelfsync/lib/hardcover/api")
 package.loaded["ui/widget/spinwidget"] = package.loaded["ui/widget/spinwidget"] or {}
 package.loaded["shelfsync/lib/common/ui/update_double_spin_widget"] =
   package.loaded["shelfsync/lib/common/ui/update_double_spin_widget"] or {}
-local HardcoverMenu = require("shelfsync/lib/hardcover/menu")
 local HARDCOVER_CONST = require("shelfsync/lib/hardcover/constants")
 local GoodreadsProvider = require("shelfsync/lib/goodreads/provider")
 local GoodreadsSettings = require("shelfsync/lib/goodreads/settings")
@@ -190,26 +189,25 @@ describe("SyncEngine pending updates", function()
       UIManager:_runUntilIdle()
     end
 
-    -- Chooses the status menu item named `name` (after its icon), and confirms it.
-    local function chooseFromMenu(name, menu_instance)
-      local menu = HardcoverMenu:new {
-        api = api, cache = engine.cache, state = engine.state, ui = ui, settings = engine.settings,
-        dialog_manager = {
-          maybeConfirm = function(_, options) options.ok_callback() end,
-          showError = function(_, text) table.insert(shown, text) end,
-        },
-      }
-      for _, item in ipairs(menu:getStatusSubMenuItems()) do
-        if item.text and item.text:match("^%S+ (.*)$") == name then
-          item.callback(menu_instance or { updateItems = function() end })
-          return
+    local function queueManualChange(name)
+      if name == "Remove" then
+        engine.cache:queueBookRemoval(ui.document.file, function(ok)
+          if not ok then table.insert(shown, "Book status could not be removed") end
+        end)
+      else
+        local status_id
+        for id, label in pairs(HARDCOVER_CONST.STATUS_NAME) do
+          if label == name then status_id = id break end
         end
+        assert(status_id, "Unknown status: " .. name)
+        engine.cache:queueBookStatus(ui.document.file, status_id, function(ok)
+          if not ok then table.insert(shown, "Book status could not be updated") end
+        end)
       end
-      error(name .. " menu item not found")
     end
 
     local function removeBook()
-      chooseFromMenu("Remove")
+      queueManualChange("Remove")
     end
 
     local function pagesSent()
@@ -1162,7 +1160,7 @@ describe("SyncEngine pending updates", function()
       openBook()
       engine.settings:updateSetting(SETTING.SHARED.ENABLE_WIFI, true)
 
-      chooseFromMenu(HARDCOVER_CONST.STATUS_NAME[STATUS.READING])
+      queueManualChange(HARDCOVER_CONST.STATUS_NAME[STATUS.READING])
       UIManager:_runUntilIdle()
       goOnline()
       flushFromFileBrowser()
@@ -1364,48 +1362,17 @@ describe("SyncEngine pending updates", function()
       assert.is_nil(pending(settings, FILE))
     end)
 
-    it("says when a status chosen from the menu couldn't be set", function()
+    it("reports when a queued status change could not be set", function()
       goOnline()
       openBook()
       goOffline()
 
-      chooseFromMenu(HARDCOVER_CONST.STATUS_NAME[STATUS.FINISHED])
+      queueManualChange(HARDCOVER_CONST.STATUS_NAME[STATUS.FINISHED])
       UIManager:_runUntilIdle()
 
       assert.are.same({ STATUS.FINISHED }, calls.updateUserBook)
       assert.are.same({ "Book status could not be updated" }, shown)
       assert.is_nil(pending(settings))
-    end)
-
-    it("refreshes the status menu once a status is set, unless another menu was opened in the meantime", function()
-      goOnline()
-      openBook()
-      engine.settings:updateSetting(SETTING.SHARED.ENABLE_WIFI, true)
-      goOffline()
-      local status_items = {}
-      local menu_instance = { item_table = status_items, updateItems = function() end }
-
-      chooseFromMenu(HARDCOVER_CONST.STATUS_NAME[STATUS.FINISHED], menu_instance)
-      UIManager:_runUntilIdle()
-      assert.are.equal(STATUS.FINISHED, remote.status_id)
-      assert.are_not.equal(status_items, menu_instance.item_table)
-
-      -- e.g. back up to the parent menu while Wi-Fi is being restored
-      goOffline()
-      local other_items = {}
-      chooseFromMenu(HARDCOVER_CONST.STATUS_NAME[STATUS.READING], menu_instance)
-      menu_instance.item_table = other_items
-      UIManager:_runUntilIdle()
-      assert.are.equal(STATUS.READING, remote.status_id)
-      assert.are.equal(other_items, menu_instance.item_table)
-
-      goOffline()
-      menu_instance.item_table = status_items
-      chooseFromMenu("Remove", menu_instance)
-      menu_instance.item_table = other_items
-      UIManager:_runUntilIdle()
-      assert.is_nil(remote.status_id)
-      assert.are.equal(other_items, menu_instance.item_table)
     end)
 
     it("doesn't send live progress allowed before a removal that took its turn first", function()
