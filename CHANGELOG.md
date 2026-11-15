@@ -3,6 +3,8 @@
 <!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
 
 ## Unreleased
+
+## 1.8.4
 - (fix) Don't send a jump, e.g. following a link, a table of contents entry or Go to page, as reading progress. Going back afterwards sent nothing, so the jump stayed as your progress. Jumps are recognised by the location KOReader saves to its history before them. Pages read from there are still sent as usual, and closing the book with no page turned since a jump uses the page it started from.
 
 ## 1.8.3
