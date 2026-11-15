@@ -3,6 +3,7 @@
 <!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
 
 ## Unreleased
+- (fix) Don't send a jump, e.g. following a link, a table of contents entry or Go to page, as reading progress. Going back afterwards sent nothing, so the jump stayed as your progress. Jumps are recognised by the location KOReader saves to its history before them. Pages read from there are still sent as usual, and closing the book with no page turned since a jump uses the page it started from.
 
 ## 1.8.3
 - (fix) Stop retrying a book's status lookup when the reader sleeps, Wi-Fi drops (with "Enable wifi on demand" off) or the provider is turned off. The retries kept going, so sleeping and waking while the lookup failed added more each time, and a provider that had been turned off could still look the book up and mark it as Currently Reading.
