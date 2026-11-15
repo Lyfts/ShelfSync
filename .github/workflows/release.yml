@@ -21,10 +21,19 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/create-github-app-token@v3
+        id: release-token
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
+          token: ${{ steps.release-token.outputs.token }}
+          persist-credentials: true
 
       - name: Validate version and select release commit
         id: version
