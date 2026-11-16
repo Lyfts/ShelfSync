@@ -3,8 +3,8 @@ local config = (config_ok and shelfsync_config.storygraph) or {}
 local logger = require("shelfsync/lib/common/safe_logger")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
-local T = require("ffi/util").template
 local Trapper = require("ui/trapper")
+local UIManager = require("ui/uimanager")
 local NetworkManager = require("ui/network/manager")
 local socketutil = require("socketutil")
 local htmlparser = require("htmlparser")
@@ -12,11 +12,52 @@ local htmlparser = require("htmlparser")
 local SETTING = require("shelfsync/lib/common/constants/settings")
 
 local base_url = "https://app.thestorygraph.com"
+local subprocess_retry_ui_delay = 0.1
+
+-- Trapper can replay the tap that dismissed a subprocess; let the UI handle it
+-- before opening the retry, or that same tap may dismiss the retry too.
+local function yield_before_subprocess_retry()
+  local co, is_main_thread = coroutine.running()
+  if not co or is_main_thread then return end
+
+  UIManager:scheduleIn(subprocess_retry_ui_delay, function()
+    coroutine.resume(co)
+  end)
+  coroutine.yield()
+end
+
+local function response_cookie(headers, name)
+  local values = headers and (headers["set-cookie"] or headers["Set-Cookie"]) or ""
+  if type(values) == "table" then values = table.concat(values, ", ") end
+  return ("; " .. tostring(values)):match("[;,]%s*" .. name .. "=([^;,\r\n]+)")
+end
 
 local StoryGraphApi = {
   enabled = true,
   settings = nil, -- Injected by main.lua
 }
+
+local function setting_cookie(self, key, config_key)
+  local value = self.settings and self.settings:readSetting(key)
+  if not value or value == "" then value = config_key and config[config_key] or "" end
+  return value or ""
+end
+
+local function cookie_header(self, session_override)
+  local session = session_override
+  if session == nil then
+    session = setting_cookie(self, SETTING.STORYGRAPH.SESSION_COOKIE, "session_cookie")
+  end
+  local remember = setting_cookie(self, SETTING.STORYGRAPH.REMEMBER_TOKEN, "remember_user_token")
+  local header = "remember_user_token=" .. remember .. "; cookies_popup_seen=yes; plus_popup_seen=yes; _storygraph_session=" .. session
+  return header
+end
+
+local function is_same_origin_redirect(location)
+  if type(location) ~= "string" or location == "" then return false end
+  if location:sub(1, 1) == "/" then return location:sub(1, 2) ~= "//" end
+  return location:match("^https://app%.thestorygraph%.com/") ~= nil
+end
 
 local function request_field_names(data)
   if type(data) ~= "table" then
@@ -32,16 +73,7 @@ end
 
 -- Private helper to build headers with cookies
 local function get_headers(self, custom_headers)
-  local session = ""
-  local remember = ""
-  
-  if self.settings then
-    session = self.settings:readSetting(SETTING.STORYGRAPH.SESSION_COOKIE)
-    remember = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN)
-  end
-  
-  if not session or session == "" then session = config.session_cookie or "" end
-  if not remember or remember == "" then remember = config.remember_user_token or "" end
+  local session = setting_cookie(self, SETTING.STORYGRAPH.SESSION_COOKIE, "session_cookie")
 
   if session == "" then
     logger.warn("StoryGraph: No session cookie found!")
@@ -51,13 +83,13 @@ local function get_headers(self, custom_headers)
 
   local headers = {
     ["User-Agent"] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-    ["Cookie"] = "remember_user_token=" .. remember .. "; cookies_popup_seen=yes; plus_popup_seen=yes; _storygraph_session=" .. session,
+    ["Cookie"] = cookie_header(self),
     ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     ["Accept-Language"] = "en",
     ["Sec-Ch-Ua"] = '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
     ["Sec-Ch-Ua-Mobile"] = "?0",
     ["Sec-Ch-Ua-Platform"] = '"macOS"',
-    ["Origin"] = "https://app.thestorygraph.com",
+    ["Origin"] = base_url,
     ["DNT"] = "1",
     ["Sec-Fetch-Dest"] = "empty",
     ["Sec-Fetch-Mode"] = "cors",
@@ -77,11 +109,7 @@ end
 -- remember_user_token is a supplementary refresh cookie, not itself
 -- sufficient, so only the session cookie is checked here.
 function StoryGraphApi:hasCredential()
-  local session = ""
-  if self.settings then
-    session = self.settings:readSetting(SETTING.STORYGRAPH.SESSION_COOKIE)
-  end
-  if not session or session == "" then session = config.session_cookie or "" end
+  local session = setting_cookie(self, SETTING.STORYGRAPH.SESSION_COOKIE, "session_cookie")
   return session ~= ""
 end
 
@@ -254,19 +282,10 @@ function StoryGraphApi:login(email, password)
       }
       socketutil:reset_timeout()
       response_headers = response_headers or {}
-      -- Only status and challenge presence are logged: no credentials,
-      -- cookies, CSRF tokens, or response bodies.
       logger.info("StoryGraph: Login " .. method .. " /users/sign_in: HTTP "
         .. tostring(tonumber(code) or "unavailable") .. "; Cloudflare challenge="
         .. tostring(response_headers["cf-mitigated"] == "challenge"))
       return ok and tonumber(code), table.concat(sink), response_headers
-    end
-    local function cookie(headers, name)
-      local values = headers["set-cookie"] or ""
-      if type(values) == "table" then values = table.concat(values, ", ") end
-      -- LuaSocket combines repeated Set-Cookie headers. Anchor cookie names
-      -- to separators, without splitting on commas inside Expires dates.
-      return ("; " .. values):match("[;,]%s*" .. name .. "=([^;,\r\n]+)")
     end
     local function failure(stage, code, headers)
       local detail = stage .. " (HTTP " .. tostring(code or "unavailable") .. ")"
@@ -285,24 +304,29 @@ function StoryGraphApi:login(email, password)
     end
     -- A fresh extractor cannot fall back to a previous account's CSRF token.
     local csrf = self.extract_csrf({}, html)
-    local session = cookie(headers, "_storygraph_session")
+    local session = response_cookie(headers, "_storygraph_session")
     if not csrf or not session then
       return "error|Login page load (GET, HTTP 200) did not return a usable login form and session cookie. Try importing browser cookies."
     end
     csrf = decode_entities(csrf)
+    local return_to = html:match([[<input%s+[^>]-name=["']return_to["'][^>]-value=["']([^"']*)["'][^>]*>]])
+      or html:match([[<input%s+[^>]-value=["']([^"']*)["'][^>]-name=["']return_to["'][^>]*>]])
     local body = "authenticity_token=" .. urlencode(csrf)
       .. "&user%5Bemail%5D=" .. urlencode(email)
       .. "&user%5Bpassword%5D=" .. urlencode(password)
       .. "&user%5Bremember_me%5D=1"
+    if return_to ~= nil then
+      body = body .. "&return_to=" .. urlencode(decode_entities(return_to))
+    end
     code, html, headers = send("POST", body, "_storygraph_session=" .. session, csrf)
     if headers["cf-mitigated"] == "challenge" then
       return failure("login submission (POST)", code, headers)
     end
     local location = headers.location
-    local authenticated_session = cookie(headers, "_storygraph_session")
-    local remember = cookie(headers, "remember_user_token")
+    local authenticated_session = response_cookie(headers, "_storygraph_session")
+    local remember = response_cookie(headers, "remember_user_token")
     if (code == 303 or code == 302)
-        and (location == base_url .. "/" or location == "/")
+        and is_same_origin_redirect(location)
         and authenticated_session and remember then
       return "ok|" .. authenticated_session .. "|" .. remember
     end
@@ -401,12 +425,14 @@ function StoryGraphApi:request(url, method, data, custom_headers)
       logger.info("StoryGraph: POST response code=" .. tostring(code)
         .. " content_type=" .. tostring(_headers and _headers["content-type"] or "unknown")
         .. " response_length=" .. #response_body
-        .. " location=" .. tostring(_headers and _headers["location"] or "none"))
+        .. " location=" .. tostring(_headers and _headers["location"] or "none")
+        .. " cf_mitigated=" .. tostring(_headers and _headers["cf-mitigated"] or "none"))
     end
     -- Encode headers as a string to pass back through the Trapper
     local header_str = ""
     if _headers then
       for k, v in pairs(_headers) do
+        if type(v) == "table" then v = table.concat(v, ", ") end
         header_str = header_str .. k .. "=" .. tostring(v) .. "\n"
       end
     end
@@ -424,7 +450,10 @@ function StoryGraphApi:request(url, method, data, custom_headers)
     if completed then break end
     if self.settings and attempt == 1 then
       self.settings:debugWarn("StoryGraph: request() subprocess did not complete on first attempt for "
-        .. url .. ", retrying once")
+        .. url .. ", yielding to UI before retrying once")
+    end
+    if attempt == 1 then
+      yield_before_subprocess_retry()
     end
   end
 
@@ -439,8 +468,8 @@ function StoryGraphApi:request(url, method, data, custom_headers)
     end
     local code_num = tonumber(code)
     if code_num and headers["set-cookie"] then
-      local session_val = headers["set-cookie"]:match("_storygraph_session=([^;]+)")
-      if session_val and self.settings then
+      local session_val = response_cookie(headers, "_storygraph_session")
+      if session_val ~= nil and self.settings then
         logger.info("StoryGraph: Automatically saving refreshed session from response")
         self.settings:updateSetting(SETTING.STORYGRAPH.SESSION_COOKIE, session_val)
       end
@@ -577,9 +606,14 @@ end
 function StoryGraphApi:findUserBook(book_id, user_id, is_recursion)
   if not book_id then return {} end
   local book_url = base_url .. "/books/" .. book_id
-  local code, html = self:request(book_url, "GET")
+  local code, html, headers = self:request(book_url, "GET")
   
   if code ~= 200 then
+    logger.warn("StoryGraph: Book status fetch failed: HTTP " .. tostring(code)
+      .. " content_type=" .. tostring(headers and headers["content-type"] or "unknown")
+      .. " cf_mitigated=" .. tostring(headers and headers["cf-mitigated"] or "none")
+      .. " response_length=" .. tostring(html and #html or 0)
+      .. " location=" .. tostring(headers and headers.location or "none"))
     return {}, "Failed to fetch book"
   end
 
@@ -591,8 +625,13 @@ function StoryGraphApi:findUserBook(book_id, user_id, is_recursion)
   self.settings:debugLog("StoryGraph: findUserBook book_id=" .. tostring(book_id) .. " html_length=" .. #html)
   local label_pos = html:find("read-status-label", 1, true)
   if not label_pos then
+    local sign_in_page = html:find("sign_in", 1, true) ~= nil or html:find("Sign [Ii]n") ~= nil
+    logger.info("StoryGraph: Book page has no read-status-label; cf_mitigated="
+      .. tostring(headers and headers["cf-mitigated"] or "none")
+      .. " sign_in_page=" .. tostring(sign_in_page) .. " response_length=" .. #html)
     self.settings:debugWarn("StoryGraph: 'read-status-label' not found anywhere in response html")
-    if html:find("sign_in", 1, true) or html:find("Sign [Ii]n") then
+    if sign_in_page then
+      logger.warn("StoryGraph: Book page response appears logged out; HTML length=" .. #html)
       self.settings:debugWarn("StoryGraph: response looks like a sign-in/logged-out page")
     end
   else
@@ -858,9 +897,14 @@ function StoryGraphApi:updateUserBook(book_id, status_id)
     [5] = "did-not-finish"
   }
   local status_str = status_map[status_id] or "currently-reading"
+  logger.info("StoryGraph: Status update started: " .. status_str)
   
   local book_url = base_url .. "/books/" .. book_id
   local get_code, html, get_resp_headers = self:request(book_url, "GET")
+  logger.info("StoryGraph: Status update page GET: HTTP " .. tostring(get_code)
+    .. " content_type=" .. tostring(get_resp_headers and get_resp_headers["content-type"] or "unknown")
+    .. " cf_mitigated=" .. tostring(get_resp_headers and get_resp_headers["cf-mitigated"] or "none")
+    .. " response_length=" .. tostring(html and #html or 0))
   self.settings:debugLog("StoryGraph: updateUserBook GET for CSRF - code=" .. tostring(get_code)
     .. " html_present=" .. tostring(html ~= nil) .. " html_length=" .. tostring(html and #html or 0))
 
@@ -875,14 +919,15 @@ function StoryGraphApi:updateUserBook(book_id, status_id)
     end
   end
 
+  self.last_csrf = nil
   local csrf = self:extract_csrf(html)
 
   if not csrf then
     logger.warn("StoryGraph: Could not extract CSRF token for status update")
     self.settings:debugWarn("StoryGraph: extract_csrf failed - last_csrf cached=" .. tostring(self.last_csrf ~= nil))
-  else
-    logger.info("StoryGraph: Extracted CSRF token (length: " .. #csrf .. ")")
+    return nil, "missing_csrf_token"
   end
+  logger.info("StoryGraph: Extracted CSRF token (length: " .. #csrf .. ")")
 
   local custom_headers = {
     ["X-CSRF-Token"] = csrf,
@@ -891,8 +936,7 @@ function StoryGraphApi:updateUserBook(book_id, status_id)
     ["Referer"] = book_url
   }
   if current_session then
-    local remember = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN)
-    custom_headers["Cookie"] = "remember_user_token=" .. (remember or "") .. "; cookies_popup_seen=yes; plus_popup_seen=yes; _storygraph_session=" .. current_session
+    custom_headers["Cookie"] = cookie_header(self, current_session)
   end
 
   local update_url = base_url .. "/update-status.js?book_id=" .. book_id .. "&status=" .. status_str
@@ -945,11 +989,17 @@ function StoryGraphApi:updatePage(user_read_id, value, started_at, update_type)
     end
   end
 
+  self.last_csrf = nil
   local csrf = self:extract_csrf(html)
 
   if not csrf then
     logger.warn("StoryGraph: Could not extract CSRF token for progress update")
     self.settings:debugWarn("StoryGraph: extract_csrf failed - last_csrf cached=" .. tostring(self.last_csrf ~= nil))
+    logger.warn("StoryGraph: Progress update page response code=" .. tostring(get_code)
+      .. " content_type=" .. tostring(get_resp_headers and get_resp_headers["content-type"] or "unknown")
+      .. " cf_mitigated=" .. tostring(get_resp_headers and get_resp_headers["cf-mitigated"] or "none")
+      .. " response_length=" .. tostring(html and #html or 0))
+    return nil, "missing_csrf_token"
   end
 
   local book_num_of_pages = html:match('name="read_status%[book_num_of_pages%]"%s+[^>]*value="([^"]+)"')
@@ -968,8 +1018,7 @@ function StoryGraphApi:updatePage(user_read_id, value, started_at, update_type)
     ["Referer"] = book_url
   }
   if current_session then
-    local remember = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN)
-    custom_headers["Cookie"] = "remember_user_token=" .. (remember or "") .. "; cookies_popup_seen=yes; plus_popup_seen=yes; _storygraph_session=" .. current_session
+    custom_headers["Cookie"] = cookie_header(self, current_session)
   end
 
   local code, resp, resp_headers = self:request(update_url, "POST", {
@@ -1348,8 +1397,7 @@ function StoryGraphApi:switchEdition(from_book_id, to_book_id)
     ["Referer"] = url
   }
   if current_session then
-    local remember = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN)
-    custom_headers["Cookie"] = T("_storygraph_session=%1; remember_user_token=%2; cookies_popup_seen=yes; plus_popup_seen=yes", current_session, remember)
+    custom_headers["Cookie"] = cookie_header(self, current_session)
   end
 
   local post_code, response, post_headers = self:request(switch_url, "POST", data, custom_headers)
@@ -1449,8 +1497,7 @@ function StoryGraphApi:saveReview(book_id, review_data, review_url)
   }
   
   if current_session then
-    local remember = self.settings:readSetting(SETTING.STORYGRAPH.REMEMBER_TOKEN)
-    custom_headers["Cookie"] = T("_storygraph_session=%1; remember_user_token=%2; cookies_popup_seen=yes; plus_popup_seen=yes", current_session, remember)
+    custom_headers["Cookie"] = cookie_header(self, current_session)
   end
 
   local code, resp = self:request(post_url, "POST", data, custom_headers)
