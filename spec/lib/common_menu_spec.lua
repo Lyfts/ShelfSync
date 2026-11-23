@@ -68,3 +68,41 @@ describe("CommonMenu version check frequency", function()
     assert.equals("Check frequency: 7 day(s)", item.text_func())
   end)
 end)
+
+describe("CommonMenu session-end tracking settings", function()
+  local settings, items
+
+  before_each(function()
+    mocks.reset()
+    settings = StoryGraphSettings:new("/settings/storygraph.lua", nil)
+    items = CommonMenu:new { settings = settings, app = {} }:getTrackingSubMenuItems()
+  end)
+
+  it("greys out the interval settings while session-end syncing is on", function()
+    -- Sync on open, the three tracking-mode radios and their interval spinners.
+    local interval_items = { items[3], items[5], items[6], items[7], items[8], items[9], items[10] }
+    for _, entry in ipairs(interval_items) do
+      assert.is_function(entry.enabled_func)
+    end
+    assert.is_true(items[5].enabled_func())
+    assert.is_true(items[6].enabled_func())
+
+    settings:updateSetting(SETTING.SHARED.SYNC_ON_SESSION_END, true)
+    for _, entry in ipairs(interval_items) do
+      assert.is_false(entry.enabled_func())
+    end
+
+    -- These still apply to session-end syncing, so they stay available.
+    assert.is_nil(items[1].enabled_func)
+    assert.is_nil(items[2].enabled_func)
+  end)
+
+  it("refreshes the menu when the toggle changes", function()
+    local refreshed = 0
+    local menu_instance = { updateItems = function() refreshed = refreshed + 1 end }
+
+    items[4].callback(menu_instance)
+    assert.is_true(settings:syncOnSessionEnd())
+    assert.equals(1, refreshed)
+  end)
+end)

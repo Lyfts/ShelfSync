@@ -27,6 +27,7 @@ Settings.SHARED = {
   SYNC_BY_REMOTE_PAGES = "sync_by_remote_pages",
   ALWAYS_SYNC = "always_sync",
   SYNC_ON_OPEN = "sync_on_open",
+  SYNC_ON_SESSION_END = "sync_on_session_end",
   TRACK_METHOD = "track_method",
   TRACK_FREQUENCY = "track_frequency",
   TRACK_PERCENTAGE = "track_percentage",

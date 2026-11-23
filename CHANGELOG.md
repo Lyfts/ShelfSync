@@ -3,9 +3,8 @@
 <!-- Prefix each entry with (feat) or (fix); list features first and fixes last. -->
 
 ## Unreleased
+- (feat) Add "Sync only when a reading session ends" to record one final progress update when a book is closed or the device sleeps, instead of at every time, percentage or page threshold. Progress is recorded without needing to reach a threshold, and no entry is added if the recorded position hasn't changed since the last sync.
 - (fix) Retry StoryGraph requests after yielding briefly to KOReader's UI when a subprocess is dismissed, so the same tap doesn't immediately cancel the retry too.
-- (fix) Restore StoryGraph email/password login when the form includes a hidden `return_to` field or redirects to another same-origin page, and correctly save cookies returned as separate `Set-Cookie` headers.
-- (fix) Save refreshed StoryGraph session cookies from later responses, avoid status/progress writes with stale CSRF tokens when a page is blocked, and log HTTP and Cloudflare challenge details for failed updates.
 
 ## 1.8.4
 - (fix) Don't send a jump, e.g. following a link, a table of contents entry or Go to page, as reading progress. Going back afterwards sent nothing, so the jump stayed as your progress. Jumps are recognised by the location KOReader saves to its history before them. Pages read from there are still sent as usual, and closing the book with no page turned since a jump uses the page it started from.

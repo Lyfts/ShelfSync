@@ -350,6 +350,10 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
   elseif field == SETTING.SHARED.TRACK_METHOD then
     self:cancelPendingUpdates()
     self:initializePageUpdate()
+  elseif field == SETTING.SHARED.SYNC_ON_SESSION_END then
+    -- Drop a periodic update already waiting, so switching between session-end
+    -- and threshold tracking can't send one of the old mode's updates.
+    self:cancelPendingUpdates()
   elseif field == SETTING.SHARED.LINK_BY_IDENTIFIER or field == SETTING.SHARED.LINK_BY_ISBN or field == SETTING.SHARED.LINK_BY_TITLE then
     if change and self:isActive() then
       self.provider:tryAutolink()
@@ -635,6 +639,13 @@ function SyncEngine:pageUpdateEvent(page, jumped)
   if not (self.state.book_status.id and self.settings:syncEnabled()) then
     return
   end
+  -- With session-end tracking, page turns only move the position that gets
+  -- recorded when the book is closed or the device sleeps. Sending here as
+  -- well would add an entry for every threshold crossed, which is what this
+  -- mode exists to avoid. state.page is still kept up to date above.
+  if self.settings:syncOnSessionEnd() then
+    return
+  end
   local document_pages = self.ui.document:getPageCount()
   local remote_pages = self.settings:pages()
 
@@ -858,7 +869,7 @@ function SyncEngine:onDocumentClose()
   self.state.status_mismatch_warned = false
   self.state.locally_finished_book_id = nil
 
-  local ok, err = pcall(self._queueClosingProgress, self)
+  local ok, err = pcall(self._queueClosingProgress, self, self.settings:syncOnSessionEnd())
   if not ok then
     logger.warn(self.label .. ": could not queue progress on close: " .. tostring(err))
   end
@@ -880,12 +891,33 @@ function SyncEngine:onDocumentClose()
   self.state.last_page = nil
 end
 
+-- Records the final position when the device sleeps and session-end tracking
+-- is on. Queues first, so an interrupted or offline send still leaves the
+-- latest position to be sent on close or reconnect, then tries to send it now
+-- while the device is still awake. Without a known "Currently Reading" status
+-- there's nothing to send yet, but queuing still captures the position.
+function SyncEngine:_recordSessionEndProgress()
+  local value, update_type, book, filename = self:_sessionEndProgress()
+  if not value then return end
+  self.settings.pending_updates:addProgress(filename, book, value, update_type)
+  if self.state.book_status.status_id == self.constants.STATUS.READING then
+    self:updatePageNow(nil, value, update_type)
+  end
+end
+
 function SyncEngine:onSuspend()
   self.settings:debugLog(self.label .. ": onSuspend - cancelling pending updates, read_cache_started was " .. tostring(self.state.read_cache_started))
   self:cancelPendingUpdates()
 
   self:cancelReadCache()
   self.state.read_cache_started = false
+
+  if self.settings:syncOnSessionEnd() then
+    local ok, err = pcall(self._recordSessionEndProgress, self)
+    if not ok then
+      logger.warn(self.label .. ": could not record progress on suspend: " .. tostring(err))
+    end
+  end
 end
 
 function SyncEngine:onResume()
@@ -921,11 +953,64 @@ function SyncEngine:updatePageNow(callback, value, update_type)
   self:_handlePageUpdate(self.ui.document.file, value, true, callback, update_type)
 end
 
+-- Progress worth recording when a reading session ends. Unlike the checks in
+-- pageUpdateEvent, this ignores the configured thresholds: any forward
+-- movement counts, even a few pages. Returns nil when there is nothing new
+-- since the last sync, so a suspend followed by closing the book can't add a
+-- second, duplicate or zero-progress entry.
+function SyncEngine:_sessionEndProgress()
+  -- Only the reader that has the document open has a position to record.
+  local filename = self.settings:getFilePath()
+  if not filename or not self.ui.document then return end
+  local book = self:_syncedBook(filename)
+  local status_id = self.state.book_status.status_id
+  -- Not if the book's known not to be being read there, or to have no status
+  -- there since it was removed from the menu. As on close, a status that
+  -- couldn't be read (e.g. offline) is checked when the update is sent.
+  if not (book and self:isActive()) or (status_id and status_id ~= self.constants.STATUS.READING)
+      or self.state.book_status == self.state.removed_status then
+    return
+  end
+
+  -- Not where a jump landed, if no page has been turned since (#40).
+  local page = self:_readingPage(self.ui:getCurrentPage())
+  if not page or not self.state.opened_page or page <= self.state.opened_page then
+    return
+  end
+  local value, update_type = self:_progressValue(page)
+  if not value or value <= 0 then return end
+
+  -- Only compare progress for the book and edition linked now, not before it
+  -- was relinked. A value already sent, or already known remotely, means no
+  -- progress has been made since the last sync: don't add an empty entry.
+  local function forBook(progress)
+    if progress and tostring(progress.book_id) == tostring(book.book_id)
+        and tostring(progress.edition_id) == tostring(book.edition_id) then
+      return progress
+    end
+  end
+  local synced = forBook(self.state.synced_progress)
+  if synced and synced.update_type == update_type and value <= synced.value then return end
+  local remote = self.provider:getRemoteProgress(self.state.book_status, update_type)
+  if remote and value <= remote then return end
+  if not self.provider:sendsProgress(value, update_type, filename) then return end
+  return value, update_type, book, filename
+end
+
 -- Queues where the reader left off on close (the document is still open),
 -- unless it's been sent already. Covers books read offline, whose page turns
 -- aren't tracked because their remote status couldn't be fetched, and the
--- periodic update that closing cancels.
-function SyncEngine:_queueClosingProgress()
+-- periodic update that closing cancels. `session_end` uses the threshold-free
+-- check above instead of the tracking mode's usual rules.
+function SyncEngine:_queueClosingProgress(session_end)
+  if session_end then
+    local value, update_type, book, filename = self:_sessionEndProgress()
+    if value then
+      self.settings.pending_updates:addProgress(filename, book, value, update_type)
+    end
+    return
+  end
+
   local filename = self.settings:getFilePath()
   local book = self:_syncedBook(filename)
   local status_id = self.state.book_status.status_id
