@@ -5,9 +5,16 @@ require("spec.support.koreader_mocks")
 local UIManager = require("ui/uimanager")
 
 local real_show = UIManager.show
-local shown, spin
+local shown, spin, dialog
 package.loaded["ui/widget/spinwidget"] = {
   new = function(_, options) spin = options; return options end,
+}
+package.loaded["ui/widget/buttondialog"] = {
+  new = function(_, options)
+    dialog = options
+    options.onClose = function() end
+    return options
+  end,
 }
 local Progress = require("shelfsync/lib/common/ui/shared_progress")
 
@@ -15,7 +22,7 @@ describe("Edit progress eligibility", function()
   local provider, engine, progress
 
   before_each(function()
-    shown, spin = {}, nil
+    shown, spin, dialog = {}, nil, nil
     UIManager.show = function(_, widget) table.insert(shown, widget) end
 
     provider = {
@@ -50,10 +57,12 @@ describe("Edit progress eligibility", function()
   it("opens the editor while the remote status is still loading", function()
     progress:show()
 
+    assert.is_table(dialog)
+    dialog.buttons[2][1].callback()
     assert.is_table(spin)
     assert.equals(10, spin.value)
     assert.equals(200, spin.value_max)
-    assert.equals(spin, shown[1])
+    assert.equals(spin, shown[2])
   end)
 
   it("still skips a provider whose known status is not reading", function()
@@ -61,7 +70,7 @@ describe("Edit progress eligibility", function()
 
     progress:show()
 
-    assert.is_nil(spin)
+    assert.is_nil(dialog)
     assert.matches("No services can be updated", shown[1].text)
   end)
 
@@ -81,6 +90,6 @@ describe("Edit progress eligibility", function()
 
     progress:show()
 
-    assert.is_table(spin)
+    assert.is_table(dialog)
   end)
 end)

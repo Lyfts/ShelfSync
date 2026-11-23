@@ -68,17 +68,13 @@ function Menus.bookOptions(app)
   for _index, provider in ipairs(PROVIDERS) do
     local engine = app.engines[provider.key]
     local available = function() return engine:isActive() and engine.settings:bookLinked() end
-    if provider.key ~= "librarything" then
+    if provider.book_actions and #provider.book_actions.items(engine) > 0 then
       table.insert(exceptions, {
         text = _(provider.label),
         enabled_func = available,
         sub_item_table_func = function()
           engine.cache:cacheUserBook()
-          local outliers = provider.book_actions.items(engine)
-          if #outliers == 0 then
-            table.insert(outliers, { text = _("No additional actions available"), enabled = false })
-          end
-          return outliers
+          return provider.book_actions.items(engine)
         end,
       })
     end

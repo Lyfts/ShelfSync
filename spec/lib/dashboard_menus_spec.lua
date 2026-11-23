@@ -28,6 +28,7 @@ describe("Dashboard service controls", function()
       two = { enabled = false, linked = true, tracking = false } }
     app = { engines = {} }
     for _, provider in ipairs(providers) do
+      provider.book_actions.items = function() return {} end
       local state = states[provider.key]
       state.book_id = provider.key .. "-id"
       local engine = {
@@ -87,7 +88,9 @@ describe("Dashboard service controls", function()
       assert.equals(engine, received)
       return { { text = "Service-only option" } }
     end
-    local options = Menus.bookOptions(app)[4].sub_item_table[1].sub_item_table_func()
+    local action_rows = Menus.bookOptions(app)[4].sub_item_table
+    assert.equals(1, #action_rows)
+    local options = action_rows[1].sub_item_table_func()
     assert.is_true(cached)
     assert.equals(1, #options)
     assert.equals("Service-only option", options[1].text)

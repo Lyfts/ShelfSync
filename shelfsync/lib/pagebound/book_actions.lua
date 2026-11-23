@@ -1,51 +1,27 @@
 local _ = require("gettext")
-local math = require("math")
-
-local T = require("ffi/util").template
-
-local PAGEBOUND = require("shelfsync/lib/pagebound/constants")
 
 local BookActions = {}
 
 function BookActions.items(self)
-  local items = {}
-
-  local status = self.state.book_status.status_id
-
-  -- Progress updates are available only during an active reading session.
-  if status == PAGEBOUND.STATUS.READING then
-    table.insert(items, {
-      text_func = function()
-        local current_page = self.ui:getCurrentPage()
-        local total_pages = self.ui.document:getPageCount()
-        local remote_pages = self.settings:pages()
-        if self.settings:syncByRemotePages() then
-          local mapped_page = self.page_mapper:getMappedPage(current_page, total_pages, remote_pages)
-          return T(_("Update progress or add forum note: Page %1 / %2"), mapped_page, remote_pages or "?")
-        else
-          local current_percent = math.floor((current_page / total_pages) * 100 + 0.5)
-          return T(_("Update progress or add forum note: %1%"), current_percent)
-        end
-      end,
+  return {
+    {
+      text = _("Add forum note"),
+      enabled_func = function() return self:isActive() and self.settings:bookLinked() end,
       callback = function()
-        local current_page = self.ui:getCurrentPage()
+        -- note_only hides the progress editor; the note still saves the
+        -- current position so the forum post lands at the right point.
         local remote_percent = self.provider:getRemotePercent(self.state.book_status) or 0
-
         self.dialog_manager:journalEntryForm(
           "",
           self.ui.document,
-          current_page,
+          self.ui:getCurrentPage(),
           self.settings:pages(),
-          nil, -- let journalEntryForm handle it based on settings
-          remote_percent,
-          "note"
+          nil, remote_percent, "note", true
         )
       end,
-      keep_menu_open = true
-    })
-  end
-
-  return items
+      keep_menu_open = true,
+    },
+  }
 end
 
 return BookActions

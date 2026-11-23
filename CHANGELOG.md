@@ -4,6 +4,7 @@
 
 ## Unreleased
 - (feat) Manage the current book from a full-screen ShelfSync dashboard, opened from **Tools** or a gesture. Link books across services from one screen, edit progress and status together, and manage accounts and tracking in shared menus.
+- (feat) Set reading status for a single service from the dashboard's **Reading status** menu, as well as for all or a chosen subset of services, from a menu with clearly labelled groups. **Edit progress** lists each linked service with its current progress, can update one service on its own or all of them at once, and accepts either a page number or a percentage. The old per-service progress editors under **Book options** are removed, along with service menus that had nothing else in them; Pagebound keeps an **Add forum note** action that records progress up to the current position with the note, but no longer asks you to edit it.
 
 ## 1.8.5
 - (feat) Add "Sync only when a reading session ends" to record one final progress update when a book is closed or the device sleeps, instead of at every time, percentage or page threshold. Progress is recorded without needing to reach a threshold, and no entry is added if the recorded position hasn't changed since the last sync.

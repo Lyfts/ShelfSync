@@ -1,8 +1,6 @@
 local _ = require("gettext")
-local Device = require("device")
 local math = require("math")
 
-local ButtonDialog = require("ui/widget/buttondialog")
 local InfoMessage = require("ui/widget/infomessage")
 local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
@@ -12,9 +10,14 @@ local STATUS = require("shelfsync/lib/common/constants/status")
 local DashboardMenus = require("shelfsync/lib/common/ui/dashboard_menus")
 local SharedProgress = require("shelfsync/lib/common/ui/shared_progress")
 
-local Screen = Device.screen
 local Dashboard = {}
 Dashboard.__index = Dashboard
+
+local function engineStatusName(engine)
+  local status_id = engine.state.book_status and engine.state.book_status.status_id
+  local name = status_id and STATUS.STATUS_NAME[status_id]
+  return name and _(name) or _("Unknown")
+end
 
 function Dashboard:new(o)
   return setmetatable(o or {}, self)
@@ -132,113 +135,74 @@ function Dashboard:_syncNow()
   })
 end
 
+function Dashboard:_statusItems(selection, parent_menu)
+  local items = {}
+  for _index, status_id in ipairs({
+    STATUS.STATUS.TO_READ, STATUS.STATUS.READING, STATUS.STATUS.FINISHED,
+    STATUS.STATUS.PAUSED, STATUS.STATUS.DNF,
+  }) do
+    table.insert(items, {
+      text = _(STATUS.STATUS_NAME[status_id]),
+      callback = function()
+        self.app:onShelfSyncSetCommonStatus(status_id, function()
+          if parent_menu and parent_menu._shelfsync_open then
+            parent_menu:updateItems()
+          end
+        end, selection)
+      end,
+    })
+  end
+  return items
+end
+
 function Dashboard:_showStatusPicker()
-  local selected = {}
-  local count = 0
+  local linked = {}
   for _index, provider in ipairs(PROVIDERS) do
     local engine = self.app.engines[provider.key]
-    selected[provider.key] = engine:isActive() and engine.settings:bookLinked()
-    if selected[provider.key] then count = count + 1 end
+    if engine:isActive() and engine.settings:bookLinked() then
+      table.insert(linked, provider)
+    end
   end
-  if count == 0 then
+  if #linked == 0 then
     UIManager:show(InfoMessage:new {
       text = _("Link this book to an active service before changing its status."),
       icon = "notice-warning",
     })
     return
   end
-  self:_closeHome()
-  local dialog
-  local function choose(status_id)
-    self.app:onShelfSyncSetCommonStatus(status_id, function()
-      if self.status_dialog == dialog then
-        dialog:onClose()
-      end
-    end, selected)
-  end
 
-  dialog = ButtonDialog:new {
-    title = _("Reading status"),
-    title_align = "left",
-    use_info_style = false,
-    width = math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * 0.9),
-    buttons = {
-      {
-        {
-          id = "to_read",
-          text = _(STATUS.STATUS_NAME[STATUS.STATUS.TO_READ]),
-          font_size = 18,
-          font_bold = false,
-          callback = function() choose(STATUS.STATUS.TO_READ) end,
-        },
-        {
-          id = "reading",
-          text = _(STATUS.STATUS_NAME[STATUS.STATUS.READING]),
-          font_size = 18,
-          font_bold = false,
-          callback = function() choose(STATUS.STATUS.READING) end,
-        },
-      },
-      {
-        {
-          id = "finished",
-          text = _(STATUS.STATUS_NAME[STATUS.STATUS.FINISHED]),
-          font_size = 18,
-          font_bold = false,
-          callback = function() choose(STATUS.STATUS.FINISHED) end,
-        },
-      },
-      {
-        { text = _(STATUS.STATUS_NAME[STATUS.STATUS.PAUSED]),
-          font_size = 18, font_bold = false,
-          callback = function() choose(STATUS.STATUS.PAUSED) end },
-        { text = _(STATUS.STATUS_NAME[STATUS.STATUS.DNF]),
-          font_size = 18, font_bold = false,
-          callback = function() choose(STATUS.STATUS.DNF) end },
-      },
-      {
-        {
-          id = "provider_status",
-          text = _("Choose services"),
-          font_size = 17,
-          font_bold = false,
-          callback = function() self:_showStatusServices(selected) end,
-        },
-        {
-          id = "back",
-          text = _("Back"),
-          font_size = 18,
-          font_bold = false,
-          callback = function() dialog:onClose() end,
-        },
-      },
-    },
-    tap_close_callback = function()
-      if self.status_dialog == dialog then
-        self.status_dialog = nil
-      end
-      self:show()
-    end,
+  local items = {
+    { text = _("All linked services"), sub_item_table_func = function(parent_menu)
+        return self:_statusItems(nil, parent_menu)
+      end },
+    { text = _("Some linked services…"), sub_item_table_func = function(parent_menu)
+        local selected = {}
+        for _index, provider in ipairs(linked) do selected[provider.key] = true end
+        local sub = {}
+        for _index, provider in ipairs(linked) do
+          table.insert(sub, {
+            text = _(provider.label),
+            checked_func = function() return selected[provider.key] == true end,
+            callback = function() selected[provider.key] = not selected[provider.key] end,
+          })
+        end
+        table.insert(sub, { text = _("Set status on checked services"),
+          sub_item_table_func = function() return self:_statusItems(selected, parent_menu) end })
+        return sub
+      end },
+    { text = _("── Individual services ──"), enabled = false },
   }
-  self.status_dialog = dialog
-  UIManager:show(dialog)
-end
-
-function Dashboard:_showStatusServices(selected)
-  local buttons = {}
-  for _index, provider in ipairs(PROVIDERS) do
+  for _index, provider in ipairs(linked) do
     local engine = self.app.engines[provider.key]
-    table.insert(buttons, { {
-      text = _(provider.label),
-      enabled = engine:isActive() and engine.settings:bookLinked(),
-      checked_func = function() return selected[provider.key] == true end,
-      callback = function() selected[provider.key] = not selected[provider.key] end,
-    } })
+    local selection = { [provider.key] = true }
+    table.insert(items, {
+      text_func = function() return _(provider.label) .. " — " .. engineStatusName(engine) end,
+      sub_item_table_func = function(parent_menu)
+        return self:_statusItems(selection, parent_menu)
+      end,
+    })
   end
-  local dialog
-  table.insert(buttons, { { text = _("Done"), callback = function() dialog:onClose() end } })
-  dialog = ButtonDialog:new { title = _("Apply status to"), buttons = buttons }
-  UIManager:show(dialog)
+  self:_showMenu(_("Reading status"), items)
 end
 
 function Dashboard:_showLinkPicker()
@@ -314,7 +278,7 @@ function Dashboard:_showMenu(title, item_table)
         end
         item._shelfsync_prepared = true
       end
-      if not item.text and item.text_func then
+      if item.text_func then
         item.text = item.text_func()
       end
     end

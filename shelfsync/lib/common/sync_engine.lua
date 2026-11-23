@@ -958,21 +958,16 @@ function SyncEngine:getProgressTarget(local_page, document_pages)
   return math.floor((percent or 0) * 100 + 0.5), "percentage", remote_pages
 end
 
-function SyncEngine:updateProgressAtLocalPage(callback, local_page)
+function SyncEngine:updateProgressValue(callback, value, update_type)
   local document = self.ui.document
   if not document then
     if callback then callback(nil, _("No book active")) end
     return
   end
-  local value, update_type, err = self:getProgressTarget(local_page, document:getPageCount())
-  if value == nil then
-    if callback then callback(nil, err) end
-    return
-  end
   local function send()
     self:_handlePageUpdate(document.file, value, true, callback, update_type)
   end
-  if self.state.book_status.status_id then
+  if self.state.book_status and self.state.book_status.status_id then
     send()
     return
   end
@@ -991,6 +986,20 @@ function SyncEngine:updateProgressAtLocalPage(callback, local_page)
       send()
     end
   end)
+end
+
+function SyncEngine:updateProgressAtLocalPage(callback, local_page)
+  local document = self.ui.document
+  if not document then
+    if callback then callback(nil, _("No book active")) end
+    return
+  end
+  local value, update_type, err = self:getProgressTarget(local_page, document:getPageCount())
+  if value == nil then
+    if callback then callback(nil, err) end
+    return
+  end
+  self:updateProgressValue(callback, value, update_type)
 end
 
 -- Local `page` as the progress value and update_type that get sent.

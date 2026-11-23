@@ -23,9 +23,7 @@ local StoryGraphBookActions = require("shelfsync/lib/storygraph/book_actions")
 local HardcoverAccount = require("shelfsync/lib/hardcover/account_ui")
 local HardcoverBookActions = require("shelfsync/lib/hardcover/book_actions")
 local GoodreadsAccount = require("shelfsync/lib/goodreads/account_ui")
-local GoodreadsBookActions = require("shelfsync/lib/goodreads/book_actions")
 local FableAccount = require("shelfsync/lib/fable/account_ui")
-local FableBookActions = require("shelfsync/lib/fable/book_actions")
 local PageboundAccount = require("shelfsync/lib/pagebound/account_ui")
 local PageboundBookActions = require("shelfsync/lib/pagebound/book_actions")
 local LibraryThingAccount = require("shelfsync/lib/librarything/account_ui")
@@ -98,7 +96,6 @@ Re-enable Hardcover under ShelfSync > Connections > Enabled services.]]),
     settings_class = GoodreadsSettings,
     settings_filename = "goodreadssync_settings.lua",
     account_ui = GoodreadsAccount,
-    book_actions = GoodreadsBookActions,
     highlight_menu_name = "13_2_make_goodreads_highlight_item",
     auth_setting_key = SETTING.GOODREADS.SESSION_COOKIE,
     auth_help_text = _([[Your Goodreads session has expired or is invalid. Syncing is paused.
@@ -121,7 +118,6 @@ Re-enable Goodreads under ShelfSync > Connections > Enabled services.]]),
     settings_class = FableSettings,
     settings_filename = "fablesync_settings.lua",
     account_ui = FableAccount,
-    book_actions = FableBookActions,
     highlight_menu_name = "13_3_make_fable_highlight_item",
     auth_setting_key = SETTING.FABLE.REFRESH_TOKEN,
     auth_help_text = _([[Your Fable session has expired or is invalid. Syncing is paused.

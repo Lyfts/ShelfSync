@@ -1,8 +1,6 @@
 local _ = require("gettext")
 local math = require("math")
 
-local T = require("ffi/util").template
-
 local UIManager = require("ui/uimanager")
 
 local InfoMessage = require("ui/widget/infomessage")
@@ -55,39 +53,6 @@ function BookActions.items(self)
   }
 
   local status = self.state.book_status.status_id
-
-  -- Update progress: only when NOT read, DNF, removed, or want to read
-  if status and status ~= STORYGRAPH.STATUS.FINISHED and status ~= STORYGRAPH.STATUS.DNF and status ~= STORYGRAPH.STATUS.TO_READ then
-    table.insert(items, {
-      text_func = function()
-        local current_page = self.ui:getCurrentPage()
-        local total_pages = self.ui.document:getPageCount()
-        local remote_pages = self.settings:pages()
-        if self.settings:syncByRemotePages() then
-          local mapped_page = self.page_mapper:getMappedPage(current_page, total_pages, remote_pages)
-          return T(_("Update progress: Page %1 / %2"), mapped_page, remote_pages or "?")
-        else
-          local current_percent = math.floor((current_page / total_pages) * 100 + 0.5)
-          return T(_("Update progress: %1%"), current_percent)
-        end
-      end,
-      callback = function()
-        local current_page = self.ui:getCurrentPage()
-        local remote_percent = self.state.book_status.last_reached_percent or 0
-
-        self.dialog_manager:journalEntryForm(
-          "",
-          self.ui.document,
-          current_page,
-          self.settings:pages(),
-          nil, -- let journalEntryForm handle it based on settings
-          remote_percent,
-          "note"
-        )
-      end,
-      keep_menu_open = true
-    })
-  end
 
   -- Review: only when read or DNF or can_review
   if status and (status == STORYGRAPH.STATUS.FINISHED or status == STORYGRAPH.STATUS.DNF or self.state.book_status.can_review) then
