@@ -53,6 +53,8 @@ local throttle = function(seconds, action)
 
   local cancel = function()
     is_scheduled = false
+    -- Or the next call, which runs at once, would also run again later.
+    request_trailing = false
     return UIManager:unschedule(scheduled_action)
   end
 

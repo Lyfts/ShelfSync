@@ -5,6 +5,7 @@ local http = require("socket.http")
 local ltn12 = require("ltn12")
 local socketutil = require("socketutil")
 local Trapper = require("ui/trapper")
+local UIManager = require("ui/uimanager")
 local NetworkManager = require("ui/network/manager")
 
 describe("StoryGraph email/password login", function()
@@ -16,6 +17,8 @@ describe("StoryGraph email/password login", function()
       settings = {
         readSetting = function(_, key) return settings[key] end,
         updateSetting = function(_, key, value) settings[key] = value end,
+        debugLog = function() end,
+        debugWarn = function() end,
       },
       last_csrf = "stale-csrf",
       last_auth_warning = 123,
@@ -47,7 +50,7 @@ describe("StoryGraph email/password login", function()
     end)
   end)
   after_each(function() mock.revert(NetworkManager); mock.revert(Trapper)
-    mock.revert(socketutil); mock.revert(ltn12.source); mock.revert(http)
+    mock.revert(socketutil); mock.revert(ltn12.source); mock.revert(http); mock.revert(UIManager)
   end)
 
   it("posts encoded credentials with fresh CSRF and guest cookies, then saves both cookies", function()
@@ -100,6 +103,25 @@ describe("StoryGraph email/password login", function()
     assert.equals("https://app.thestorygraph.com", submit.Origin)
     assert.equals("https://app.thestorygraph.com/users/sign_in", submit.Referer)
     assert.matches("text/vnd.turbo-stream.html", submit.Accept, 1, true)
+  end)
+
+  it("submits the hidden return_to field and accepts the app redirect", function()
+    responses[1] = { 200,
+      '<input name="authenticity_token" value="fresh-csrf"><input type="hidden" name="return_to" value="/community">',
+      { ["set-cookie"] = "_storygraph_session=guest-session; path=/" } }
+    responses[2] = { 303, "", {
+      location = "/community",
+      ["set-cookie"] = {
+        "_storygraph_session=auth-session; path=/",
+        "remember_user_token=auth-remember; path=/",
+      },
+    } }
+
+    assert.is_true(api:login("reader@example.com", "password"))
+    assert.matches("_storygraph_session=guest%-session", requests[2].headers.Cookie)
+    assert.is_truthy(requests[2].body:find("return_to=%2Fcommunity", 1, true))
+    assert.equals("auth-session", settings.session_cookie)
+    assert.equals("auth-remember", settings.remember_token)
   end)
 
   it("identifies a page-load challenge and never submits credentials", function()
@@ -183,6 +205,41 @@ describe("StoryGraph email/password login", function()
     assert.equals("existing-session", settings.session_cookie)
   end)
 
+  it("lets the UI process a dismissed request before retrying it", function()
+    Trapper.dismissableRunInSubprocess:revert()
+    local attempts = 0
+    stub(Trapper, "dismissableRunInSubprocess", function(_, fn)
+      attempts = attempts + 1
+      if attempts == 1 then return false end
+      return true, fn()
+    end)
+
+    local retry_callback, retry_delay
+    stub(UIManager, "scheduleIn", function(_, delay, callback)
+      retry_delay = delay
+      retry_callback = callback
+    end)
+    responses[1] = { 200, "OK", {} }
+
+    local result
+    local request = coroutine.create(function()
+      result = api:request("https://app.thestorygraph.com/books/1", "GET")
+    end)
+    local resumed, err = coroutine.resume(request)
+
+    assert.is_true(resumed, err)
+    assert.equals(1, attempts)
+    assert.equals("suspended", coroutine.status(request))
+    assert.equals(0.1, retry_delay)
+    assert.is_function(retry_callback)
+
+    retry_callback()
+
+    assert.equals("dead", coroutine.status(request))
+    assert.equals(2, attempts)
+    assert.equals(200, result)
+  end)
+
   it("preserves cookies when login is cancelled", function()
     Trapper.dismissableRunInSubprocess:revert()
     stub(Trapper, "dismissableRunInSubprocess", function() return false end)
@@ -196,5 +253,58 @@ describe("StoryGraph email/password login", function()
     api:request("https://app.thestorygraph.com/test", "POST", { note = "private-note" })
     assert.is_nil(table.concat(mocks.LOG, "\n"):find("private-note", 1, true))
     assert.is_nil(table.concat(mocks.LOG, "\n"):find("POST Body", 1, true))
+  end)
+
+  it("saves refreshed sessions for subsequent requests", function()
+    responses[1] = { 200, "OK", { ["set-cookie"] = "_storygraph_session=renewed-session; path=/" } }
+    api:request("https://app.thestorygraph.com/books/1", "GET")
+    assert.equals("renewed-session", settings.session_cookie)
+
+    responses[2] = { 200, "OK", {} }
+    api:request("https://app.thestorygraph.com/books/1", "GET")
+    assert.matches("_storygraph_session=renewed%-session", requests[2].headers.Cookie)
+  end)
+
+  it("does not post status or progress with a stale CSRF token from a challenge page", function()
+    local requested_methods = {}
+    api.request = function(_, _, method)
+      requested_methods[#requested_methods + 1] = method
+      return 403, "challenge page", {
+        ["cf-mitigated"] = "challenge",
+        ["content-type"] = "text/html",
+      }
+    end
+
+    api.last_csrf = "stale-csrf"
+    local status, status_error = api:updateUserBook("book-1", 2)
+    assert.is_nil(status)
+    assert.equals("missing_csrf_token", status_error)
+
+    api.last_csrf = "stale-csrf"
+    local progress, progress_error = api:updatePage("book-1_read", 42, nil, "pages")
+    assert.is_nil(progress)
+    assert.equals("missing_csrf_token", progress_error)
+    assert.same({ "GET", "GET" }, requested_methods)
+    local logs = table.concat(mocks.LOG, "\n")
+    assert.is_truthy(logs:find("Status update started: currently-reading", 1, true))
+    assert.is_truthy(logs:find("Status update page GET: HTTP 403", 1, true))
+    assert.is_truthy(logs:find("cf_mitigated=challenge", 1, true))
+  end)
+
+  it("logs status-readback response details when StoryGraph rejects the book page", function()
+    api.request = function()
+      return 403, "challenge", {
+        ["cf-mitigated"] = "challenge",
+        ["content-type"] = "text/html",
+        location = "/cdn-cgi/challenge",
+      }
+    end
+
+    local status, err = api:findUserBook("book-1")
+    assert.same({}, status)
+    assert.equals("Failed to fetch book", err)
+    local logs = table.concat(mocks.LOG, "\n")
+    assert.is_truthy(logs:find("Book status fetch failed: HTTP 403", 1, true))
+    assert.is_truthy(logs:find("cf_mitigated=challenge", 1, true))
   end)
 end)

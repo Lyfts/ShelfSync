@@ -4,6 +4,16 @@
 
 ## Unreleased
 - (feat) Manage the current book from a full-screen ShelfSync dashboard, opened from **Tools** or a gesture. Link books across services from one screen, edit progress and status together, and manage accounts and tracking in shared menus.
+
+## 1.8.5
+- (feat) Add "Sync only when a reading session ends" to record one final progress update when a book is closed or the device sleeps, instead of at every time, percentage or page threshold. Progress is recorded without needing to reach a threshold, and no entry is added if the recorded position hasn't changed since the last sync.
+- (fix) Keep the highlight "Add note" action available while a book's remote status is still loading, or when it is Read, Did Not Finish or To Read. It no longer greys out after reopening a book or connecting Wi-Fi until the status lookup succeeds.
+- (fix) Retry StoryGraph requests after yielding briefly to KOReader's UI when a subprocess is dismissed, so the same tap doesn't immediately cancel the retry too.
+
+## 1.8.4
+- (fix) Don't send a jump, e.g. following a link, a table of contents entry or Go to page, as reading progress. Going back afterwards sent nothing, so the jump stayed as your progress. Jumps are recognised by the location KOReader saves to its history before them. Pages read from there are still sent as usual, and closing the book with no page turned since a jump uses the page it started from.
+
+## 1.8.3
 - (fix) Stop retrying a book's status lookup when the reader sleeps, Wi-Fi drops (with "Enable wifi on demand" off) or the provider is turned off. The retries kept going, so sleeping and waking while the lookup failed added more each time, and a provider that had been turned off could still look the book up and mark it as Currently Reading.
 
 ## 1.8.2

@@ -391,6 +391,12 @@ function BaseSettings:syncOnOpen()
   return self:readSetting(SETTING.SHARED.SYNC_ON_OPEN) == true
 end
 
+-- Opt in to recording one progress update at the end of a reading session
+-- (book closed, device suspended) instead of at each tracking threshold.
+function BaseSettings:syncOnSessionEnd()
+  return self:readSetting(SETTING.SHARED.SYNC_ON_SESSION_END) == true
+end
+
 function BaseSettings:verboseLogging()
   return self:readSetting(SETTING.SHARED.VERBOSE_LOGGING) == true
 end

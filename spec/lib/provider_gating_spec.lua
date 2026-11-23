@@ -4,6 +4,8 @@
 --   1. The per-provider "Enabled" toggle (SETTING.PROVIDER_ENABLED).
 --   2. Having a usable credential configured (HardcoverApi:hasCredential()).
 -- Both must independently result in a no-op: no API calls, no state changes.
+-- Also covers the highlight note action, which must not depend on a remote
+-- status having been fetched yet.
 
 local mocks = require("spec.support.koreader_mocks")
 local UIManager = mocks.UIManager
@@ -264,6 +266,44 @@ describe("Provider enable/credential gating", function()
       UIManager:_runUntilIdle()
 
       assert.is_true(engine.state.process_page_turns)
+    end)
+  end)
+
+  describe("highlight note action", function()
+    local item
+
+    before_each(function()
+      settings:updateSetting(SETTING.HARDCOVER.API_TOKEN, "a-real-token")
+      settings:updateBookSetting(ui.document.file, { book_id = 42, edition_id = 7, pages = 300 })
+      ui.highlight = {
+        addToHighlightDialog = function(_, _, provider)
+          item = provider({ selected_text = { text = "quote", pos0 = { page = 7 } } })
+        end,
+        removeFromHighlightDialog = function() item = nil end,
+      }
+      engine:registerHighlight()
+    end)
+
+    it("is available while the remote status is still unknown", function()
+      engine.state.book_status = {}
+      assert.is_function(item.enabled_func)
+      assert.is_true(item.enabled_func())
+    end)
+
+    it("is available for read, DNF and to-read books too", function()
+      for _, status in ipairs({
+        HARDCOVER_CONST.STATUS.FINISHED,
+        HARDCOVER_CONST.STATUS.DNF,
+        HARDCOVER_CONST.STATUS.TO_READ,
+      }) do
+        engine.state.book_status = { id = 42, status_id = status }
+        assert.is_true(item.enabled_func())
+      end
+    end)
+
+    it("is disabled when the provider is inactive", function()
+      settings:updateSetting(SETTING.HARDCOVER.API_TOKEN, "")
+      assert.is_false(item.enabled_func())
     end)
   end)
 end)

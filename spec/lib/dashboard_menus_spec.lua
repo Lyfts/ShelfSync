@@ -1,5 +1,11 @@
 require("spec.support.koreader_mocks")
 
+local UIManager = require("ui/uimanager")
+local SpinWidget = { value = 1 }
+SpinWidget.__index = SpinWidget
+function SpinWidget:new(o) return setmetatable(o or {}, self) end
+package.loaded["ui/widget/spinwidget"] = SpinWidget
+
 local original_providers = package.loaded["shelfsync/lib/common/constants/providers"]
 local original_menus = package.loaded["shelfsync/lib/common/ui/dashboard_menus"]
 local providers = {
@@ -57,6 +63,20 @@ describe("Dashboard service controls", function()
     assert.is_false(items[4].enabled_func())
     items[2].callback()
     assert.is_false(states.one.tracking)
+  end)
+
+  it("surfaces session-end sync in the dashboard settings", function()
+    local CommonMenu = require("shelfsync/lib/common/menu")
+    local StoryGraphSettings = require("shelfsync/lib/storygraph/settings")
+    app.common_menu = CommonMenu:new {
+      settings = StoryGraphSettings:new("/settings/storygraph.lua", nil), app = app,
+    }
+    local tracking = Menus.settings(app)[1].sub_item_table_func()
+    local found = false
+    for _, item in ipairs(tracking) do
+      if item.text == "Sync only when a reading session ends" then found = true end
+    end
+    assert.is_true(found)
   end)
 
   it("loads service-specific book actions directly", function()

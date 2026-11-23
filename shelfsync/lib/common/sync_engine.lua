@@ -215,6 +215,15 @@ function SyncEngine:onUpdateProgress(completion_callback, gesture_feedback, supp
     end
 
     local function update()
+      -- This sends where the reader is, even after a jump, so that's where
+      -- reading got to now. A periodic update still waiting with the page
+      -- from before the jump would undo it.
+      if self.state.jump_origin then
+        self.state.jump_origin = nil
+        if self._cancelPageUpdate then
+          self:_cancelPageUpdate()
+        end
+      end
       self:updatePageNow(finish)
     end
 
@@ -347,6 +356,10 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
   elseif field == SETTING.SHARED.TRACK_METHOD then
     self:cancelPendingUpdates()
     self:initializePageUpdate()
+  elseif field == SETTING.SHARED.SYNC_ON_SESSION_END then
+    -- Drop a periodic update already waiting, so switching between session-end
+    -- and threshold tracking can't send one of the old mode's updates.
+    self:cancelPendingUpdates()
   elseif field == SETTING.SHARED.LINK_BY_IDENTIFIER or field == SETTING.SHARED.LINK_BY_ISBN or field == SETTING.SHARED.LINK_BY_TITLE then
     if change and self:isActive() then
       self.provider:tryAutolink()
@@ -623,7 +636,10 @@ function SyncEngine:initializePageUpdate()
   self._cancelPageUpdate = cancel_throttle
 end
 
-function SyncEngine:pageUpdateEvent(page)
+-- `jumped` is set when a jump took the reader to `page`, with no page turned
+-- since (see _trackJump). That isn't sent: it isn't reading up to where it
+-- lands, and going back sends nothing. Reading on from there is sent as usual.
+function SyncEngine:pageUpdateEvent(page, jumped)
   local has_baseline = self.state.last_page ~= nil
   self.state.last_page = self.state.page
   self.state.page = page
@@ -631,10 +647,20 @@ function SyncEngine:pageUpdateEvent(page)
   if not (self.state.book_status.id and self.settings:syncEnabled()) then
     return
   end
+  -- With session-end tracking, page turns only move the position that gets
+  -- recorded when the book is closed or the device sleeps. Sending here as
+  -- well would add an entry for every threshold crossed, which is what this
+  -- mode exists to avoid. state.page is still kept up to date above.
+  if self.settings:syncOnSessionEnd() then
+    return
+  end
   local document_pages = self.ui.document:getPageCount()
   local remote_pages = self.settings:pages()
 
-  if self.settings:trackByTime() then
+  if self.settings:trackByTime() and jumped then
+    -- The next periodic update still sends the page it was on before.
+    self.settings:debugLog(self.label .. ": trackByTime - jump, not sent")
+  elseif self.settings:trackByTime() then
     local value, update_type = self:_progressValue(self.state.page)
 
     self.settings:debugLog(self.label .. ": trackByTime check - value=" .. tostring(value) .. " update_type=" .. update_type)
@@ -676,9 +702,9 @@ function SyncEngine:pageUpdateEvent(page)
 
     logger.info(self.label .. ": progress/pages track check - first=" .. tostring(is_first_check)
       .. " prev%=" .. tostring(previous_percent) .. " cur%=" .. tostring(current_percent)
-      .. " should_sync=" .. tostring(should_sync))
+      .. " should_sync=" .. tostring(should_sync) .. " jump=" .. tostring(jumped == true))
 
-    if should_sync then
+    if should_sync and not jumped then
       local percentage = math.floor(current_percent * 100 + 0.5)
       local remote_percent = self.provider:getRemoteProgress(self.state.book_status, "percentage")
       -- Compare the raw (unrounded) percents here, not values rounded to a
@@ -698,6 +724,79 @@ function SyncEngine:pageUpdateEvent(page)
   end
 end
 
+-- Remembers the locations in ReaderLink's location history (going back) and
+-- forward history, for _trackJump.
+function SyncEngine:_rememberSavedLocations()
+  local link = self.ui.link or {}
+  local saved = { back = {}, forward = {} }
+  for _, location in ipairs(link.location_stack or {}) do
+    saved.back[location] = true
+  end
+  for _, location in ipairs(link.forward_location_stack or {}) do
+    saved.forward[location] = true
+  end
+  self.state.saved_locations = saved
+end
+
+-- Whether `location`, from ReaderLink's history, is shown at `page`: the page
+-- of a fixed-layout location, or the page of a reflowable one's xpointer,
+-- which in two-page view can be the second page number shown.
+function SyncEngine:_locationShownAt(location, page)
+  if location.xpointer then
+    local document = self.ui.document
+    local location_page = document:getPageFromXPointer(location.xpointer)
+    return location_page >= page and location_page < page + document:getVisiblePageNumberCount()
+  end
+  return location[1] ~= nil and location[1].page == page
+end
+
+-- Tracks moves to `page`, and returns whether the reader is somewhere a jump
+-- took them, with no page turned since. Before a jump (following a link, a
+-- table of contents entry, Go to page, a bookmark and the like), KOReader
+-- saves the location it's leaving to ReaderLink's location history, so a
+-- location on top that wasn't there at the previous page update means a
+-- jump. Going forward again puts one back, so it's one too. Going back moves
+-- the location it goes to from the history to the forward history (even when
+-- there's nowhere to go), and only ends the jump once it's back at the page
+-- the jump started from. Any other move, e.g. a page turn, ends it.
+--
+-- Runs on every page update, even before the book's status is known, so that
+-- jump_origin is the page the jump started from: the last page actually read.
+function SyncEngine:_trackJump(page)
+  local link = self.ui.link or {}
+  local back_stack, forward_stack = link.location_stack or {}, link.forward_location_stack or {}
+  local saved = self.state.saved_locations or { back = {}, forward = {} }
+  local top, forward_top = back_stack[#back_stack], forward_stack[#forward_stack]
+  local jumped = top ~= nil and not saved.back[top]
+  local moved_forward = not jumped and forward_top ~= nil
+    and saved.back[forward_top] and not saved.forward[forward_top]
+  -- In fixed-layout scroll mode, one move can send several page updates, for
+  -- more than one page, so the history is taken in once they're all handled.
+  if self.ui.paging and self.ui.view and self.ui.view.page_scroll then
+    UIManager:nextTick(self._rememberSavedLocations, self)
+  else
+    self:_rememberSavedLocations()
+  end
+
+  local previous = self.state.tracked_page
+  if page ~= previous then
+    self.state.tracked_page = page
+    if jumped then
+      self.state.jump_origin = self.state.jump_origin or previous
+    elseif not (moved_forward and self:_locationShownAt(forward_top, page))
+        or page == self.state.jump_origin then
+      self.state.jump_origin = nil
+    end
+  end
+  return self.state.jump_origin ~= nil
+end
+
+-- The page reached by reading: where the reader is, unless a jump took them
+-- there, with no page turned since.
+function SyncEngine:_readingPage(page)
+  return self.state.jump_origin or page
+end
+
 -- KOReader's paged view mode (the default, and the only mode for fixed-layout
 -- documents) only ever broadcasts PageUpdate, never PosUpdate -- the latter
 -- is only fired (alongside PageUpdate, for the same page turn) in the
@@ -708,14 +807,19 @@ end
 -- via self.state.page (updated synchronously by onPageUpdate/pageUpdateEvent)
 -- so the two don't both trigger a check for the same page turn.
 function SyncEngine:onPageUpdate(page)
+  local jumped = self:_trackJump(page)
   if self.state.process_page_turns then
-    self:pageUpdateEvent(page)
+    self:pageUpdateEvent(page, jumped)
   end
 end
 
 function SyncEngine:onPosUpdate(_, page)
   if self.state.page ~= page then
     self:onPageUpdate(page)
+  else
+    -- Still takes in a link followed within the page, so it isn't taken for
+    -- a jump at the next page update.
+    self:_trackJump(page)
   end
 end
 
@@ -744,6 +848,12 @@ function SyncEngine:onReaderReady()
   self.state.page = self.ui:getCurrentPage()
   self.state.opened_page = self.state.page
   self.state.locally_finished_book_id = nil
+  self.state.tracked_page = self.state.page
+  self.state.jump_origin = nil
+  -- Once the book is ready, KOReader can also save the opening page to the
+  -- location stack, which isn't a jump.
+  self:_rememberSavedLocations()
+  UIManager:nextTick(self._rememberSavedLocations, self)
 
   if self.ui.document and (self.settings:bookLinked() or self.settings:autolinkEnabled()) then
     UIManager:scheduleIn(1, self.startReadCache, self)
@@ -767,7 +877,7 @@ function SyncEngine:onDocumentClose()
   self.state.status_mismatch_warned = false
   self.state.locally_finished_book_id = nil
 
-  local ok, err = pcall(self._queueClosingProgress, self)
+  local ok, err = pcall(self._queueClosingProgress, self, self.settings:syncOnSessionEnd())
   if not ok then
     logger.warn(self.label .. ": could not queue progress on close: " .. tostring(err))
   end
@@ -789,12 +899,33 @@ function SyncEngine:onDocumentClose()
   self.state.last_page = nil
 end
 
+-- Records the final position when the device sleeps and session-end tracking
+-- is on. Queues first, so an interrupted or offline send still leaves the
+-- latest position to be sent on close or reconnect, then tries to send it now
+-- while the device is still awake. Without a known "Currently Reading" status
+-- there's nothing to send yet, but queuing still captures the position.
+function SyncEngine:_recordSessionEndProgress()
+  local value, update_type, book, filename = self:_sessionEndProgress()
+  if not value then return end
+  self.settings.pending_updates:addProgress(filename, book, value, update_type)
+  if self.state.book_status.status_id == self.constants.STATUS.READING then
+    self:updatePageNow(nil, value, update_type)
+  end
+end
+
 function SyncEngine:onSuspend()
   self.settings:debugLog(self.label .. ": onSuspend - cancelling pending updates, read_cache_started was " .. tostring(self.state.read_cache_started))
   self:cancelPendingUpdates()
 
   self:cancelReadCache()
   self.state.read_cache_started = false
+
+  if self.settings:syncOnSessionEnd() then
+    local ok, err = pcall(self._recordSessionEndProgress, self)
+    if not ok then
+      logger.warn(self.label .. ": could not record progress on suspend: " .. tostring(err))
+    end
+  end
 end
 
 function SyncEngine:onResume()
@@ -861,11 +992,64 @@ function SyncEngine:updatePageNow(callback, value, update_type)
   self:_handlePageUpdate(self.ui.document.file, value, true, callback, update_type)
 end
 
+-- Progress worth recording when a reading session ends. Unlike the checks in
+-- pageUpdateEvent, this ignores the configured thresholds: any forward
+-- movement counts, even a few pages. Returns nil when there is nothing new
+-- since the last sync, so a suspend followed by closing the book can't add a
+-- second, duplicate or zero-progress entry.
+function SyncEngine:_sessionEndProgress()
+  -- Only the reader that has the document open has a position to record.
+  local filename = self.settings:getFilePath()
+  if not filename or not self.ui.document then return end
+  local book = self:_syncedBook(filename)
+  local status_id = self.state.book_status.status_id
+  -- Not if the book's known not to be being read there, or to have no status
+  -- there since it was removed from the menu. As on close, a status that
+  -- couldn't be read (e.g. offline) is checked when the update is sent.
+  if not (book and self:isActive()) or (status_id and status_id ~= self.constants.STATUS.READING)
+      or self.state.book_status == self.state.removed_status then
+    return
+  end
+
+  -- Not where a jump landed, if no page has been turned since (#40).
+  local page = self:_readingPage(self.ui:getCurrentPage())
+  if not page or not self.state.opened_page or page <= self.state.opened_page then
+    return
+  end
+  local value, update_type = self:_progressValue(page)
+  if not value or value <= 0 then return end
+
+  -- Only compare progress for the book and edition linked now, not before it
+  -- was relinked. A value already sent, or already known remotely, means no
+  -- progress has been made since the last sync: don't add an empty entry.
+  local function forBook(progress)
+    if progress and tostring(progress.book_id) == tostring(book.book_id)
+        and tostring(progress.edition_id) == tostring(book.edition_id) then
+      return progress
+    end
+  end
+  local synced = forBook(self.state.synced_progress)
+  if synced and synced.update_type == update_type and value <= synced.value then return end
+  local remote = self.provider:getRemoteProgress(self.state.book_status, update_type)
+  if remote and value <= remote then return end
+  if not self.provider:sendsProgress(value, update_type, filename) then return end
+  return value, update_type, book, filename
+end
+
 -- Queues where the reader left off on close (the document is still open),
 -- unless it's been sent already. Covers books read offline, whose page turns
 -- aren't tracked because their remote status couldn't be fetched, and the
--- periodic update that closing cancels.
-function SyncEngine:_queueClosingProgress()
+-- periodic update that closing cancels. `session_end` uses the threshold-free
+-- check above instead of the tracking mode's usual rules.
+function SyncEngine:_queueClosingProgress(session_end)
+  if session_end then
+    local value, update_type, book, filename = self:_sessionEndProgress()
+    if value then
+      self.settings.pending_updates:addProgress(filename, book, value, update_type)
+    end
+    return
+  end
+
   local filename = self.settings:getFilePath()
   local book = self:_syncedBook(filename)
   local status_id = self.state.book_status.status_id
@@ -877,7 +1061,8 @@ function SyncEngine:_queueClosingProgress()
     return
   end
 
-  local page = self.ui:getCurrentPage()
+  -- Not where a jump landed, if no page has been turned since.
+  local page = self:_readingPage(self.ui:getCurrentPage())
   local value, update_type = self:_progressValue(page)
   -- Only what was sent, or left unsent, for the book and edition it's linked
   -- to now, not before it was relinked.
@@ -1452,7 +1637,7 @@ function SyncEngine:startReadCache()
           -- remote-behind guards mean this quietly no-ops if there's nothing
           -- new to push; subsequent page turns fall back to the usual
           -- periodic/threshold sync pattern.
-          self:pageUpdateEvent(self.state.page)
+          self:pageUpdateEvent(self.state.page, self.state.jump_origin ~= nil)
         end
       end
 
@@ -1505,9 +1690,9 @@ function SyncEngine:registerHighlight()
           return _(self.label .. ": Add note")
         end,
         enabled_func = function()
-          local status = self.state.book_status.status_id
-          return self:isActive() and status and status ~= self.constants.STATUS.FINISHED
-            and status ~= self.constants.STATUS.DNF and status ~= self.constants.STATUS.TO_READ
+          -- A note only needs a linked book and a working provider; the remote
+          -- status is unrelated and can be empty while its lookup is pending.
+          return self:isActive()
         end,
         callback = function()
           if not self:isActive() then return end

@@ -24,6 +24,11 @@ function CommonMenu:new(o)
 end
 
 function CommonMenu:getTrackingSubMenuItems()
+  -- These interval settings have no effect while session-end syncing is on.
+  local function trackingEnabled()
+    return not self.settings:syncOnSessionEnd()
+  end
+
   return {
     {
       text = _("Auto sync by edition pages"),
@@ -50,6 +55,7 @@ function CommonMenu:getTrackingSubMenuItems()
       checked_func = function()
         return self.settings:syncOnOpen()
       end,
+      enabled_func = trackingEnabled,
       callback = function()
         local setting = self.settings:syncOnOpen()
         self.settings:updateSetting(SETTING.SHARED.SYNC_ON_OPEN, not setting)
@@ -61,6 +67,28 @@ function CommonMenu:getTrackingSubMenuItems()
 Disable this if you'd rather sync only follow the usual periodic/threshold pattern below.]],
         })
       end,
+    },
+    {
+      text = _("Sync only when a reading session ends"),
+      checked_func = function()
+        return self.settings:syncOnSessionEnd()
+      end,
+      callback = function(menu_instance)
+        self.settings:updateSetting(SETTING.SHARED.SYNC_ON_SESSION_END,
+          not self.settings:syncOnSessionEnd())
+        -- Refresh the neighbouring items' enabled_func as soon as the toggle
+        -- changes, so the tracking settings grey out without leaving the menu.
+        if menu_instance and menu_instance.updateItems then
+          menu_instance:updateItems()
+        end
+      end,
+      hold_callback = function()
+        UIManager:show(InfoMessage:new {
+          text = _([[Record just one progress update per reading session, with your final position, instead of updating at each time, percentage or page threshold.
+
+The update is sent when you close the book or put the device to sleep. There's no minimum to reach: progress is recorded whenever it has moved on since the last sync, even by a few pages. Nothing is sent if it hasn't changed, so there are no duplicate or zero-progress entries. "Sync immediately when opening a book" has no effect while this is on.]]),
+        })
+      end,
       separator = true
     },
     {
@@ -69,6 +97,7 @@ Disable this if you'd rather sync only follow the usual periodic/threshold patte
       checked_func = function()
         return self.settings:trackByTime()
       end,
+      enabled_func = trackingEnabled,
       callback = function()
         self.settings:setTrackMethod(SETTING.TRACK.FREQUENCY)
       end
@@ -78,7 +107,7 @@ Disable this if you'd rather sync only follow the usual periodic/threshold patte
         return "Every " .. self.settings:trackFrequency() .. " minutes"
       end,
       enabled_func = function()
-        return self.settings:trackByTime()
+        return trackingEnabled() and self.settings:trackByTime()
       end,
       callback = function(menu_instance)
         local spinner = SpinWidget:new {
@@ -105,6 +134,7 @@ Disable this if you'd rather sync only follow the usual periodic/threshold patte
       checked_func = function()
         return self.settings:trackMethod() == SETTING.TRACK.PROGRESS
       end,
+      enabled_func = trackingEnabled,
       callback = function()
         self.settings:setTrackMethod(SETTING.TRACK.PROGRESS)
       end
@@ -114,7 +144,7 @@ Disable this if you'd rather sync only follow the usual periodic/threshold patte
         return "Every " .. self.settings:trackPercentageInterval() .. " percent completed"
       end,
       enabled_func = function()
-        return self.settings:trackByProgress()
+        return trackingEnabled() and self.settings:trackByProgress()
       end,
       callback = function(menu_instance)
         local spinner = SpinWidget:new {
@@ -141,6 +171,7 @@ Disable this if you'd rather sync only follow the usual periodic/threshold patte
       checked_func = function()
         return self.settings:trackMethod() == SETTING.TRACK.PAGES
       end,
+      enabled_func = trackingEnabled,
       callback = function()
         self.settings:setTrackMethod(SETTING.TRACK.PAGES)
       end
@@ -153,7 +184,7 @@ Disable this if you'd rather sync only follow the usual periodic/threshold patte
         return "Every " .. self.settings:trackPageStep() .. " pages completed"
       end,
       enabled_func = function()
-        return self.settings:trackByPages()
+        return trackingEnabled() and self.settings:trackByPages()
       end,
       callback = function(menu_instance)
         local spinner = SpinWidget:new {
