@@ -22,9 +22,11 @@ local function progressProviders(self, filename)
     local engine = self.engines[provider.key]
     if engine and engine.provider.tracks_progress ~= false and engine:isActive() and engine.settings:bookLinked() then
       local entry = { provider = provider, engine = engine }
-      local book_status = engine.state.book_status or {}
-      if book_status.status_id ~= provider.constants.STATUS.READING then
-        local status_name = book_status.status_id and provider.constants.STATUS_NAME[book_status.status_id]
+      local status_id = (engine.state.book_status or {}).status_id
+      -- An unknown status means the lookup hasn't returned yet, not that the
+      -- book stopped being read. Don't hide the editor behind a pending fetch.
+      if status_id and status_id ~= provider.constants.STATUS.READING then
+        local status_name = provider.constants.STATUS_NAME[status_id]
         entry.skip_reason = status_name
             and T(_("not currently reading (%1)"), _(status_name))
           or _("reading status is unknown; use Sync now to refresh it")

@@ -969,7 +969,28 @@ function SyncEngine:updateProgressAtLocalPage(callback, local_page)
     if callback then callback(nil, err) end
     return
   end
-  self:_handlePageUpdate(document.file, value, true, callback, update_type)
+  local function send()
+    self:_handlePageUpdate(document.file, value, true, callback, update_type)
+  end
+  if self.state.book_status.status_id then
+    send()
+    return
+  end
+  -- The editor can open before the remote status has loaded. Sending without
+  -- one fails for providers that need an active reading session, so fetch it
+  -- here rather than blocking the editor on a serial status lookup at open.
+  self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+    if wifi_error then
+      if callback then callback(nil, wifi_error) end
+      return
+    end
+    local refresh_error = self.cache:cacheUserBook()
+    if refresh_error then
+      if callback then callback(nil, _("Could not fetch book information from " .. self.label)) end
+    else
+      send()
+    end
+  end)
 end
 
 -- Local `page` as the progress value and update_type that get sent.
