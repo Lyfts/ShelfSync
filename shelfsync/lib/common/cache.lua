@@ -63,19 +63,22 @@ end
 function Cache:queueBookStatus(filename, status, callback)
   local book_id = self.settings:readBookSetting(filename, "book_id")
   self:serializeUpdate(function(wifi_error)
-    local saved = false
-    if tostring(self.settings:readBookSetting(filename, "book_id")) == tostring(book_id) then
-      local pending = status ~= STATUS.FINISHED
-        and self.settings.pending_updates:get(filename, self.settings:readBookSettings(filename))
-      if pending then
-        self.settings.pending_updates:clearFinished(filename, pending)
+    local ok, saved = pcall(function()
+      if tostring(self.settings:readBookSetting(filename, "book_id")) == tostring(book_id) then
+        local pending = status ~= STATUS.FINISHED
+          and self.settings.pending_updates:get(filename, self.settings:readBookSettings(filename))
+        if pending then
+          self.settings.pending_updates:clearFinished(filename, pending)
+        end
+        if status ~= STATUS.FINISHED then
+          self.settings.pending_updates:clearFinishedElsewhere(filename, book_id)
+        end
+        return not wifi_error and self:updateBookStatus(filename, status)
       end
-      if status ~= STATUS.FINISHED then
-        self.settings.pending_updates:clearFinishedElsewhere(filename, book_id)
-      end
-      saved = not wifi_error and self:updateBookStatus(filename, status)
-    end
-    if callback then callback(saved) end
+      return false
+    end)
+    if not ok then logger.warn("Could not send queued book status") end
+    if callback then callback(ok and saved or false) end
   end)
 end
 
@@ -87,30 +90,32 @@ function Cache:queueBookRemoval(filename, callback)
     return tostring(self.settings:readBookSetting(filename, "book_id")) == tostring(book_id)
   end
   self:serializeUpdate(function(wifi_error)
-    local removed = false
-    local pending = book_id and linked()
-      and self.settings.pending_updates:get(filename, self.settings:readBookSettings(filename))
-    if pending then
-      self.settings.pending_updates:clearProgress(filename, pending)
-      self.settings.pending_updates:clearFinished(filename, pending)
-    end
-    if book_id and linked() then
-      self.settings.pending_updates:clearFinishedElsewhere(filename, book_id)
-    end
-    if not wifi_error and book_id and self.settings:providerEnabled() and linked() then
-      local status, err = self.provider:findUserBookFor(self.settings:readBookSettings(filename))
-      if not err and status and status.id and self.settings:providerEnabled() and linked() then
-        if self.api:removeRead(status.id) and linked() then
-          self.state.book_status = {}
-          self.state.locally_finished_book_id = nil
-          -- Known to have no status there until another is read or set, so
-          -- closing the book doesn't queue its position.
-          self.state.removed_status = self.state.book_status
-          removed = true
+    local ok, removed = pcall(function()
+      local pending = book_id and linked()
+        and self.settings.pending_updates:get(filename, self.settings:readBookSettings(filename))
+      if pending then
+        self.settings.pending_updates:clearProgress(filename, pending)
+        self.settings.pending_updates:clearFinished(filename, pending)
+      end
+      if book_id and linked() then
+        self.settings.pending_updates:clearFinishedElsewhere(filename, book_id)
+      end
+      if not wifi_error and book_id and self.settings:providerEnabled() and linked() then
+        local status, err = self.provider:findUserBookFor(self.settings:readBookSettings(filename))
+        if not err and status and status.id and self.settings:providerEnabled() and linked() then
+          if self.api:removeRead(status.id) and linked() then
+            self.state.book_status = {}
+            self.state.locally_finished_book_id = nil
+            -- Known to have no status there until another is read or set.
+            self.state.removed_status = self.state.book_status
+            return true
+          end
         end
       end
-    end
-    if callback then callback(removed) end
+      return false
+    end)
+    if not ok then logger.warn("Could not send queued book removal") end
+    if callback then callback(ok and removed or false) end
   end)
 end
 

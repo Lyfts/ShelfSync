@@ -68,14 +68,20 @@ end
 
 function SyncEngine:disable()
   self.enabled = false
-  if self.menu then
-    self.menu.enabled = false
-  end
   self:registerHighlight()
 end
 
 function SyncEngine:onLink()
   if not self:isActive() then return end
+
+  if self.manual_link_dialog then
+    self.manual_link_dialog:show(self.provider_key, function(provider, book)
+      if book then
+        UIManager:show(Notification:new { text = _("Linked to: ") .. book.title .. " (" .. provider.label .. ")" })
+      end
+    end)
+    return
+  end
 
   self.provider:showLinkBookDialog(false, function(book)
     UIManager:show(Notification:new {
@@ -388,7 +394,6 @@ function SyncEngine:onSettingsChanged(field, change, _original_value)
     if auth_setting_changed then
       if change and change ~= "" and not self.enabled then
         self.enabled = true
-        self.menu.enabled = true
         self.api.last_auth_warning = nil
         UIManager:show(Notification:new {
           text = _(self.label .. " syncing re-enabled"),
@@ -512,6 +517,9 @@ function SyncEngine:_handlePageUpdate(filename, value, immediate, callback, upda
 
   local generation = self.page_update_generation
   local book = self:_syncedBook(filename)
+  if not book then
+    return bail(_("Book is no longer linked on " .. self.label))
+  end
   local book_id, edition_id = book.book_id, book.edition_id
   local function sameBook()
     local linked = self:_syncedBook(filename)
@@ -931,6 +939,67 @@ function SyncEngine:onResume()
   if will_restart then
     UIManager:scheduleIn(2, self.startReadCache, self)
   end
+end
+
+function SyncEngine:getProgressTarget(local_page, document_pages)
+  local_page, document_pages = tonumber(local_page), tonumber(document_pages)
+  if not local_page or not document_pages or document_pages <= 0 then
+    return nil, nil, _("Local page count is unavailable")
+  end
+  local remote_pages = tonumber(self.settings:pages())
+  if remote_pages and remote_pages <= 0 then remote_pages = nil end
+  if self.provider.requires_remote_page_count and not remote_pages then
+    return nil, nil, _("The linked edition page count is unavailable")
+  end
+  local percent, mapped = self.page_mapper:getRemotePagePercent(local_page, document_pages, remote_pages)
+  if self.settings:syncByRemotePages() and remote_pages and mapped ~= nil then
+    return mapped, "pages", remote_pages
+  end
+  return math.floor((percent or 0) * 100 + 0.5), "percentage", remote_pages
+end
+
+function SyncEngine:updateProgressValue(callback, value, update_type)
+  local document = self.ui.document
+  if not document then
+    if callback then callback(nil, _("No book active")) end
+    return
+  end
+  local function send()
+    self:_handlePageUpdate(document.file, value, true, callback, update_type)
+  end
+  if self.state.book_status and self.state.book_status.status_id then
+    send()
+    return
+  end
+  -- The editor can open before the remote status has loaded. Sending without
+  -- one fails for providers that need an active reading session, so fetch it
+  -- here rather than blocking the editor on a serial status lookup at open.
+  self.wifi:withWifi(function(_wifi_enabled, wifi_error)
+    if wifi_error then
+      if callback then callback(nil, wifi_error) end
+      return
+    end
+    local refresh_error = self.cache:cacheUserBook()
+    if refresh_error then
+      if callback then callback(nil, _("Could not fetch book information from " .. self.label)) end
+    else
+      send()
+    end
+  end)
+end
+
+function SyncEngine:updateProgressAtLocalPage(callback, local_page)
+  local document = self.ui.document
+  if not document then
+    if callback then callback(nil, _("No book active")) end
+    return
+  end
+  local value, update_type, err = self:getProgressTarget(local_page, document:getPageCount())
+  if value == nil then
+    if callback then callback(nil, err) end
+    return
+  end
+  self:updateProgressValue(callback, value, update_type)
 end
 
 -- Local `page` as the progress value and update_type that get sent.

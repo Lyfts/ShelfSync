@@ -1,17 +1,11 @@
 local _ = require("gettext")
-local math = require("math")
 
 local T = require("ffi/util").template
 
-local Event = require("ui/event")
 local UIManager = require("ui/uimanager")
 
 local InfoMessage = require("ui/widget/infomessage")
 
-local _t = require("shelfsync/lib/common/table_util")
-
-local GOODREADS = require("shelfsync/lib/goodreads/constants")
-local ICON = require("shelfsync/lib/common/constants/icons")
 local SETTING = require("shelfsync/lib/common/constants/settings")
 
 -- Falls back to shelfsync_config.lua's legacy cookie, same as api.lua's
@@ -20,238 +14,9 @@ local SETTING = require("shelfsync/lib/common/constants/settings")
 local config_ok, shelfsync_config = pcall(require, "shelfsync_config")
 local legacy_config = (config_ok and shelfsync_config.goodreads) or {}
 
-local GoodreadsMenu = {}
-GoodreadsMenu.__index = GoodreadsMenu
+local Account = {}
 
-function GoodreadsMenu:new(o)
-  return setmetatable(o or {
-    enabled = true
-  }, self)
-end
-
-function GoodreadsMenu:isActive()
-  return self.settings:providerEnabled()
-    and self.api:hasCredential()
-    and (self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true)
-end
-
-function GoodreadsMenu:mainMenu()
-  return {
-    enabled_func = function()
-      return true
-    end,
-    text_func = function()
-      return self.settings:bookLinked() and _("Goodreads: " .. ICON.LINK) or _("Goodreads")
-    end,
-    sub_item_table_func = function()
-      local has_book = self.ui.document and true or false
-      return self:getSubMenuItems(has_book)
-    end,
-  }
-end
-
-function GoodreadsMenu:getSubMenuItems(book_view)
-  local menu_items = {
-    {
-      text = _("Enabled"),
-      checked_func = function()
-        return self.settings:providerEnabled()
-      end,
-      callback = function()
-        self.settings:setProviderEnabled(not self.settings:providerEnabled())
-      end,
-      separator = true,
-    },
-    book_view and {
-      text_func = function()
-        if self.settings:bookLinked() then
-          return self.goodreads:getLinkedBookLabel()
-        else
-          return _("Link book")
-        end
-      end,
-      enabled_func = function()
-        return self:isActive()
-      end,
-      hold_callback = function(menu_instance)
-        if self.settings:bookLinked() then
-          self.settings:updateBookSetting(
-            self.ui.document.file,
-            {
-              _delete = { 'book_id', 'edition_id', 'pages', 'title', 'link_method' }
-            }
-          )
-
-          menu_instance:updateItems()
-        end
-      end,
-      keep_menu_open = true,
-      callback = function(menu_instance)
-        if not self:isActive() then
-          return
-        end
-
-        local force_search = self.settings:bookLinked()
-
-        self.goodreads:showLinkBookDialog(force_search, function()
-          menu_instance:updateItems()
-        end)
-      end,
-      separator = true
-    },
-    book_view and {
-      text = _("Automatically track progress"),
-      checked_func = function()
-        return self.settings:syncEnabled()
-      end,
-      enabled_func = function()
-        return self:isActive() and self.settings:bookLinked()
-      end,
-      callback = function()
-        local sync = not self.settings:syncEnabled()
-        self.settings:setSync(sync)
-      end,
-    },
-    book_view and {
-      text = _("Update status"),
-      enabled_func = function()
-        return self:isActive() and self.settings:bookLinked()
-      end,
-      sub_item_table_func = function()
-        self.cache:cacheUserBook()
-
-        return self:getStatusSubMenuItems()
-      end,
-      separator = true
-    },
-    book_view and {
-      text = _("Jump to linked book position"),
-      enabled_func = function()
-        return self:isActive() and self.settings:bookLinked()
-      end,
-      callback = function()
-        UIManager:broadcastEvent(Event:new("GoodreadsPullPosition"))
-      end,
-      separator = true
-    },
-    {
-      text = _("Account (Cookie)"),
-      sub_item_table_func = function()
-        return self:getAuthSubMenuItems()
-      end,
-    },
-  }
-  return _t.filter(menu_items, function(v)
-    return v
-  end)
-end
-
--- Builds a radio menu item that marks the current book with `status_id` on
--- Goodreads (after confirmation), used for every entry in the status list
--- below except "Remove", which has no status_id of its own to set.
-function GoodreadsMenu:_statusMenuItem(icon, status_id)
-  return {
-    text = _(icon .. " " .. GOODREADS.STATUS_NAME[status_id]),
-    checked_func = function()
-      return self.state.book_status.status_id == status_id
-    end,
-    callback = function(menu_instance)
-      -- Only refreshed if it's still showing once the change is done.
-      local item_table = menu_instance.item_table
-      self.dialog_manager:maybeConfirm({
-        text = ("Mark book as %s?"):format(GOODREADS.STATUS_NAME[status_id]),
-        ok_callback = function()
-          self.cache:queueBookStatus(self.ui.document.file, status_id, function(saved)
-            if not saved then
-              self.dialog_manager:showError("Book status could not be updated")
-            end
-            if menu_instance.item_table == item_table then
-              menu_instance.item_table = self:getStatusSubMenuItems()
-              menu_instance:updateItems()
-            end
-          end)
-        end,
-        no_confirm_callback = function()
-          menu_instance:updateItems()
-        end
-      })
-    end,
-    radio = true
-  }
-end
-
-function GoodreadsMenu:getStatusSubMenuItems()
-  local items = {
-    self:_statusMenuItem(ICON.BOOKMARK, GOODREADS.STATUS.TO_READ),
-    self:_statusMenuItem(ICON.OPEN_BOOK, GOODREADS.STATUS.READING),
-    self:_statusMenuItem(ICON.CHECKMARK, GOODREADS.STATUS.FINISHED),
-    self:_statusMenuItem(ICON.PAUSE, GOODREADS.STATUS.PAUSED),
-    self:_statusMenuItem(ICON.STOP_CIRCLE, GOODREADS.STATUS.DNF),
-    {
-      text = _(ICON.TRASH .. " Remove"),
-      enabled_func = function()
-        return self:isActive() and self.state.book_status.status_id ~= nil
-      end,
-      callback = function(menu_instance)
-        -- Only refreshed if it's still showing once the change is done.
-        local item_table = menu_instance.item_table
-        self.dialog_manager:maybeConfirm({
-          text = "Remove current book status?",
-          ok_callback = function()
-            self.cache:queueBookRemoval(self.ui.document.file, function(removed)
-              if not removed then
-                self.dialog_manager:showError("Book status could not be removed")
-              elseif menu_instance.item_table == item_table then
-                menu_instance.item_table = self:getStatusSubMenuItems()
-                menu_instance:updateItems()
-              end
-            end)
-          end
-        })
-      end,
-      keep_menu_open = true,
-    },
-  }
-
-  local status = self.state.book_status.status_id
-
-  -- Update progress: only when NOT read, DNF, removed, or want to read
-  if status and status ~= GOODREADS.STATUS.FINISHED and status ~= GOODREADS.STATUS.DNF and status ~= GOODREADS.STATUS.TO_READ then
-    table.insert(items, {
-      text_func = function()
-        local current_page = self.ui:getCurrentPage()
-        local total_pages = self.ui.document:getPageCount()
-        local remote_pages = self.settings:pages()
-        if self.settings:syncByRemotePages() then
-          local mapped_page = self.page_mapper:getMappedPage(current_page, total_pages, remote_pages)
-          return T(_("Update progress: Page %1 / %2"), mapped_page, remote_pages or "?")
-        else
-          local current_percent = math.floor((current_page / total_pages) * 100 + 0.5)
-          return T(_("Update progress: %1%"), current_percent)
-        end
-      end,
-      callback = function()
-        local current_page = self.ui:getCurrentPage()
-        local remote_percent = self.goodreads:getRemotePercent(self.state.book_status) or 0
-
-        self.dialog_manager:journalEntryForm(
-          "",
-          self.ui.document,
-          current_page,
-          self.settings:pages(),
-          nil, -- let journalEntryForm handle it based on settings
-          remote_percent,
-          "note"
-        )
-      end,
-      keep_menu_open = true
-    })
-  end
-
-  return items
-end
-
-function GoodreadsMenu:getAuthSubMenuItems()
+function Account.items(self)
   return {
     {
       text = _("How to get your cookie"),
@@ -369,8 +134,8 @@ the plugin tries it when the cookie is missing or expired.]]),
           show_result(result)
         end
 
-        if self.goodreads and self.goodreads.wifi then
-          self.goodreads.wifi:withWifi(run_test)
+        if self.provider and self.provider.wifi then
+          self.provider.wifi:withWifi(run_test)
         else
           run_test()
         end
@@ -460,4 +225,4 @@ Run the small local helper (see the separate goodreads-cookie-refresher repo) to
   }
 end
 
-return GoodreadsMenu
+return Account

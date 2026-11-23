@@ -126,18 +126,19 @@ function DialogManager:updateRandomBooks(books)
   self.search_dialog:setItems(self.search_dialog.title, books)
 end
 
-function DialogManager:journalEntryForm(text, document, page, remote_pages, initial_percent, remote_percent, event_type)
+function DialogManager:journalEntryForm(text, document, page, remote_pages, initial_percent, remote_percent, event_type, note_only)
   local settings = self.settings:readBookSettings(document.file) or {}
   local total_pages = document:getPageCount()
 
   local sync_by_pages = self.settings:syncByRemotePages()
-  if not initial_percent then
+  if not initial_percent and page then
     if sync_by_pages then
       initial_percent = self.page_mapper:getMappedPage(page, total_pages, remote_pages)
     else
       initial_percent = math.floor((page / total_pages) * 100 + 0.5)
     end
   end
+  initial_percent = initial_percent or 0
 
   -- Augment text with location info
   local include_location = (event_type == "quote") or (self.settings:readSetting(SETTING.SHARED.INCLUDE_LOCATION_IN_NOTES) == true)
@@ -173,6 +174,7 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
     remote_percent = remote_percent,
     progress_type = sync_by_pages and "pages" or "percentage",
     event_type = event_type or "note",
+    note_only = note_only,
     page_mapper = self.page_mapper,
     save_dialog_callback = function(book_data)
       local saving_msg = InfoMessage:new{

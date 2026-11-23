@@ -11,7 +11,7 @@ A KOReader plugin to synchronize your reading progress, notes, and status to [Th
 > **Goodreads limitations**: Goodreads' website doesn't expose a way to read back your current page position, only your shelf (status), so "Jump to linked book position" isn't available and background sync can't detect when your local progress is behind what's on Goodreads — it always pushes forward. Paused/Did Not Finish statuses can be set but aren't reliably read back either. Posting reviews/ratings isn't supported yet.
 
 > [!NOTE]
-> **LibraryThing limitations**: LibraryThing doesn't track reading progress, so nothing is sent while you read. ShelfSync syncs the book's status instead: Currently reading and To read are LibraryThing collections, and a book is Read once its latest reading date has a finished date. Re-reading a book adds new reading dates, keeping the earlier ones. Finishing a book in KOReader sets the finished date and moves it from Currently reading to the collection chosen under **LibraryThing > Read books go to** (Your library by default; any of your collections, including your own, e.g. Read but unowned for borrowed books). A book in that collection also counts as Read, unless it's Your library. There's no Paused or Did Not Finish, and no notes. librarything.com is behind Cloudflare, which can answer requests with a browser check that ShelfSync can't complete; when that happens, syncing fails until Cloudflare lets it through again.
+> **LibraryThing limitations**: LibraryThing doesn't track reading progress, so nothing is sent while you read. ShelfSync syncs the book's status instead: Currently reading and To read are LibraryThing collections, and a book is Read once its latest reading date has a finished date. Re-reading a book adds new reading dates, keeping the earlier ones. Finishing a book in KOReader sets the finished date and moves it from Currently reading to the collection chosen under **ShelfSync > Settings > Service-specific options > LibraryThing read collection** (Your library by default; any of your collections, including your own, e.g. Read but unowned for borrowed books). A book in that collection also counts as Read, unless it's Your library. There's no Paused or Did Not Finish, and no notes. librarything.com is behind Cloudflare, which can answer requests with a browser check that ShelfSync can't complete; when that happens, syncing fails until Cloudflare lets it through again.
 
 ## Installation
 
@@ -41,7 +41,7 @@ Rename `shelfsync_config.example.lua` to `shelfsync_config.lua`. Its `storygraph
 | [LibraryThing](#librarything-authentication) | Username/password sign-in, or browser session cookies |
 
 ### StoryGraph authentication
-Open **ShelfSync > Providers > StoryGraph > Account (Cookies & Tokens) > Log in** and enter your StoryGraph email and password. The plugin saves the session and remember-me cookies returned by StoryGraph; it does not store your password. Log in again if your session expires.
+Open **Tools > ShelfSync > Connections > Accounts and sign in > StoryGraph > Log in** and enter your StoryGraph email and password. The plugin saves the session and remember-me cookies returned by StoryGraph; it does not store your password. Log in again if your session expires.
 
 If Cloudflare blocks login on your device, import browser cookies using the helper above or these manual steps:
 
@@ -51,11 +51,11 @@ If Cloudflare blocks login on your device, import browser cookies using the help
 4. Copy the value of the `remember_user_token` cookie and paste it into the `remember_user_token` field of the `storygraph` section in `shelfsync_config.lua`.
 
 ### Hardcover authentication
-Open **ShelfSync > Providers > Hardcover > Account (OAuth / API Token) > Sign in with Hardcover (OAuth)** and follow the device-code instructions. When signed in, ShelfSync uses OAuth; it refreshes the session automatically and falls back to an API token only when OAuth is signed out or its session is rejected.
+Open **Tools > ShelfSync > Connections > Accounts and sign in > Hardcover > Sign in with Hardcover (OAuth)** and follow the device-code instructions. When signed in, ShelfSync uses OAuth; it refreshes the session automatically and falls back to an API token only when OAuth is signed out or its session is rejected.
 
 API-token authentication remains available as a fallback:
 1. Go to [hardcover.app/account/api](https://hardcover.app/account/api) in your browser and copy your API token.
-2. Paste it into the `token` field of the `hardcover` section in `shelfsync_config.lua`, or open **Hardcover > Account (OAuth / API Token) > Hardcover API Token fallback** in KOReader.
+2. Paste it into the `token` field of the `hardcover` section in `shelfsync_config.lua`, or open **Tools > ShelfSync > Connections > Accounts and sign in > Hardcover > Hardcover API Token fallback** in KOReader.
 
 ### Goodreads authentication
 Goodreads accounts are linked through Amazon, so a valid session is a bundle of cookies rather than one or two named values, and it can go stale periodically from an AWS WAF bot-challenge on Goodreads' side.
@@ -67,27 +67,27 @@ Without that setup, grab a cookie by hand instead. Rather than copying each one 
 2. Open Developer Tools (F12) -> Network tab, then reload the page.
 3. Click any request to `www.goodreads.com`, open its **Headers** panel, and find the `Cookie` row under **Request Headers** (not Storage/Application -> Cookies, and not `Set-Cookie` under Response Headers — this is a specific request's outgoing header). If it isn't shown, look for a "raw headers" toggle.
 4. Right-click it -> Copy Value, and paste the whole thing into the `cookie` field of the `goodreads` section in `shelfsync_config.lua`.
-   - Alternatively, you can paste it directly into the **Goodreads** menu's **Settings > Account (Cookie)** field from within KOReader instead of editing the config file.
+   - Alternatively, you can paste it directly into **Tools > ShelfSync > Connections > Accounts and sign in > Goodreads > Goodreads Cookie** from within KOReader instead of editing the config file.
 
 Without the Docker refresher, this cookie will go stale again periodically — when that happens, syncing pauses until you repeat the steps above.
 
 ### Fable authentication
 Unlike the other services, Fable has a real login API, so the plugin logs in directly with your Fable email and password rather than a cookie/token you have to fetch by hand.
 
-1. In KOReader, open **Fable** menu -> **Account** -> **Log in**, and enter your Fable email and password.
+1. In KOReader, open **Tools > ShelfSync > Connections > Accounts and sign in > Fable > Log in**, and enter your Fable email and password.
 2. ShelfSync caches your password on the device so it can silently sign in again if the refresh token stops working. The password is encrypted at rest when `libcrypto` is available; otherwise, it is stored in plaintext. Your access/refresh tokens refresh automatically, and **Log out** clears the cached password and tokens.
 
 > [!TIP]
 > If you signed up to Fable with **Google or Apple**, there's no password to log in with here. Convert the account to a regular email/password account first: in the Fable app, go to **Account settings** and set/add a password for your account. Once that's done, log in above using that email and password like any other account.
 
 ### Pagebound authentication
-Open **ShelfSync > Providers > Pagebound > Account > Log in** and enter your Pagebound email and password. The plugin signs in through Firebase, exchanges that session for a Pagebound API token, and refreshes the token automatically. It caches your password on the device, encrypted at rest where available, so it can recover if the refresh token stops working. Use **Log out** to clear the credentials cached by ShelfSync.
+Open **Tools > ShelfSync > Connections > Accounts and sign in > Pagebound > Log in** and enter your Pagebound email and password. The plugin signs in through Firebase, exchanges that session for a Pagebound API token, and refreshes the token automatically. It caches your password on the device, encrypted at rest where available, so it can recover if the refresh token stops working. Use **Log out** to clear the credentials cached by ShelfSync.
 
 > [!TIP]
 > If you usually sign in to Pagebound with **Google or Apple**, reset the password for the email address on your account through Pagebound. You can then log in with that email and password; ShelfSync uses this regular email/password account.
 
 ### LibraryThing authentication
-To connect, open **ShelfSync > Providers > LibraryThing > Account > Sign in with LibraryThing** and enter your username and password. ShelfSync saves your session and password so it can sign you back in if the session expires. It encrypts the saved password when your device supports it; otherwise, it is stored unencrypted. **Log out** clears both.
+To connect, open **Tools > ShelfSync > Connections > Accounts and sign in > LibraryThing > Sign in with LibraryThing** and enter your username and password. ShelfSync saves your session and password so it can sign you back in if the session expires. It encrypts the saved password when your device supports it; otherwise, it is stored unencrypted. **Log out** clears both.
 
 The sign-in method is unofficial and may change. Your password is sent in the sign-in web address over HTTPS, and that address may be recorded in logs.
 
@@ -95,38 +95,44 @@ If you prefer not to enter your password in ShelfSync, use browser cookies inste
 
 1. Sign in to [librarything.com](https://www.librarything.com) in a browser on your computer.
 2. Run the cookie helper above with `--service librarything` (`fetch-cookies.sh --service librarything` or `fetch-cookies.bat --service librarything`). It writes only those three cookies into the `librarything` section of `shelfsync_config.lua`; copy that file into the plugin's folder on your e-reader. This avoids typing them on an e-reader keyboard.
-   - Or copy them by hand: Developer Tools (F12) -> Application/Storage -> Cookies -> `www.librarything.com`, then enter `cookie_userid=...; cookie_usernum=...; cookie_userchecksum=...` under **ShelfSync > Providers > LibraryThing > Account > Session cookies**, or into the `cookie` field of the `librarything` section in `shelfsync_config.lua`.
-3. Use **Account > Test connection** to check that it works. **Log out** clears the session from ShelfSync.
+   - Or copy them by hand: Developer Tools (F12) -> Application/Storage -> Cookies -> `www.librarything.com`, then enter `cookie_userid=...; cookie_usernum=...; cookie_userchecksum=...` under **Tools > ShelfSync > Connections > Accounts and sign in > LibraryThing > Session cookies**, or into the `cookie` field of the `librarything` section in `shelfsync_config.lua`.
+3. Use **LibraryThing > Test connection** to check that it works. **Log out** clears the session from ShelfSync.
 
 Linking a book that isn't in your LibraryThing library adds it to **Your library** and **Currently reading**, using the edition LibraryThing picks for the work.
 
-A book that no LibraryThing member has added yet has no work on LibraryThing to link to. When **Link book** finds none, it searches a book source instead, as LibraryThing's **Add books** page does, and picking an edition adds it to your library, which creates the work. Choose the source under **LibraryThing > Books not on LibraryThing**: Amazon.com by default, or e.g. the **Vlaamse Centrale Catalogus** for Dutch-language books. Linking on its own (by ISBN or title) never adds a book from a source.
+A book that no LibraryThing member has added yet has no work on LibraryThing to link to. When **Link book** finds none, it searches a book source instead, as LibraryThing's **Add books** page does, and picking an edition adds it to your library, which creates the work. Choose the source under **ShelfSync > Settings > Service-specific options > LibraryThing book source**: Amazon.com by default, or e.g. the **Vlaamse Centrale Catalogus** for Dutch-language books. Linking on its own (by ISBN or title) never adds a book from a source.
 
 ## Usage
 
-Everything lives under a single **ShelfSync** menu in **Tools > More tools** when a document is active, with a **Providers** sub-menu containing **StoryGraph**, **Hardcover**, **Goodreads**, **Fable**, **Pagebound**, and **LibraryThing**. They work independently and can be used together.
+Open **Tools > ShelfSync** for the dashboard. The current book card shows its position and linked services. Use the shared actions to sync or edit progress, change reading status, link books, write a review, and manage automatic tracking. **Connections** holds service enablement and accounts; **Book options** holds edition selection, position pulling, status removal, and service-specific book actions. The six services work independently and can be used together.
+
+The shared reading status picker lets you choose which linked services to update, and offers Paused and Did Not Finish where supported. It reports services that cannot use the chosen status.
+
+To open the dashboard without the KOReader top bar, assign **ShelfSync: Open dashboard** from the **General** gesture actions to a gesture.
 
 ### Updating Progress & Notes
-Each menu provides a unified **"Update progress: [XX]%"** item. This opens a powerful dialog where you can:
-- **Set Progress**: Tap the progress button to open a native picker showing both your **KOReader** and remote synced percentages.
-- **Add a Note**: Write your thoughts in the note field. Pagebound posts it to the book's forum, where other users may see it; the post title includes the selected percentage and page position.
-- **Location Context**: By default, notes sent via the highlight menu automatically include your current **Chapter, Page, and Percentage**. You can enable this for regular notes in the settings.
+Choose **Sync now** to send the open book's current position to eligible linked services. **Edit progress** lets you select a local page and preview each service's mapped progress before sending it. Service-specific note actions are under **Book options > Service-specific book actions**.
+
+- Page and percentage controls use the provider's remote book mapping. Hardcover stores page numbers; other services may use percentages or edition pages.
+- Pagebound notes are posted to the book's forum, where other users may see them; their post title includes progress and page position.
+- Notes sent via the highlight menu include the current **Chapter, Page, and Percentage**. Enable **Include location info in regular notes** to add this to regular notes too.
 
 ### Linking a Book
-Before updates can be sent, a document needs to be linked to a book on each service you want to sync to.
-- Use **"Link book"** to search by metadata or ISBN. The plugin automatically tries to link the correct edition (e.g. by matching ISBN) — "Change edition" and the other settings below are mostly for changing which specific edition ends up linked, when you want something other than what was auto-selected.
+Before updates can be sent, link the open document to a book on each service you want to sync to.
+
+- Choose **Link or relink** on the dashboard and switch between service tabs to search and link each service. Hold the link row at the bottom to unlink the selected service. **Book options > Change edition** selects a different StoryGraph or Hardcover edition.
 - Use **"Change edition"** to switch to a different edition (StoryGraph) or select a specific edition (Hardcover). Goodreads, Fable, Pagebound, and LibraryThing have no edition-switching concept, so they have no "Change edition" item — linking picks whichever book the search returns.
 - Audio editions are filtered out of the search results (StoryGraph, Hardcover).
 - If a book is not currently tracked, the plugin will set its status to Currently Reading.
 - On StoryGraph, if another edition of the book is set as 'Currently Reading' or 'Want to Read' then the plugin will automatically link to that edition, but not change the status. You can use "Change edition" to link to a different edition if needed.
 
 ### Reviews
-With a book open, choose **ShelfSync > Review** to open the review composer. Add a rating, review text, or both, then choose which providers should receive it. Enabled providers where you are signed in and the book is linked are selected by default; unavailable providers show why they cannot receive the review. If submission fails for a provider, the draft stays available so you can retry it.
+With a book open, choose **Write a review** on the dashboard to open the review composer. Add a rating, review text, or both, then choose which providers should receive it. Enabled providers where you are signed in and the book is linked are selected by default; unavailable providers show why they cannot receive the review. If submission fails for a provider, the draft stays available so you can retry it.
 
 Ratings range from 0 to 5 in quarter-star steps. Hardcover, LibraryThing, and Pagebound round down to half stars; StoryGraph, Fable, and Goodreads preserve quarter-star ratings. When ShelfSync detects that you finished a book, it offers to open the composer if at least one provider is eligible.
 
 ### Automatically Track Progress
-When enabled (per service), the plugin will periodically sync your progress:
+When enabled for a service, the plugin periodically syncs your progress. Choose **Automatic tracking** on the dashboard to change tracking for all active linked services or for individual services.
 - Updates are sent when paging, no more than once per minute (configurable).
 - When reaching the end of the document, the book is automatically marked as "Read"/"Finished".
 - If progress can't be sent for lack of a network (e.g. Wi-Fi is off), the book's latest progress is kept for up to 4 weeks and sent once the network is back, even after the book is closed. A finished status set by KOReader (e.g. by its end-of-book action) that can't be sent, for lack of a network or because the service rejects it, is also kept and retried the same way. If Goodreads accepts it, but the date it was finished can't be set, the date is tried up to 3 times while online, at least an hour apart, before it's given up on. A status chosen in ShelfSync's menus isn't kept for later. Progress isn't sent if the service has the book further along, or not as Currently Reading. Goodreads and Fable don't expose your progress to check against, so there it's only sent within a day, to avoid overwriting newer progress from another device.
@@ -134,19 +140,24 @@ When enabled (per service), the plugin will periodically sync your progress:
 - Hardcover only stores progress as a page number; if a tracking mode produces a percentage instead (e.g. no page count is known for the linked edition), it's converted to a page number automatically before syncing.
 
 ### Update Progress with a Gesture
-KOReader's gesture manager includes a **ShelfSync: Update progress for all linked books** action in the **General** category. Assign it to any gesture to immediately push the open book's current progress to every provider it is linked to, without waiting for the configured time, percentage, or page interval. Gesture-triggered updates show the provider being synced and whether the update succeeded or failed; automatic interval updates remain silent. Provider authentication, enablement, and per-book tracking settings still apply.
+KOReader's gesture manager includes two ShelfSync actions in the **General** category:
+
+- **ShelfSync: Open dashboard** opens the standalone sync manager while you read.
+- **ShelfSync: Update progress for all linked books** immediately pushes the open book's current progress to every active linked provider, without waiting for the configured time, percentage, or page interval. Gesture-triggered updates show the provider being synced and whether the update succeeded or failed; automatic interval updates remain silent.
+
+Provider authentication, enablement, and per-book tracking settings still apply.
 
 ## Settings
 
-Each service has its own **Settings** submenu for linking and account options:
-- **Automatically link by provider identifier/ISBN/Title**: Attempt to find matching books automatically when opening a new document, in that priority order — a provider identifier embedded in the book's metadata first, then ISBN, then title+author. Each method can be toggled independently, and all are enabled by default; disable any of them here if you'd rather link books manually. Identifier-based linking is supported for Goodreads (`goodreads:` tag), Hardcover (`hardcover:`/`hardcover-slug:`/`hardcover-edition:` tags), StoryGraph (`storygraph:`/`storygraph-edition:` tags), and LibraryThing (`librarything:` tag with a work id). Fable and Pagebound currently don't expose matching identifier schemes.
-- **Never link automatically**: File types (e.g. `cbz, cbr` for manga and comics) that are never linked automatically, by any of the methods above. They can still be linked by hand with "Link book".
-- **Account**: Cookies/tokens/login for that service.
+Provider sign-in and enablement are under **Tools > ShelfSync > Connections**; service-specific configuration is under **Settings > Service-specific options**. Shared automatic-linking options are under **Tools > ShelfSync > Settings > Auto Book Link**:
 
-Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **ShelfSync > Settings**, since it applies to the whole plugin rather than one service:
+- **Automatically link by provider identifier/ISBN/Title**: Attempt to find matching books automatically when opening a new document, in that priority order — a provider identifier embedded in the book's metadata first, then ISBN, then title+author. Each method can be toggled independently, and all are enabled by default; disable any of them here if you'd rather link books manually. Identifier-based linking is supported for Goodreads (`goodreads:` tag), Hardcover (`hardcover:`/`hardcover-slug:`/`hardcover-edition:` tags), StoryGraph (`storygraph:`/`storygraph-edition:` tags), and LibraryThing (`librarything:` tag with a work id). Fable and Pagebound currently don't expose matching identifier schemes.
+- **Never link automatically**: File types (e.g. `cbz, cbr` for manga and comics) that are never linked automatically, by any of the methods above. They can still be linked by hand with **Link or relink** on the dashboard.
+
+Everything else — progress tracking settings, "Enable wifi on demand", "Confirm changes to book read status", "Include location info in regular notes", "Verbose logging", and the **"Plugin Updates"** settings (see below) — is shared between all services and lives under **Tools > ShelfSync > Settings**, since it applies to the whole plugin rather than one service:
 - **Include location info in regular notes**: Automatically append Chapter, Page, and % info to your regular notes.
 - **Enable wifi on demand**: Briefly enable wifi for background syncs to preserve battery life.
-- **Confirm changes to book read status**: Prompt for confirmation before changing or removing a book's status from a service's **Update status** menu (e.g., Want to Read -> Read). Enabled by default; turn it off to apply status changes with a single tap.
+- **Confirm changes to book read status**: Prompt before changing or removing a status (e.g., Want to Read -> Read). Enabled by default; turn it off to apply status changes with a single tap.
 
 ## Versioning & Mandatory Updates
 

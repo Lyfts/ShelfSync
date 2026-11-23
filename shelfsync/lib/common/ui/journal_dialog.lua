@@ -27,6 +27,7 @@ local JournalDialog = InputDialog:extend {
   book_id = nil,
   edition_id = nil,
   event_type = "note",
+  note_only = false, -- hide the progress editor; progress is still saved at the current position
   date = nil, -- table with day, month, year
 }
   
@@ -58,7 +59,7 @@ function JournalDialog:init()
 
   local journal_self = self
   local confirm_bypass = false
-  self.save_callback = function() 
+  self.save_callback = function()
     local remote_val = journal_self.remote_percent or 0
     local current_pct
     local total_local_pages = journal_self.page_mapper.ui.document:getPageCount()
@@ -132,6 +133,7 @@ function JournalDialog:init()
   InputDialog.init(self)
   self.note_input = self._input_widget
 
+  if not self.note_only then
   -- Progress Button
   self.page_button = Button:new {
     text_func = function()
@@ -222,6 +224,7 @@ function JournalDialog:init()
   }
   progress_type_toggle:setPosition(self.progress_type == "percentage" and 1 or 2)
   self:addWidget(progress_type_toggle)
+  end
 
   -- Date Button (triggers DateTimeWidget)
   self.date_button = Button:new {
@@ -251,15 +254,16 @@ function JournalDialog:init()
     end
   }
 
+  local controls = { self.date_button }
+  if not self.note_only then
+    table.insert(controls, 1, HorizontalSpan:new { width = 10 })
+    table.insert(controls, 1, self.page_button)
+  end
   local control_row = FrameContainer:new {
     padding_top = 10,
     padding_bottom = 8,
     bordersize = 0,
-    HorizontalGroup:new {
-      self.page_button,
-      HorizontalSpan:new { width = 10 },
-      self.date_button
-    }
+    HorizontalGroup:new(controls)
   }
 
   self:addWidget(control_row)
