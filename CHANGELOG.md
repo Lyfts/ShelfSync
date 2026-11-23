@@ -4,6 +4,7 @@
 
 ## Unreleased
 - (feat) Add "Sync only when a reading session ends" to record one final progress update when a book is closed or the device sleeps, instead of at every time, percentage or page threshold. Progress is recorded without needing to reach a threshold, and no entry is added if the recorded position hasn't changed since the last sync.
+- (fix) Keep the highlight "Add note" action available while a book's remote status is still loading, or when it is Read, Did Not Finish or To Read. It no longer greys out after reopening a book or connecting Wi-Fi until the status lookup succeeds.
 - (fix) Retry StoryGraph requests after yielding briefly to KOReader's UI when a subprocess is dismissed, so the same tap doesn't immediately cancel the retry too.
 
 ## 1.8.4

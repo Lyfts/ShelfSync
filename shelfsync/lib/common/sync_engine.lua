@@ -1651,9 +1651,9 @@ function SyncEngine:registerHighlight()
           return _(self.label .. ": Add note")
         end,
         enabled_func = function()
-          local status = self.state.book_status.status_id
-          return self:isActive() and status and status ~= self.constants.STATUS.FINISHED
-            and status ~= self.constants.STATUS.DNF and status ~= self.constants.STATUS.TO_READ
+          -- A note only needs a linked book and a working provider; the remote
+          -- status is unrelated and can be empty while its lookup is pending.
+          return self:isActive()
         end,
         callback = function()
           if not self:isActive() then return end
